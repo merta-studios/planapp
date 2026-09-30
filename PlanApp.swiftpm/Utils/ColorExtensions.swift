@@ -63,33 +63,15 @@ extension Color {
         )
     }
 
-    /// Gibt eine lesbare Textfarbe (Schwarz oder Weiß) passend zum Hintergrund zurück
+    /// Textfarbe für Stundenblöcke und Notizkarten: Die Schriftfarbe bleibt
+    /// immer fest schwarz (und wechselt im Dark Mode niemals zu weiß).
     public var contrastingTextColor: Color {
-        let uic = UIColor(self)
-        var r: CGFloat = 0
-        var g: CGFloat = 0
-        var b: CGFloat = 0
-        var a: CGFloat = 0
-        guard uic.getRed(&r, green: &g, blue: &b, alpha: &a) else {
-            return .white
-        }
-        // Helligkeitsformel nach W3C
-        let luminance = 0.299 * r + 0.587 * g + 0.114 * b
-        return luminance > 0.65 ? Color.black.opacity(0.88) : Color.white
+        Color.black
     }
 
-    /// Gedämpftere Sekundärtextfarbe passend zum Hintergrund
+    /// Gedämpftere Sekundärtextfarbe für Zusatz-Infos (Lehrer, Raum, Zeiten).
     public var contrastingSecondaryTextColor: Color {
-        let uic = UIColor(self)
-        var r: CGFloat = 0
-        var g: CGFloat = 0
-        var b: CGFloat = 0
-        var a: CGFloat = 0
-        guard uic.getRed(&r, green: &g, blue: &b, alpha: &a) else {
-            return .white.opacity(0.75)
-        }
-        let luminance = 0.299 * r + 0.587 * g + 0.114 * b
-        return luminance > 0.65 ? Color.black.opacity(0.65) : Color.white.opacity(0.75)
+        Color.black.opacity(0.70)
     }
 }
 

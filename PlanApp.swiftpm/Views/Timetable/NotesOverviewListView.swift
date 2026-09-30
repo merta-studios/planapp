@@ -505,8 +505,14 @@ private struct NoteOverviewCard: View {
                 .padding(compact ? 4 : 6)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.white.opacity(0.7))
+                        .fill(Color.white)
                 )
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.black.opacity(0.10), lineWidth: 0.5)
+                )
+                .shadow(color: Color.black.opacity(0.08), radius: 3, x: 0, y: 1.5)
         } else {
             let texts = note.textBoxes
                 .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }

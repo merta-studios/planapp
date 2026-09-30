@@ -4,14 +4,14 @@ import UIKit
 /// Auswahl-Interaktionen ausgelöst – auch wenn mit dem Apple Pencil auf
 /// Bedienelemente getippt wird, gibt es so immer eine spürbare Rückmeldung.
 public enum Haptics {
-    private static let lightImpact = UIImpactFeedbackGenerator(style: .light)
+    private static let mediumImpact = UIImpactFeedbackGenerator(style: .medium)
     private static let selectionGenerator = UISelectionFeedbackGenerator()
     private static let notificationGenerator = UINotificationFeedbackGenerator()
 
-    /// Kurzes, weiches Klick-Feedback (Buttons, Blöcke, Textfelder).
+    /// Spürbares, angenehmes Klick-Feedback für Apple Pencil Pro und iPad (Buttons, Blöcke, Textfelder).
     public static func tap() {
-        lightImpact.prepare()
-        lightImpact.impactOccurred(intensity: 0.85)
+        mediumImpact.prepare()
+        mediumImpact.impactOccurred(intensity: 1.0)
     }
 
     /// Feines Auswahl-Feedback (Werkzeug- oder Farbwechsel).
@@ -22,11 +22,13 @@ public enum Haptics {
 
     /// Warn-Feedback (z.B. vor dem Leeren einer Seite).
     public static func warning() {
+        notificationGenerator.prepare()
         notificationGenerator.notificationOccurred(.warning)
     }
 
     /// Erfolgs-Feedback.
     public static func success() {
+        notificationGenerator.prepare()
         notificationGenerator.notificationOccurred(.success)
     }
 }

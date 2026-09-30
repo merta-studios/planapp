@@ -47,6 +47,7 @@ public struct PeriodConfigSection: View {
 
             // Erneut von meiner Schule laden Button
             Button(action: {
+                Haptics.tap()
                 Task {
                     if viewModel.untisCredentials.isConfigured {
                         await viewModel.syncWithUntis()

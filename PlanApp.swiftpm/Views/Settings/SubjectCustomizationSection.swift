@@ -109,7 +109,10 @@ public struct SubjectCustomizationSection: View {
                 HStack {
                     Spacer()
 
-                    Button(action: addNewCustomization) {
+                    Button(action: {
+                        Haptics.tap()
+                        addNewCustomization()
+                    }) {
                         HStack(spacing: 6) {
                             Image(systemName: "plus.circle.fill")
                                 .font(.system(size: 14, weight: .regular, design: .default))
@@ -131,6 +134,7 @@ public struct SubjectCustomizationSection: View {
             HStack(spacing: 10) {
                 // Importieren Button
                 Button(action: {
+                    Haptics.tap()
                     showImportAlert = true
                 }) {
                     HStack(spacing: 6) {
@@ -148,6 +152,7 @@ public struct SubjectCustomizationSection: View {
 
                 // Alle löschen Button
                 Button(action: {
+                    Haptics.warning()
                     showDeleteAllAlert = true
                 }) {
                     HStack(spacing: 6) {
@@ -225,6 +230,7 @@ public struct SubjectCustomizationSection: View {
 
                             // Bearbeiten Button (Öffnet separates manuelles Bearbeitungsfenster)
                             Button(action: {
+                                Haptics.tap()
                                 editingSubject = item
                             }) {
                                 Image(systemName: "pencil")
@@ -236,6 +242,7 @@ public struct SubjectCustomizationSection: View {
 
                             // Löschen Button
                             Button(action: {
+                                Haptics.tap()
                                 withAnimation {
                                     viewModel.deleteCustomization(id: item.id)
                                 }
@@ -419,7 +426,10 @@ struct EditSubjectSheet: View {
                     Spacer()
 
                     HStack(spacing: 12) {
-                        Button(action: onCancel) {
+                        Button(action: {
+                            Haptics.tap()
+                            onCancel()
+                        }) {
                             Text("Abbrechen")
                                 .font(.system(size: 15, weight: .regular, design: .default))
                                 .frame(maxWidth: .infinity)
@@ -428,7 +438,10 @@ struct EditSubjectSheet: View {
                         .lightButton(cornerRadius: 12)
                         .foregroundColor(.secondary)
 
-                        Button(action: saveChanges) {
+                        Button(action: {
+                            Haptics.tap()
+                            saveChanges()
+                        }) {
                             Text("Speichern")
                                 .font(.system(size: 15, weight: .regular, design: .default))
                                 .frame(maxWidth: .infinity)
@@ -446,6 +459,7 @@ struct EditSubjectSheet: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Fertig") {
+                        Haptics.tap()
                         saveChanges()
                     }
                     .font(.system(size: 15, weight: .regular, design: .default))

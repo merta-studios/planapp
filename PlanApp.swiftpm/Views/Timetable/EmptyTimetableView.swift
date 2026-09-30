@@ -24,7 +24,10 @@ public struct EmptyTimetableView: View {
 
             HStack(spacing: 14) {
                 // Einstellungen öffnen Liquid Glass Button
-                Button(action: { viewModel.isSettingsPresented = true }) {
+                Button(action: {
+                    Haptics.tap()
+                    viewModel.isSettingsPresented = true
+                }) {
                     HStack(spacing: 8) {
                         Image(systemName: "gearshape")
                             .font(.system(size: 14, weight: .regular, design: .default))
@@ -38,7 +41,10 @@ public struct EmptyTimetableView: View {
                 .foregroundColor(.white)
 
                 // Beispieldaten laden Liquid Glass Button
-                Button(action: { viewModel.loadDemoData() }) {
+                Button(action: {
+                    Haptics.tap()
+                    viewModel.loadDemoData()
+                }) {
                     HStack(spacing: 8) {
                         Image(systemName: "sparkles")
                             .font(.system(size: 14, weight: .regular, design: .default))

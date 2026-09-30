@@ -11,7 +11,10 @@ public struct HoverButton<Content: View>: View {
     }
 
     public var body: some View {
-        Button(action: action) {
+        Button(action: {
+            Haptics.tap()
+            action()
+        }) {
             content()
         }
         .buttonStyle(PlainButtonStyle())
@@ -35,7 +38,10 @@ public struct AccentPillButton: View {
     }
 
     public var body: some View {
-        Button(action: action) {
+        Button(action: {
+            Haptics.tap()
+            action()
+        }) {
             HStack(spacing: 6) {
                 if let icon = icon {
                     Image(systemName: icon)

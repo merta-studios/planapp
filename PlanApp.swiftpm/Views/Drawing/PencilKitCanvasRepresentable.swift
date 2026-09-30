@@ -119,6 +119,8 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             canvasView.tool = PKInkingTool(.marker, color: color, width: markerWidth)
         case .eraser:
             canvasView.tool = PKEraserTool(.bitmap, width: eraserWidth)
+        case .lasso:
+            canvasView.tool = PKLassoTool()
         case .text:
             // Bei aktivem Text-Werkzeug zeichnet der Canvas nicht;
             // stattdessen werden Textfelder in der SwiftUI-Ebene platziert/bearbeitet.
@@ -390,7 +392,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             break
         case .dotted:
             let radius = NoteBackgroundMetrics.dotRadius
-            UIColor.systemGray.withAlphaComponent(alpha).setFill()
+            UIColor(white: 0.5, alpha: alpha).setFill()
             var y = floor(rect.minY / spacing) * spacing
             while y <= rect.maxY {
                 var x = floor(rect.minX / spacing) * spacing
@@ -420,7 +422,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     ) {
         guard spacing > 0 else { return }
 
-        context.setStrokeColor(UIColor.systemGray.withAlphaComponent(alpha).cgColor)
+        context.setStrokeColor(UIColor(white: 0.5, alpha: alpha).cgColor)
         context.setLineWidth(NoteBackgroundMetrics.lineWidth)
         context.beginPath()
 

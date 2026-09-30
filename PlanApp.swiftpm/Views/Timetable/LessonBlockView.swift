@@ -101,9 +101,7 @@ public struct LessonBlockView: View {
                         Text(displayName)
                             .font(.system(size: 15, weight: .regular, design: .default))
                             .foregroundColor(
-                                isActive
-                                    ? .primary
-                                    : (lesson.isCancelled ? .secondary : subjectColor.contrastingTextColor)
+                                lesson.isCancelled ? .secondary : Color.black
                             )
                             .strikethrough(lesson.isCancelled, color: .red)
                             .lineLimit(1)
@@ -138,7 +136,7 @@ public struct LessonBlockView: View {
                                 }
                             }
                             .font(.system(size: 12, weight: .regular, design: .default))
-                            .foregroundColor(lesson.isCancelled ? .secondary : subjectColor.contrastingSecondaryTextColor)
+                            .foregroundColor(lesson.isCancelled ? .secondary : Color.black.opacity(0.70))
                         }
 
                         if settings.showRoom && !lesson.roomRaw.isEmpty {
@@ -156,7 +154,7 @@ public struct LessonBlockView: View {
                                 }
                             }
                             .font(.system(size: 12, weight: .regular, design: .default))
-                            .foregroundColor(lesson.isCancelled ? .secondary : subjectColor.contrastingSecondaryTextColor)
+                            .foregroundColor(lesson.isCancelled ? .secondary : Color.black.opacity(0.70))
                         }
                     }
 
@@ -164,7 +162,7 @@ public struct LessonBlockView: View {
                     if settings.showSubstitutionDetails && !lesson.substitutionText.isEmpty {
                         Text(lesson.substitutionText)
                             .font(.system(size: 11, weight: .regular, design: .default))
-                            .foregroundColor(lesson.isCancelled ? .red.opacity(0.9) : subjectColor.contrastingTextColor)
+                            .foregroundColor(lesson.isCancelled ? .red.opacity(0.9) : Color.black.opacity(0.85))
                             .strikethrough(lesson.isCancelled, color: .red)
                             .lineLimit(2)
                             .padding(.top, 1)
@@ -222,8 +220,14 @@ public struct LessonBlockView: View {
                     .padding(3)
                     .background(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Color.white.opacity(0.55))
+                            .fill(Color.white)
                     )
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(Color.black.opacity(0.12), lineWidth: 0.5)
+                    )
+                    .shadow(color: Color.black.opacity(0.10), radius: 3, x: 0, y: 1.5)
                     .padding(5)
                     .allowsHitTesting(false)
             }

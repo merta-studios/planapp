@@ -117,6 +117,7 @@ public struct UntisConfigSection: View {
             HStack(spacing: 12) {
                 // Synchronisieren Liquid Glass Button
                 Button(action: {
+                    Haptics.tap()
                     saveInputs()
                     Task { await viewModel.syncWithUntis() }
                 }) {
@@ -140,6 +141,7 @@ public struct UntisConfigSection: View {
 
                 // Beispieldaten laden Liquid Glass Button
                 Button(action: {
+                    Haptics.tap()
                     viewModel.loadDemoData()
                 }) {
                     HStack(spacing: 6) {
@@ -179,6 +181,7 @@ public struct UntisConfigSection: View {
     }
 
     private func saveInputs() {
+        Haptics.tap()
         viewModel.untisCredentials.server = server
         viewModel.untisCredentials.school = school
         viewModel.untisCredentials.user = user

@@ -24,7 +24,7 @@ public final class TextFieldUndoController: ObservableObject {
 
     public init() {
         undoManager.levelsOfUndo = 40
-        undoManager.groupsByEvent = false
+        undoManager.groupsByEvent = true
     }
 
     /// Registriert eine bereits angewendete Änderung. `before`/`after` sind

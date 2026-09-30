@@ -11,6 +11,7 @@ public enum DrawingToolSelection: Equatable {
     case pen(color: UIColor)
     case marker(color: UIColor)
     case eraser
+    case lasso
     case text
 }
 
