@@ -24,7 +24,10 @@ public final class TimetableViewModel: ObservableObject {
     @Published public var isLoading: Bool = false
     @Published public var errorMessage: String? = nil
     @Published public var successMessage: String? = nil
+    /// -1 = ältere Woche gleitet von links herein, 1 = neuere Woche von rechts.
+    @Published public private(set) var weekNavigationDirection: Int = 1
 
+    private var activeSyncCount: Int = 0
     private let storage = TimetableStorageService.shared
     private let untis = WebUntisService.shared
     private let demo = DemoDataService.shared
@@ -66,28 +69,37 @@ public final class TimetableViewModel: ObservableObject {
 
     // MARK: - Week Navigation
 
-    /// Springt zur aktuellen Woche zurück
+    /// Springt zur aktuellen Woche zurück und lädt genau diese Woche nach.
     public func goToCurrentWeek() {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-            selectedWeekStart = Date().startOfWeek()
-        }
+        let current = Date().startOfWeek()
+        weekNavigationDirection = current >= selectedWeekStart ? 1 : -1
+        selectWeek(current)
     }
 
-    /// Springt zur nächsten Woche
+    /// Springt zur nächsten Woche. Die Navigation wird bewusst nur per Swipe aufgerufen.
     public func goToNextWeek() {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-            if let next = Calendar.germanCalendar.date(byAdding: .day, value: 7, to: selectedWeekStart) {
-                selectedWeekStart = next
-            }
-        }
+        guard let next = Calendar.germanCalendar.date(byAdding: .day, value: 7, to: selectedWeekStart) else { return }
+        weekNavigationDirection = 1
+        selectWeek(next)
     }
 
-    /// Springt zur vorherigen Woche
+    /// Springt zur vorherigen Woche. Die Navigation wird bewusst nur per Swipe aufgerufen.
     public func goToPreviousWeek() {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-            if let prev = Calendar.germanCalendar.date(byAdding: .day, value: -7, to: selectedWeekStart) {
-                selectedWeekStart = prev
-            }
+        guard let previous = Calendar.germanCalendar.date(byAdding: .day, value: -7, to: selectedWeekStart) else { return }
+        weekNavigationDirection = -1
+        selectWeek(previous)
+    }
+
+    private func selectWeek(_ weekStart: Date) {
+        let normalizedStart = weekStart.startOfWeek()
+        guard normalizedStart != selectedWeekStart else { return }
+        selectedWeekStart = normalizedStart
+
+        // Bisher wurde ausschließlich die beim manuellen Sync ausgewählte Woche
+        // geladen. Nun wird jede angeswipte Woche automatisch bei Untis angefragt.
+        guard untisCredentials.isConfigured else { return }
+        Task {
+            await syncWeek(startingAt: normalizedStart, showsSuccessMessage: false)
         }
     }
 
@@ -165,8 +177,10 @@ public final class TimetableViewModel: ObservableObject {
 
     /// Öffnet die Zeichnen-Notiz-Ansicht für eine Stunde
     public func openNote(for lesson: Lesson) {
-        self.activeNoteLesson = lesson
-        self.isDrawingOverlayPresented = true
+        withAnimation(.spring(response: 0.48, dampingFraction: 0.84)) {
+            self.activeNoteLesson = lesson
+            self.isDrawingOverlayPresented = true
+        }
     }
 
     /// Schließt und speichert die Notiz
@@ -181,8 +195,10 @@ public final class TimetableViewModel: ObservableObject {
         )
         self.lessonNotes[key] = note
         storage.saveLessonNote(note)
-        self.isDrawingOverlayPresented = false
-        self.activeNoteLesson = nil
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
+            self.isDrawingOverlayPresented = false
+            self.activeNoteLesson = nil
+        }
     }
 
     /// Gibt die Notiz für eine bestimmte Stunde zurück
@@ -258,30 +274,41 @@ public final class TimetableViewModel: ObservableObject {
 
     // MARK: - Untis API Sync & Demo Data
 
-    /// Synchronisiert Stundenraster und Stundenplan mit WebUntis
+    /// Synchronisiert die aktuell angezeigte Woche mit WebUntis.
     public func syncWithUntis() async {
+        await syncWeek(startingAt: selectedWeekStart, showsSuccessMessage: true)
+    }
+
+    /// Lädt eine konkrete Woche. Der explizite Parameter verhindert, dass ein
+    /// schneller zweiter Swipe die noch laufende Anfrage der ersten Woche auf
+    /// ein falsches Datum umbiegt.
+    private func syncWeek(startingAt weekStart: Date, showsSuccessMessage: Bool) async {
         guard untisCredentials.isConfigured else {
-            self.errorMessage = "Bitte zuerst WebUntis Server und Schulnamen in den Einstellungen angeben."
+            if showsSuccessMessage {
+                self.errorMessage = "Bitte zuerst WebUntis Server und Schulnamen in den Einstellungen angeben."
+            }
             return
         }
 
+        activeSyncCount += 1
         self.isLoading = true
         self.errorMessage = nil
-        self.successMessage = nil
+        if showsSuccessMessage { self.successMessage = nil }
+        defer {
+            activeSyncCount -= 1
+            self.isLoading = activeSyncCount > 0
+        }
 
         do {
-            // 1. Authentifizierung
             let auth = try await untis.authenticate(credentials: untisCredentials)
 
-            // 2. Stundenzeiten abrufen (Timegrid)
             let fetchedPeriods = try await untis.fetchTimegrid(credentials: untisCredentials, sessionId: auth.sessionId)
             if !fetchedPeriods.isEmpty {
                 self.periods = fetchedPeriods
                 storage.savePeriods(fetchedPeriods)
             }
 
-            // 3. Stundenplan für die aktuelle Woche abrufen
-            let weekDays = selectedWeekStart.schoolWeekDays()
+            let weekDays = weekStart.schoolWeekDays()
             guard let startDay = weekDays.first, let endDay = weekDays.last else { return }
 
             let fetchedLessons = try await untis.fetchTimetable(
@@ -294,27 +321,22 @@ public final class TimetableViewModel: ObservableObject {
                 periods: self.periods
             )
 
-            // Bestehende Stunden für diese Woche ersetzen
             let weekDateStrings = Set(weekDays.map { $0.yyyyMMddString })
             var updatedLessons = lessons.filter { !weekDateStrings.contains($0.dateString) }
             updatedLessons.append(contentsOf: fetchedLessons)
-
             self.lessons = updatedLessons
             storage.saveLessons(updatedLessons)
 
-            // Zugangsdaten mit Zeitstempel aktualisieren
             self.untisCredentials.lastSyncDate = Date()
             storage.saveCredentials(untisCredentials)
-
-            // 4. Logout
             await untis.logout(credentials: untisCredentials, sessionId: auth.sessionId)
 
-            self.successMessage = "Stundenplan erfolgreich synchronisiert!"
+            if showsSuccessMessage {
+                self.successMessage = "Stundenplan erfolgreich synchronisiert!"
+            }
         } catch {
             self.errorMessage = error.localizedDescription
         }
-
-        self.isLoading = false
     }
 
     /// Lädt realistische Beispieldaten für die aktuelle Woche

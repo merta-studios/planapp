@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Zeichnet das linierte Notizpapier mit rotem Rand und dynamischer Zeilenanzahl
+/// Transparente, linienlose Zeichenfläche mit Fach- und Datumsüberschrift.
+/// Der historische Typname bleibt bestehen, damit bestehende Aufrufer kompatibel bleiben.
 public struct LinedPaperBackground: View {
     public let lineCount: Int
     public let lineHeight: CGFloat
@@ -28,50 +29,29 @@ public struct LinedPaperBackground: View {
 
     public var body: some View {
         ZStack(alignment: .topLeading) {
-            // Warmes Notizpapier
+            // Nur eine leichte transparente Abgrenzung; kein Papier und keine Linien.
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(red: 0.985, green: 0.980, blue: 0.965))
-                .shadow(color: Color.black.opacity(0.35), radius: 24, x: 0, y: 12)
+                .fill(Color.white.opacity(0.12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
+                )
+                .shadow(color: Color.black.opacity(0.18), radius: 18, x: 0, y: 10)
 
-            // Kopfbereich des Zettels (Fach & Datum)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(subjectName)
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                        .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.25))
+            HStack(alignment: .firstTextBaseline) {
+                Text(subjectName)
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
 
-                    Spacer()
+                Spacer()
 
-                    Text(dateText)
-                        .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundColor(.secondary)
-                }
-
-                Text("Hausaufgaben & Notizen")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundColor(Color.blue.opacity(0.8))
+                Text(dateText)
+                    .font(.system(size: 14, weight: .medium, design: .rounded))
+                    .foregroundColor(.white.opacity(0.75))
             }
             .padding(.horizontal, 24)
-            .padding(.top, 16)
+            .padding(.top, 18)
             .frame(height: headerHeight)
-
-            // Roter linker Seitenrand
-            Path { path in
-                let marginX: CGFloat = 54
-                path.move(to: CGPoint(x: marginX, y: 12))
-                path.addLine(to: CGPoint(x: marginX, y: totalHeight - 12))
-            }
-            .stroke(Color.red.opacity(0.4), lineWidth: 1.5)
-
-            // Horizontale Schreiblinien
-            Path { path in
-                for i in 1...lineCount {
-                    let y = headerHeight + CGFloat(i) * lineHeight
-                    path.move(to: CGPoint(x: 20, y: y))
-                    path.addLine(to: CGPoint(x: 760, y: y))
-                }
-            }
-            .stroke(Color.blue.opacity(0.18), lineWidth: 1.0)
         }
     }
 }

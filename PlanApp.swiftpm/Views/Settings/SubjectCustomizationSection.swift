@@ -29,10 +29,13 @@ public struct SubjectCustomizationSection: View {
                             Text("Name von Untis:")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundColor(.secondary)
-                            TextField("z.B. M, D, ENG", text: $originalSubjectInput)
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .textInputAutocapitalization(.characters)
-                                .disableAutocorrection(true)
+                            KeyboardTextField(
+                                "z.B. M, D, ENG",
+                                text: $originalSubjectInput,
+                                capitalization: .allCharacters,
+                                autocorrection: .no
+                            )
+                            .frame(minHeight: 36)
                         }
 
                         // Neuer schöner Name
@@ -40,8 +43,13 @@ public struct SubjectCustomizationSection: View {
                             Text("Neuer Name:")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundColor(.secondary)
-                            TextField("z.B. Mathematik", text: $customNameInput)
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                            KeyboardTextField(
+                                "z.B. Mathematik",
+                                text: $customNameInput,
+                                returnKeyType: .done,
+                                onSubmit: saveCustomization
+                            )
+                            .frame(minHeight: 36)
                         }
                     }
 
