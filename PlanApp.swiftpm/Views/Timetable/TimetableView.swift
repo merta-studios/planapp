@@ -53,64 +53,15 @@ public struct TimetableView: View {
                     Divider()
                         .padding(.horizontal, 16)
 
-                    // 2. HAUPTBILDSCHIRM: VORBEREITETES 3-WOCHEN-KARUSSELL (Vorherige, Aktuelle, Nächste Woche)
-                    ScrollView(.vertical, showsIndicators: false) {
-                        HStack(alignment: .top, spacing: 0) {
-                            // VORHERIGE WOCHE (immer links vorgerendert bereit)
-                            SingleWeekGridView(
-                                weekStart: previousWeekStart,
-                                availableWidth: availableWidth,
-                                calculatedRowHeight: calculatedRowHeight,
-                                headerHeight: headerHeight,
-                                periodColumnWidth: periodColumnWidth,
-                                noteNamespace: noteNamespace
-                            )
-                            .frame(width: availableWidth)
-
-                            // AKTUELLE WOCHE
-                            SingleWeekGridView(
-                                weekStart: viewModel.selectedWeekStart,
-                                availableWidth: availableWidth,
-                                calculatedRowHeight: calculatedRowHeight,
-                                headerHeight: headerHeight,
-                                periodColumnWidth: periodColumnWidth,
-                                noteNamespace: noteNamespace
-                            )
-                            .frame(width: availableWidth)
-
-                            // NÄCHSTE WOCHE (immer rechts vorgerendert bereit)
-                            SingleWeekGridView(
-                                weekStart: nextWeekStart,
-                                availableWidth: availableWidth,
-                                calculatedRowHeight: calculatedRowHeight,
-                                headerHeight: headerHeight,
-                                periodColumnWidth: periodColumnWidth,
-                                noteNamespace: noteNamespace
-                            )
-                            .frame(width: availableWidth)
-                        }
-                        // The current week starts in the middle. dragOffset is
-                        // updated for every finger movement, so adjacent weeks
-                        // visibly follow the gesture instead of jumping on lift.
-                        .offset(x: -availableWidth + dragOffset)
-                        .frame(width: availableWidth, alignment: .leading)
-                        .clipped()
-                        // A UIKit pan recognizer on the enclosing scroll view
-                        // makes horizontal swiping track the finger even when
-                        // the swipe starts on top of a (tappable) lesson block.
-                        .background(
-                            WeekPanGestureAttachment(
-                                onChanged: { translation in
-                                    handleWeekPanChanged(translation, pageWidth: availableWidth)
-                                },
-                                onEnded: { translation, velocity in
-                                    handleWeekPanEnded(translation, velocity: velocity, pageWidth: availableWidth)
-                                },
-                                isEnabled: !isSettlingWeek && !viewModel.isDrawingOverlayPresented
-                            )
-                        )
+                    // 2. HAUPTBILDSCHIRM: je nach Ansichts-Modus das
+                    // 3-Wochen-Karussell oder die reine Notiz-Übersicht.
+                    if viewModel.viewMode == .notesOnly {
+                        NotesOverviewListView(noteNamespace: noteNamespace)
+                            .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                    } else {
+                        weekCarousel(availableWidth: availableWidth, calculatedRowHeight: calculatedRowHeight)
+                            .transition(.opacity.combined(with: .scale(scale: 0.985)))
                     }
-                    .scrollDisabled(isSettlingWeek)
                 }
 
                 // 3. TOAST-BENACHRICHTIGUNGEN
@@ -170,6 +121,69 @@ public struct TimetableView: View {
                 viewModel.successMessage = nil
             }
         }
+    }
+
+    // MARK: - Wochen-Karussell (Standard & Notizen hervorgehoben)
+
+    /// Das vorbereitete 3-Wochen-Karussell (vorherige, aktuelle, nächste Woche).
+    private func weekCarousel(availableWidth: CGFloat, calculatedRowHeight: CGFloat) -> some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 0) {
+                // VORHERIGE WOCHE (immer links vorgerendert bereit)
+                SingleWeekGridView(
+                    weekStart: previousWeekStart,
+                    availableWidth: availableWidth,
+                    calculatedRowHeight: calculatedRowHeight,
+                    headerHeight: headerHeight,
+                    periodColumnWidth: periodColumnWidth,
+                    noteNamespace: noteNamespace
+                )
+                .frame(width: availableWidth)
+
+                // AKTUELLE WOCHE
+                SingleWeekGridView(
+                    weekStart: viewModel.selectedWeekStart,
+                    availableWidth: availableWidth,
+                    calculatedRowHeight: calculatedRowHeight,
+                    headerHeight: headerHeight,
+                    periodColumnWidth: periodColumnWidth,
+                    noteNamespace: noteNamespace
+                )
+                .frame(width: availableWidth)
+
+                // NÄCHSTE WOCHE (immer rechts vorgerendert bereit)
+                SingleWeekGridView(
+                    weekStart: nextWeekStart,
+                    availableWidth: availableWidth,
+                    calculatedRowHeight: calculatedRowHeight,
+                    headerHeight: headerHeight,
+                    periodColumnWidth: periodColumnWidth,
+                    noteNamespace: noteNamespace
+                )
+                .frame(width: availableWidth)
+            }
+            // The current week starts in the middle. dragOffset is
+            // updated for every finger movement, so adjacent weeks
+            // visibly follow the gesture instead of jumping on lift.
+            .offset(x: -availableWidth + dragOffset)
+            .frame(width: availableWidth, alignment: .leading)
+            .clipped()
+            // A UIKit pan recognizer on the enclosing scroll view
+            // makes horizontal swiping track the finger even when
+            // the swipe starts on top of a (tappable) lesson block.
+            .background(
+                WeekPanGestureAttachment(
+                    onChanged: { translation in
+                        handleWeekPanChanged(translation, pageWidth: availableWidth)
+                    },
+                    onEnded: { translation, velocity in
+                        handleWeekPanEnded(translation, velocity: velocity, pageWidth: availableWidth)
+                    },
+                    isEnabled: !isSettlingWeek && !viewModel.isDrawingOverlayPresented
+                )
+            )
+        }
+        .scrollDisabled(isSettlingWeek)
     }
 
     // MARK: - Wochen-Wischen (kontinuierlich, folgt dem Finger)

@@ -2,20 +2,23 @@ import SwiftUI
 import UIKit
 
 /// Zuverlässiges Textfeld für iPadOS & iOS mit voller Tastatur-Unterstützung.
-/// Verwendet natives SwiftUI TextField mit angepasstem Liquid-Glass Styling und
-/// garantiert, dass die Bildschirmtastatur beim Antippen sofort erscheint.
+///
+/// Kern ist ein natives UIKit-`UITextField` (per UIViewRepresentable). Im
+/// Gegensatz zum SwiftUI-`TextField` mit FocusState erscheint die
+/// Bildschirmtastatur damit garantiert beim Antippen – auch auf iPads mit
+/// gekoppeltem Apple Pencil / Scribble, wo SwiftUI-Felder zuverlässig
+/// versagten. Scribble (Handschrift direkt ins Feld schreiben) bleibt
+/// weiterhin möglich.
 public struct KeyboardTextField: View {
     @Binding private var text: String
     private let placeholder: String
     private let isSecure: Bool
-    private let capitalization: TextInputAutocapitalization
-    private let autocorrection: Bool
+    private let capitalization: UITextAutocapitalizationType
+    private let autocorrection: UITextAutocorrectionType
     private let keyboardType: UIKeyboardType
     private let contentType: UITextContentType?
-    private let returnKeyType: SubmitLabel
+    private let returnKeyType: UIReturnKeyType
     private let onSubmit: () -> Void
-
-    @FocusState private var isFocused: Bool
 
     public init(
         _ placeholder: String,
@@ -31,60 +34,28 @@ public struct KeyboardTextField: View {
         self.placeholder = placeholder
         self._text = text
         self.isSecure = isSecure
-        self.autocorrection = (autocorrection != .no)
+        self.capitalization = capitalization
+        self.autocorrection = autocorrection
         self.keyboardType = keyboardType
         self.contentType = contentType
+        self.returnKeyType = returnKeyType
         self.onSubmit = onSubmit
-
-        switch capitalization {
-        case .none:
-            self.capitalization = .never
-        case .allCharacters:
-            self.capitalization = .characters
-        case .words:
-            self.capitalization = .words
-        case .sentences:
-            self.capitalization = .sentences
-        @unknown default:
-            self.capitalization = .sentences
-        }
-
-        switch returnKeyType {
-        case .done:
-            self.returnKeyType = .done
-        case .go:
-            self.returnKeyType = .go
-        case .next:
-            self.returnKeyType = .next
-        case .search:
-            self.returnKeyType = .search
-        case .send:
-            self.returnKeyType = .send
-        default:
-            self.returnKeyType = .done
-        }
     }
 
     public var body: some View {
         HStack(spacing: 8) {
-            if isSecure {
-                SecureField(placeholder, text: $text)
-                    .font(.system(size: 15, weight: .regular, design: .default))
-                    .textInputAutocapitalization(capitalization)
-                    .autocorrectionDisabled(!autocorrection)
-                    .focused($isFocused)
-                    .submitLabel(returnKeyType)
-                    .onSubmit(onSubmit)
-            } else {
-                TextField(placeholder, text: $text)
-                    .font(.system(size: 15, weight: .regular, design: .default))
-                    .textInputAutocapitalization(capitalization)
-                    .autocorrectionDisabled(!autocorrection)
-                    .keyboardType(keyboardType)
-                    .focused($isFocused)
-                    .submitLabel(returnKeyType)
-                    .onSubmit(onSubmit)
-            }
+            NativeTextField(
+                placeholder: placeholder,
+                text: $text,
+                isSecure: isSecure,
+                capitalization: capitalization,
+                autocorrection: autocorrection,
+                keyboardType: keyboardType,
+                contentType: contentType,
+                returnKeyType: returnKeyType,
+                onSubmit: onSubmit
+            )
+            .fixedSize(horizontal: false, vertical: true)
 
             if !text.isEmpty {
                 Button(action: {
@@ -106,11 +77,102 @@ public struct KeyboardTextField: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(isFocused ? Color.blue.opacity(0.6) : Color.white.opacity(0.15), lineWidth: 1)
+                .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
         )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            isFocused = true
+    }
+}
+
+/// Die eigentliche UIKit-Brücke. Das Feld wird nativ First Responder, wenn es
+/// angetippt wird – dadurch öffnet iPadOS zuverlässig die Tastatur.
+private struct NativeTextField: UIViewRepresentable {
+    let placeholder: String
+    @Binding var text: String
+    let isSecure: Bool
+    let capitalization: UITextAutocapitalizationType
+    let autocorrection: UITextAutocorrectionType
+    let keyboardType: UIKeyboardType
+    let contentType: UITextContentType?
+    let returnKeyType: UIReturnKeyType
+    let onSubmit: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIView(context: Context) -> UITextField {
+        let textField = UITextField(frame: .zero)
+        textField.delegate = context.coordinator
+        textField.borderStyle = .none
+        textField.backgroundColor = .clear
+        textField.font = .systemFont(ofSize: 15)
+        textField.textColor = .label
+        textField.attributedPlaceholder = NSAttributedString(
+            string: placeholder,
+            attributes: [.foregroundColor: UIColor.placeholderText]
+        )
+        textField.autocapitalizationType = capitalization
+        textField.autocorrectionType = autocorrection
+        textField.keyboardType = keyboardType
+        textField.textContentType = contentType
+        textField.returnKeyType = returnKeyType
+        textField.enablesReturnKeyAutomatically = false
+        textField.clearButtonMode = .never
+        textField.isSecureTextEntry = isSecure
+        textField.text = text
+
+        textField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textField.setContentHuggingPriority(.required, for: .vertical)
+
+        textField.addTarget(
+            context.coordinator,
+            action: #selector(Coordinator.editingChanged(_:)),
+            for: .editingChanged
+        )
+
+        return textField
+    }
+
+    func updateUIView(_ uiView: UITextField, context: Context) {
+        context.coordinator.parent = self
+
+        uiView.autocapitalizationType = capitalization
+        uiView.autocorrectionType = autocorrection
+        uiView.keyboardType = keyboardType
+        uiView.textContentType = contentType
+        uiView.returnKeyType = returnKeyType
+        if uiView.isSecureTextEntry != isSecure {
+            uiView.isSecureTextEntry = isSecure
+        }
+        let attributed = NSAttributedString(
+            string: placeholder,
+            attributes: [.foregroundColor: UIColor.placeholderText]
+        )
+        if uiView.attributedPlaceholder?.string != placeholder {
+            uiView.attributedPlaceholder = attributed
+        }
+
+        // Änderungen von außen (z. B. Lösch-Button, Zurücksetzen beim
+        // Bearbeiten-Sheet) übernehmen, aber nie mitten in einer laufenden
+        // IME-Eingabe greifen.
+        if uiView.text != text, uiView.markedTextRange == nil {
+            uiView.text = text
+        }
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: NativeTextField
+
+        init(_ parent: NativeTextField) {
+            self.parent = parent
+        }
+
+        @objc func editingChanged(_ textField: UITextField) {
+            parent.text = textField.text ?? ""
+        }
+
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            parent.onSubmit()
+            return true
         }
     }
 }

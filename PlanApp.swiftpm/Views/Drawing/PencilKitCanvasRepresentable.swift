@@ -17,6 +17,13 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     public let onRedoAvailable: (Bool) -> Void
     public let onCanvasCreated: (PKCanvasView) -> Void
     public let onFingerPan: (CGSize) -> Void
+    /// Wird bei jeder Änderung der Zeichnung aufgerufen (Strich gezeichnet,
+    /// radiert, Undo/Redo im Canvas) – dient zum Zeitstempel der letzten
+    /// Strich-Mutation für das kombinierte Undo (Zeichnung + Textfelder).
+    public let onStrokeMutation: () -> Void
+    /// Zentrale Undo-Anfrage (Squeeze / Doppeltippen des Apple Pencil). Läuft
+    /// über dasselbe kombinierte Undo wie der Toolbar-Button.
+    public let onRequestUndo: () -> Void
 
     public init(
         drawing: Binding<PKDrawing>,
@@ -28,7 +35,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         onUndoAvailable: @escaping (Bool) -> Void = { _ in },
         onRedoAvailable: @escaping (Bool) -> Void = { _ in },
         onCanvasCreated: @escaping (PKCanvasView) -> Void = { _ in },
-        onFingerPan: @escaping (CGSize) -> Void = { _ in }
+        onFingerPan: @escaping (CGSize) -> Void = { _ in },
+        onStrokeMutation: @escaping () -> Void = {},
+        onRequestUndo: @escaping () -> Void = {}
     ) {
         self._drawing = drawing
         self.toolSelection = toolSelection
@@ -40,6 +49,8 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         self.onRedoAvailable = onRedoAvailable
         self.onCanvasCreated = onCanvasCreated
         self.onFingerPan = onFingerPan
+        self.onStrokeMutation = onStrokeMutation
+        self.onRequestUndo = onRequestUndo
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -178,12 +189,13 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         public func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             DispatchQueue.main.async {
                 self.parent.drawing = canvasView.drawing
+                self.parent.onStrokeMutation()
                 self.parent.onUndoAvailable(canvasView.undoManager?.canUndo ?? false)
                 self.parent.onRedoAvailable(canvasView.undoManager?.canRedo ?? false)
             }
         }
 
-        // Apple Pencil Pro squeeze -> undo.
+        // Apple Pencil Pro squeeze -> kombiniertes Undo (Zeichnung + Textfelder).
         @available(iOS 17.5, *)
         public func pencilInteraction(
             _ interaction: UIPencilInteraction,
@@ -192,16 +204,16 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             if squeeze.phase == .ended {
                 DispatchQueue.main.async { [weak self] in
                     Haptics.tap()
-                    self?.canvasView?.undoManager?.undo()
+                    self?.parent.onRequestUndo()
                 }
             }
         }
 
-        // Double-tap fallback -> undo.
+        // Double-tap fallback -> kombiniertes Undo.
         public func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
             DispatchQueue.main.async { [weak self] in
                 Haptics.tap()
-                self?.canvasView?.undoManager?.undo()
+                self?.parent.onRequestUndo()
             }
         }
     }
@@ -210,12 +222,18 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
     /// Rendert die Vorschau einer Notiz, zugeschnitten auf den Inhalt.
     /// Sowohl Pencil-Striche als auch Textfelder werden berücksichtigt.
-    public static func renderNotePreview(drawing: PKDrawing, textBoxes: [NoteTextBox]) -> UIImage? {
+    /// Mit `clipRect` (z. B. Grenzen der Zeichenfläche) werden Inhalte hart
+    /// auf diesen Bereich begrenzt – nichts außerhalb landet in der Vorschau.
+    public static func renderNotePreview(
+        drawing: PKDrawing,
+        textBoxes: [NoteTextBox],
+        clipRect: CGRect? = nil
+    ) -> UIImage? {
         var contentRect = CGRect.null
 
         if !drawing.strokes.isEmpty {
             let bounds = drawing.bounds
-            if !bounds.isNull && !bounds.isInfinite && bounds.width > 2 && bounds.height > 2 {
+            if !bounds.isNull && !bounds.isInfinite && bounds.width > 1 && bounds.height > 1 {
                 contentRect = contentRect.union(bounds)
             }
         }
@@ -250,6 +268,11 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
         for box in visibleBoxes {
             contentRect = contentRect.union(textRect(for: box))
+        }
+
+        // Hart auf die Zeichenfläche begrenzen, falls gewünscht.
+        if let clipRect {
+            contentRect = contentRect.intersection(clipRect)
         }
 
         guard !contentRect.isNull, contentRect.width > 2, contentRect.height > 2 else {

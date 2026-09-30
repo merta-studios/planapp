@@ -47,11 +47,75 @@ public struct TimetableHeaderView: View {
         .fixedSize(horizontal: true, vertical: false)
     }
 
+    /// Button direkt neben dem Titel: zeigt den aktuellen Ansichts-Modus und
+    /// öffnet die Auswahl (Standard / Notizen hervorgehoben / Nur Notizen)
+    /// mit Häkchen beim aktiven Modus.
+    private var viewModeMenu: some View {
+        Menu {
+            ForEach(TimetableViewMode.allCases) { mode in
+                Button {
+                    Haptics.select()
+                    viewModel.setViewMode(mode)
+                } label: {
+                    if viewModel.viewMode == mode {
+                        Label(mode.displayName, systemImage: "checkmark")
+                    } else {
+                        Label(mode.displayName, systemImage: mode.systemImage)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: viewModel.viewMode.systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(viewModel.viewMode.displayName)
+                    .font(.system(size: 14, weight: .semibold))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .opacity(0.6)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .liquidGlassButton(cornerRadius: 14, tint: viewModel.viewMode == .standard ? nil : .blue)
+        .foregroundColor(.primary)
+        .fixedSize()
+        .accessibilityLabel("Ansichts-Modus: \(viewModel.viewMode.displayName)")
+        .accessibilityHint("Öffnet die Auswahl des Ansichts-Modus")
+    }
+
+    /// Kompakte Variante des Modus-Buttons (nur Symbol) für schmale Breiten.
+    private var compactViewModeMenu: some View {
+        Menu {
+            ForEach(TimetableViewMode.allCases) { mode in
+                Button {
+                    Haptics.select()
+                    viewModel.setViewMode(mode)
+                } label: {
+                    if viewModel.viewMode == mode {
+                        Label(mode.displayName, systemImage: "checkmark")
+                    } else {
+                        Label(mode.displayName, systemImage: mode.systemImage)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: viewModel.viewMode.systemImage)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.primary)
+                .frame(width: 34, height: 34)
+        }
+        .liquidGlassButton(cornerRadius: 17, tint: viewModel.viewMode == .standard ? nil : .blue)
+        .fixedSize()
+        .accessibilityLabel("Ansichts-Modus: \(viewModel.viewMode.displayName)")
+    }
+
     private func regularHeader(relativeTo date: Date) -> some View {
         let showsJumpButton = !viewModel.isViewingRelevantCurrentWeek(relativeTo: date)
 
         return HStack(spacing: 14) {
             appTitle
+            viewModeMenu
 
             Spacer(minLength: 12)
 
@@ -83,6 +147,8 @@ public struct TimetableHeaderView: View {
         let showsJumpButton = !viewModel.isViewingRelevantCurrentWeek(relativeTo: date)
 
         return HStack(spacing: 8) {
+            compactViewModeMenu
+
             weekCard
                 .layoutPriority(2)
 

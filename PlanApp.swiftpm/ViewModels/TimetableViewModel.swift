@@ -31,6 +31,9 @@ public final class TimetableViewModel: ObservableObject {
     @Published public var drawingSettings: DrawingSettings = .default
     @Published public var untisCredentials: UntisCredentials = UntisCredentials()
     @Published public var lessonNotes: [String: LessonNote] = [:]
+    /// Aktueller Ansichts-Modus (Standard / Notizen hervorgehoben / Nur Notizen).
+    /// Wird persistent gespeichert und beim Start wiederhergestellt.
+    @Published public var viewMode: TimetableViewMode = .standard
 
     // Letzter Synchronisationszeitpunkt für die Statusanzeige
     @Published public var lastSyncDate: Date? = Date()
@@ -76,6 +79,7 @@ public final class TimetableViewModel: ObservableObject {
         self.periods = storage.loadPeriods()
         self.lessons = storage.loadLessons()
         self.lessonNotes = storage.loadAllLessonNotes()
+        self.viewMode = storage.loadViewMode()
         self.lastSyncDate = untisCredentials.lastSyncDate ?? Date()
 
         // Optional: Notizen zu bereits vergangenen Stunden automatisch entfernen
@@ -264,6 +268,23 @@ public final class TimetableViewModel: ObservableObject {
             color: Color(hex: colorHex).pastel,
             gradientEndColor: nil
         )
+    }
+
+    // MARK: - Ansichts-Modus
+
+    /// Wechselt den Ansichts-Modus und speichert ihn sofort, damit er beim
+    /// nächsten App-Start wieder aktiv ist.
+    public func setViewMode(_ mode: TimetableViewMode) {
+        guard viewMode != mode else { return }
+        withAnimation(.easeInOut(duration: 0.25)) {
+            viewMode = mode
+        }
+        storage.saveViewMode(mode)
+    }
+
+    /// Prüft, ob eine Stunde eine Notiz mit sichtbarem Inhalt hat.
+    public func hasVisibleNote(for lesson: Lesson) -> Bool {
+        noteFor(lesson: lesson)?.hasVisibleContent ?? false
     }
 
     // MARK: - Drawing & Notes Handling
