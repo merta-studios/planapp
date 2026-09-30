@@ -1,10 +1,17 @@
 import SwiftUI
 
+private enum WeekSwipeAxis: Equatable {
+    case horizontal
+    case vertical
+}
+
 /// Hauptansicht der PlanApp: Stundenplan mit flüssigem 3-Wochen-Karussell und Liquid-Glass Design
 public struct TimetableView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
 
     @State private var dragOffset: CGFloat = 0
+    @State private var weekSwipeAxis: WeekSwipeAxis?
+    @State private var isSettlingWeek = false
     @State private var toastMessage: String? = nil
     @State private var toastIsError: Bool = false
     @Namespace private var noteNamespace
@@ -77,51 +84,19 @@ public struct TimetableView: View {
                             )
                             .frame(width: availableWidth)
                         }
-                        // Die aktuelle Woche ist in der Mitte platziert (-availableWidth)
+                        // The current week starts in the middle. dragOffset is
+                        // updated for every finger movement, so adjacent weeks
+                        // visibly follow the gesture instead of jumping on lift.
                         .offset(x: -availableWidth + dragOffset)
+                        .frame(width: availableWidth, alignment: .leading)
+                        .clipped()
                     }
-                    // Realistische 1:1 Echtzeit-Wischgeste (Interactive Swiping)
-                    .gesture(
-                        DragGesture(minimumDistance: 15, coordinateSpace: .local)
-                            .onChanged { value in
-                                // Nur horizontale Bewegung tracken
-                                if abs(value.translation.width) > abs(value.translation.height) {
-                                    dragOffset = value.translation.width
-                                }
-                            }
-                            .onEnded { value in
-                                let horizontalSwipe = abs(value.translation.width) > abs(value.translation.height)
-                                let threshold: CGFloat = max(60, availableWidth * 0.15)
-
-                                guard horizontalSwipe, abs(value.translation.width) > threshold else {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                                        dragOffset = 0
-                                    }
-                                    return
-                                }
-
-                                let movingToNext = value.translation.width < 0
-                                let targetOffset: CGFloat = movingToNext ? -availableWidth : availableWidth
-
-                                withAnimation(.easeOut(duration: 0.22)) {
-                                    dragOffset = targetOffset
-                                }
-
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-                                    if movingToNext {
-                                        viewModel.goToNextWeek()
-                                    } else {
-                                        viewModel.goToPreviousWeek()
-                                    }
-
-                                    var transaction = Transaction()
-                                    transaction.disablesAnimations = true
-                                    withTransaction(transaction) {
-                                        dragOffset = 0
-                                    }
-                                }
-                            }
-                    )
+                    .scrollDisabled(weekSwipeAxis == .horizontal || isSettlingWeek)
+                    .contentShape(Rectangle())
+                    // A high-priority recognizer prevents the vertical scroll
+                    // view from swallowing diagonal week swipes. Direction is
+                    // locked with generous tolerance after a few points.
+                    .highPriorityGesture(weekSwipeGesture(pageWidth: availableWidth))
                 }
 
                 // 3. TOAST-BENACHRICHTIGUNGEN
@@ -176,6 +151,86 @@ public struct TimetableView: View {
         }
     }
 
+    private func weekSwipeGesture(pageWidth: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 5, coordinateSpace: .local)
+            .onChanged { value in
+                guard !isSettlingWeek else { return }
+
+                let horizontal = abs(value.translation.width)
+                let vertical = abs(value.translation.height)
+
+                if weekSwipeAxis == nil, max(horizontal, vertical) > 7 {
+                    // Horizontal intent remains valid even with a pronounced
+                    // diagonal component (roughly up to 60 degrees).
+                    if horizontal >= vertical * 0.55 {
+                        weekSwipeAxis = .horizontal
+                    } else if vertical >= horizontal * 1.45 {
+                        weekSwipeAxis = .vertical
+                    }
+                }
+
+                guard weekSwipeAxis == .horizontal else { return }
+
+                let rawOffset = value.translation.width
+                if abs(rawOffset) <= pageWidth {
+                    dragOffset = rawOffset
+                } else {
+                    // Soft resistance when dragging past the prepared page.
+                    let overflow = abs(rawOffset) - pageWidth
+                    dragOffset = rawOffset < 0
+                        ? -(pageWidth + overflow * 0.16)
+                        : pageWidth + overflow * 0.16
+                }
+            }
+            .onEnded { value in
+                defer { weekSwipeAxis = nil }
+                guard weekSwipeAxis == .horizontal, !isSettlingWeek else {
+                    if dragOffset != 0 {
+                        withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
+                            dragOffset = 0
+                        }
+                    }
+                    return
+                }
+
+                let distance = value.translation.width
+                let projectedDistance = value.predictedEndTranslation.width
+                let crossedDistanceThreshold = abs(distance) > max(44, pageWidth * 0.12)
+                let hasFlickVelocity = abs(projectedDistance) > max(90, pageWidth * 0.28)
+
+                guard crossedDistanceThreshold || hasFlickVelocity else {
+                    withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
+                        dragOffset = 0
+                    }
+                    return
+                }
+
+                isSettlingWeek = true
+                let directionValue = abs(distance) > 8 ? distance : projectedDistance
+                let movingToNext = directionValue < 0
+                let targetOffset: CGFloat = movingToNext ? -pageWidth : pageWidth
+
+                withAnimation(.interactiveSpring(response: 0.27, dampingFraction: 0.90)) {
+                    dragOffset = targetOffset
+                }
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.27) {
+                    if movingToNext {
+                        viewModel.goToNextWeek()
+                    } else {
+                        viewModel.goToPreviousWeek()
+                    }
+
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        dragOffset = 0
+                        isSettlingWeek = false
+                    }
+                }
+            }
+    }
+
     private func showToast(_ message: String, isError: Bool) {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
             self.toastMessage = message
@@ -204,7 +259,12 @@ struct SingleWeekGridView: View {
 
     var body: some View {
         let schoolDays = weekStart.schoolWeekDays()
-        let dayColumnWidth = max(120, (availableWidth - periodColumnWidth - 36) / 5)
+        let horizontalPadding: CGFloat = 32
+        let totalColumnSpacing: CGFloat = 20
+        let dayColumnWidth = max(
+            120,
+            (availableWidth - horizontalPadding - periodColumnWidth - totalColumnSpacing) / 5
+        )
 
         HStack(alignment: .top, spacing: 4) {
             // SPALTE 0: Stundennummern und Uhrzeiten
