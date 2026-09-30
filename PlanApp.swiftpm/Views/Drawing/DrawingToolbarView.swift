@@ -46,16 +46,12 @@ public struct DrawingToolbarView: View {
 
     public var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 penControls
-
-                if showThicknessSlider {
-                    thicknessControls
-                        .transition(.scale.combined(with: .opacity))
-                }
-
                 toolbarDivider
                 markerControls
+                toolbarDivider
+                thicknessButton
                 toolbarDivider
                 eraserButton
                 toolbarDivider
@@ -63,8 +59,8 @@ public struct DrawingToolbarView: View {
                 toolbarDivider
                 clearButton
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
             .fixedSize(horizontal: true, vertical: false)
         }
         .background(Capsule().fill(.ultraThinMaterial))
@@ -80,7 +76,8 @@ public struct DrawingToolbarView: View {
                 )
         )
         .clipShape(Capsule())
-        .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
+        .shadow(color: Color.black.opacity(0.12), radius: 6, x: 0, y: 2)
+        .fixedSize(horizontal: true, vertical: false)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Zeichenwerkzeuge")
     }
@@ -88,7 +85,7 @@ public struct DrawingToolbarView: View {
     private var penControls: some View {
         HStack(spacing: 6) {
             Image(systemName: "pencil.tip")
-                .font(.system(size: 14))
+                .font(.system(size: 13))
                 .foregroundColor(.primary)
                 .accessibilityHidden(true)
 
@@ -107,7 +104,7 @@ public struct DrawingToolbarView: View {
                     ZStack {
                         Circle()
                             .fill(swatch)
-                            .frame(width: 22, height: 22)
+                            .frame(width: 20, height: 20)
                             .overlay(
                                 Circle().strokeBorder(Color.white.opacity(0.4), lineWidth: 1)
                             )
@@ -115,68 +112,69 @@ public struct DrawingToolbarView: View {
                         if isSelected {
                             Circle()
                                 .strokeBorder(Color.blue, lineWidth: 2)
-                                .frame(width: 27, height: 27)
+                                .frame(width: 25, height: 25)
                         }
                     }
-                    .frame(width: 29, height: 29)
+                    .frame(width: 27, height: 27)
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.lift)
                 .accessibilityLabel("Stift \(item.name)")
                 .accessibilityValue(isSelected ? "Ausgewählt" : "")
             }
-
-            Button {
-                withAnimation(.spring(response: 0.25, dampingFraction: 0.78)) {
-                    showThicknessSlider.toggle()
-                }
-            } label: {
-                ZStack {
-                    Circle()
-                        .fill(Color(UIColor.tertiarySystemFill))
-                        .frame(width: 28, height: 28)
-                    Circle()
-                        .fill(Color.primary)
-                        .frame(
-                            width: max(2, min(14, penWidth * 1.5)),
-                            height: max(2, min(14, penWidth * 1.5))
-                        )
-                }
-            }
-            .buttonStyle(.plain)
-            .hoverEffect(.lift)
-            .accessibilityLabel("Strichstärke")
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(Color(UIColor.tertiarySystemBackground).opacity(0.72))
         .clipShape(Capsule())
     }
 
-    private var thicknessControls: some View {
-        HStack(spacing: 7) {
-            Text("Dicke")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-
-            Slider(value: $penWidth, in: 1...14, step: 0.5)
-                .frame(width: 100)
-
-            Text(String(format: "%.1f", penWidth))
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(.secondary)
-                .frame(width: 30)
+    /// General stroke-thickness control. It applies to every tool (pen and
+    /// marker), which is why it lives on its own, right before the eraser,
+    /// instead of being nested inside the pen's color group.
+    private var thicknessButton: some View {
+        Button {
+            showThicknessSlider = true
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(Color(UIColor.tertiarySystemFill))
+                    .frame(width: 27, height: 27)
+                Circle()
+                    .fill(Color.primary)
+                    .frame(
+                        width: max(2, min(14, penWidth * 1.5)),
+                        height: max(2, min(14, penWidth * 1.5))
+                    )
+            }
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(Color(UIColor.tertiarySystemBackground).opacity(0.88))
-        .clipShape(Capsule())
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+        .accessibilityLabel("Strichstärke")
+        .popover(isPresented: $showThicknessSlider, arrowEdge: .bottom) {
+            VerticalThicknessSlider(penWidth: $penWidth, previewColor: currentToolPreviewColor)
+                .frame(width: 110, height: 260)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    /// The color used for the live thickness preview, matching whichever tool
+    /// is currently selected.
+    private var currentToolPreviewColor: Color {
+        switch toolSelection {
+        case .pen(let color):
+            return colorScheme == .dark && color == .black ? .white : Color(uiColor: color)
+        case .marker(let color):
+            return Color(uiColor: color)
+        case .eraser:
+            return Color(UIColor.systemGray2)
+        }
     }
 
     private var markerControls: some View {
         HStack(spacing: 6) {
             Image(systemName: "highlighter")
-                .font(.system(size: 14))
+                .font(.system(size: 13))
                 .foregroundColor(.primary)
                 .accessibilityHidden(true)
 
@@ -194,15 +192,15 @@ public struct DrawingToolbarView: View {
                     ZStack {
                         RoundedRectangle(cornerRadius: 4, style: .continuous)
                             .fill(item.swiftColor)
-                            .frame(width: 21, height: 21)
+                            .frame(width: 19, height: 19)
 
                         if isSelected {
                             RoundedRectangle(cornerRadius: 5, style: .continuous)
                                 .strokeBorder(Color.primary, lineWidth: 2)
-                                .frame(width: 27, height: 27)
+                                .frame(width: 25, height: 25)
                         }
                     }
-                    .frame(width: 29, height: 29)
+                    .frame(width: 27, height: 27)
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.lift)
@@ -210,7 +208,7 @@ public struct DrawingToolbarView: View {
                 .accessibilityValue(isSelected ? "Ausgewählt" : "")
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(Color(UIColor.tertiarySystemBackground).opacity(0.72))
         .clipShape(Capsule())
@@ -231,8 +229,8 @@ public struct DrawingToolbarView: View {
                 Text("Radierer")
                     .font(.system(size: 12))
             }
-            .padding(.horizontal, 10)
-            .frame(height: 31)
+            .padding(.horizontal, 9)
+            .frame(height: 29)
             .background(isSelected ? Color.blue : Color(UIColor.tertiarySystemBackground).opacity(0.72))
             .foregroundColor(isSelected ? .white : .primary)
             .clipShape(Capsule())
@@ -262,7 +260,7 @@ public struct DrawingToolbarView: View {
             Image(systemName: "trash")
                 .font(.system(size: 13))
                 .foregroundColor(.red)
-                .frame(width: 31, height: 31)
+                .frame(width: 29, height: 29)
                 .background(Color.red.opacity(0.12))
                 .clipShape(Circle())
         }
@@ -283,12 +281,54 @@ public struct DrawingToolbarView: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 13))
-                .frame(width: 31, height: 31)
+                .frame(width: 29, height: 29)
                 .background(Color(UIColor.tertiarySystemBackground).opacity(0.72))
                 .clipShape(Circle())
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
         .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+/// Vertical (up/down) thickness slider shown in a popover above the toolbar's
+/// thickness button. A live-updating circle previews exactly how thick the
+/// current tool's stroke would be at the selected width.
+private struct VerticalThicknessSlider: View {
+    @Binding var penWidth: CGFloat
+    let previewColor: Color
+
+    private var previewDiameter: CGFloat {
+        max(6, min(52, penWidth * 3.4))
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("Dicke")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.secondary)
+
+            ZStack {
+                Circle()
+                    .fill(Color(UIColor.tertiarySystemFill))
+                    .frame(width: 56, height: 56)
+                Circle()
+                    .fill(previewColor)
+                    .frame(width: previewDiameter, height: previewDiameter)
+            }
+            .frame(height: 60)
+            .animation(.interactiveSpring(response: 0.15, dampingFraction: 0.8), value: penWidth)
+
+            Slider(value: $penWidth, in: 1...20, step: 0.5)
+                .frame(width: 150)
+                .rotationEffect(.degrees(-90))
+                .frame(width: 44, height: 150)
+
+            Text(String(format: "%.1f pt", penWidth))
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(.secondary)
+        }
+        .padding(.vertical, 18)
+        .frame(maxHeight: .infinity)
     }
 }

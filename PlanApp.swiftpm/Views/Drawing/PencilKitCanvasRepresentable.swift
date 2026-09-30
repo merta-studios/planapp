@@ -55,6 +55,14 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         canvasView.drawingPolicy = .pencilOnly
         canvasView.isScrollEnabled = false
         canvasView.bounces = false
+        // PKCanvasView is itself a UIScrollView subclass and keeps its own
+        // built-in pan (and, if zooming were enabled, pinch) recognizer alive
+        // even while isScrollEnabled is false. That recognizer still competes
+        // for single- and two-finger drags, which is why one/two-finger
+        // panning previously never reached our own gesture below. Disabling
+        // it explicitly frees finger touches for `fingerPan`/`fingerPinch`.
+        canvasView.panGestureRecognizer.isEnabled = false
+        canvasView.pinchGestureRecognizer?.isEnabled = false
 
         let fingerPan = UIPanGestureRecognizer(
             target: context.coordinator,

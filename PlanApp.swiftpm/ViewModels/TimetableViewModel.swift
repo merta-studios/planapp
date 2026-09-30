@@ -21,6 +21,10 @@ public final class TimetableViewModel: ObservableObject {
     // Aktive Notiz-Ansicht (Zeichnen-Overlay)
     @Published public var activeNoteLesson: Lesson? = nil
     @Published public var isDrawingOverlayPresented: Bool = false
+    /// Bildschirm-Rahmen (globale Koordinaten) der Fach-Karte, von der die
+    /// Zeichenfläche gerade geöffnet wurde. Wird für die Zoom-Animation
+    /// benötigt, damit die Fläche sichtbar aus der Karte heraus wächst.
+    @Published public var activeNoteSourceFrame: CGRect = .zero
 
     // Navigation & UI State
     @Published public var isSettingsPresented: Bool = false
@@ -102,9 +106,19 @@ public final class TimetableViewModel: ObservableObject {
 
     // MARK: - Week Navigation
 
+    /// Gibt an, ob die aktuell angezeigte Woche der für die Navigation
+    /// relevanten "aktuellen Woche" entspricht (am Wochenende bereits die
+    /// Folgewoche). Wird verwendet, um den "Zur aktuellen Woche"-Button
+    /// im Header ein- bzw. auszublenden.
+    public func isViewingRelevantCurrentWeek(relativeTo date: Date = Date()) -> Bool {
+        selectedWeekStart == Date.relevantCurrentWeekStart(from: date)
+    }
+
     /// Springt zur aktuellen Woche zurück und lädt genau diese Woche nach.
+    /// Am Wochenende (wenn kein Tag der laufenden Woche mehr "heute" sein
+    /// kann) springt dies direkt zur nächsten Schulwoche.
     public func goToCurrentWeek() {
-        let current = Date().startOfWeek()
+        let current = Date.relevantCurrentWeekStart()
         weekNavigationDirection = current >= selectedWeekStart ? 1 : -1
         selectWeek(current)
     }
@@ -206,8 +220,11 @@ public final class TimetableViewModel: ObservableObject {
 
     // MARK: - Drawing & Notes Handling
 
-    /// Öffnet die Zeichnen-Notiz-Ansicht für eine Stunde
-    public func openNote(for lesson: Lesson) {
+    /// Öffnet die Zeichnen-Notiz-Ansicht für eine Stunde. `sourceFrame` ist der
+    /// Bildschirm-Rahmen der angetippten Fach-Karte (globale Koordinaten) und
+    /// wird als Startpunkt der Zoom-Animation verwendet.
+    public func openNote(for lesson: Lesson, sourceFrame: CGRect = .zero) {
+        self.activeNoteSourceFrame = sourceFrame
         withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
             self.activeNoteLesson = lesson
             self.isDrawingOverlayPresented = true

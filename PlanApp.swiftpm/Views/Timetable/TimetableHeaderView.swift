@@ -8,7 +8,14 @@ public struct TimetableHeaderView: View {
     public init() {}
 
     public var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+        // While Settings (or the drawing overlay) covers the screen this
+        // header isn't visible, so there is no reason to keep re-rendering it
+        // every second. That per-second tick was forcing constant relayout of
+        // this whole (Liquid-Glass / material heavy) header underneath the
+        // sheet, which is exactly what made the UI feel laggy while Settings
+        // was open.
+        let tickInterval: TimeInterval = (viewModel.isSettingsPresented || viewModel.isDrawingOverlayPresented) ? 300 : 1
+        TimelineView(.periodic(from: .now, by: tickInterval)) { timeline in
             ViewThatFits(in: .horizontal) {
                 regularHeader(relativeTo: timeline.date)
                 compactHeader(relativeTo: timeline.date)
@@ -35,8 +42,14 @@ public struct TimetableHeaderView: View {
 
             Spacer(minLength: 12)
 
-            weekCard
-                .layoutPriority(2)
+            HStack(spacing: 10) {
+                if !viewModel.isViewingRelevantCurrentWeek(relativeTo: date) {
+                    jumpToCurrentWeekButton
+                        .transition(.scale.combined(with: .opacity))
+                }
+                weekCard
+            }
+            .layoutPriority(2)
 
             Spacer(minLength: 12)
 
@@ -52,6 +65,11 @@ public struct TimetableHeaderView: View {
 
     private func compactHeader(relativeTo date: Date) -> some View {
         HStack(spacing: 8) {
+            if !viewModel.isViewingRelevantCurrentWeek(relativeTo: date) {
+                jumpToCurrentWeekButton
+                    .transition(.scale.combined(with: .opacity))
+            }
+
             weekCard
                 .layoutPriority(2)
 
@@ -62,6 +80,30 @@ public struct TimetableHeaderView: View {
 
             settingsButton
         }
+    }
+
+    /// Appears whenever the displayed week has no day that is "today" (this
+    /// already accounts for weekends, where the relevant week is the next
+    /// one), letting the user jump back with a single tap.
+    private var jumpToCurrentWeekButton: some View {
+        Button {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+                viewModel.goToCurrentWeek()
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.uturn.backward")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Heute")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+        }
+        .liquidGlassButton(cornerRadius: 14, tint: .blue, isFilled: true)
+        .foregroundColor(.white)
+        .fixedSize()
+        .accessibilityLabel("Zur aktuellen Woche springen")
     }
 
     private var weekCard: some View {

@@ -38,7 +38,7 @@ public struct PeriodConfigSection: View {
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .liquidGlassCard(cornerRadius: 10, strokeOpacity: 0.15)
+                    .lightCard(cornerRadius: 10, strokeOpacity: 0.15)
                 }
             }
 
@@ -66,10 +66,10 @@ public struct PeriodConfigSection: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
             }
-            .liquidGlassButton(cornerRadius: 10, tint: .blue)
+            .lightButton(cornerRadius: 10, tint: .blue)
             .foregroundColor(.blue)
         }
         .padding(16)
-        .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
+        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
     }
 }
