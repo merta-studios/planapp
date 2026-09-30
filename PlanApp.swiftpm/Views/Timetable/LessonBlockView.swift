@@ -5,7 +5,7 @@ public struct LessonBlockView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
 
     public let lesson: Lesson
-    public let height: CGFloat
+    public let blockHeight: CGFloat
     public let noteNamespace: Namespace.ID
 
     @State private var isHovered: Bool = false
@@ -18,9 +18,9 @@ public struct LessonBlockView: View {
     /// Notiz-Vorschau darf sich bis knapp an diesen Text heran vergrößern.
     @State private var textContentHeight: CGFloat = 26
 
-    public init(lesson: Lesson, height: CGFloat, noteNamespace: Namespace.ID) {
+    public init(lesson: Lesson, blockHeight: CGFloat, noteNamespace: Namespace.ID) {
         self.lesson = lesson
-        self.height = height
+        self.blockHeight = blockHeight
         self.noteNamespace = noteNamespace
     }
 
@@ -177,7 +177,7 @@ public struct LessonBlockView: View {
             .padding(8)
             .opacity(dimmedForNotesHighlight ? 0.28 : 1)
         }
-        .frame(height: height)
+        .frame(height: blockHeight)
         // Modus "Notizen hervorgehoben": Blöcke ohne Notiz stark aufhellen,
         // damit die Stunden mit Notizen sofort ins Auge springen.
         .overlay {
@@ -199,7 +199,7 @@ public struct LessonBlockView: View {
                 let maxW = max(24, globalFrame.width - 16)
                 // Verfügbare Höhe: Blockhöhe abzüglich oberem Padding,
                 // gemessenem Text und etwas Abstand nach unten.
-                let maxH = max(18, height - 8 - textContentHeight - 8 - 11)
+                let maxH = max(18, blockHeight - 8 - textContentHeight - 8 - 11)
 
                 Image(uiImage: uiImg)
                     .resizable()

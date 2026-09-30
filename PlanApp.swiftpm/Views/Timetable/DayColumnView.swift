@@ -151,7 +151,7 @@ public struct DayColumnView: View {
 
             LessonBlockView(
                 lesson: lesson,
-                height: blockHeight,
+                blockHeight: blockHeight,
                 noteNamespace: noteNamespace
             )
             .padding(.horizontal, 3)
