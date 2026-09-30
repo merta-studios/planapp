@@ -55,11 +55,11 @@ public struct KeyboardTextField: View {
                 returnKeyType: returnKeyType,
                 onSubmit: onSubmit
             )
+            .frame(maxWidth: .infinity)
             .fixedSize(horizontal: false, vertical: true)
 
             if !text.isEmpty {
                 Button(action: {
-                    Haptics.tap()
                     text = ""
                 }) {
                     Image(systemName: "xmark.circle.fill")
@@ -100,8 +100,8 @@ private struct NativeTextField: UIViewRepresentable {
         Coordinator(self)
     }
 
-    func makeUIView(context: Context) -> UITextField {
-        let textField = UITextField(frame: .zero)
+    func makeUIView(context: Context) -> SystemKeyboardTextField {
+        let textField = SystemKeyboardTextField(frame: .zero)
         textField.delegate = context.coordinator
         textField.borderStyle = .none
         textField.backgroundColor = .clear
@@ -119,6 +119,9 @@ private struct NativeTextField: UIViewRepresentable {
         textField.enablesReturnKeyAutomatically = false
         textField.clearButtonMode = .never
         textField.isSecureTextEntry = isSecure
+        // Keine alte PencilKit- oder benutzerdefinierte Eingabeansicht darf
+        // die Apple-Systemtastatur dieses Felds ersetzen.
+        textField.inputView = nil
         textField.text = text
 
         textField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -133,7 +136,7 @@ private struct NativeTextField: UIViewRepresentable {
         return textField
     }
 
-    func updateUIView(_ uiView: UITextField, context: Context) {
+    func updateUIView(_ uiView: SystemKeyboardTextField, context: Context) {
         context.coordinator.parent = self
 
         uiView.autocapitalizationType = capitalization
@@ -171,9 +174,50 @@ private struct NativeTextField: UIViewRepresentable {
             parent.text = textField.text ?? ""
         }
 
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            // `becomeFirstResponder()` allein reicht auf einigen iPad- und
+            // Swift-Playgrounds-Konfigurationen nicht: Der Cursor ist dann
+            // sichtbar, die Bildschirmtastatur bleibt aber aus. Die native
+            // Eingabeansicht deshalb nach jedem echten Fokuswechsel neu laden.
+            (textField as? SystemKeyboardTextField)?.requestSystemKeyboard()
+        }
+
         func textFieldShouldReturn(_ textField: UITextField) -> Bool {
             parent.onSubmit()
             return true
+        }
+    }
+}
+
+/// `UITextField`, das bei jedem direkten Tipp nicht nur den Fokus, sondern
+/// ausdrücklich auch die Apple-Systemtastatur anfordert. Die explizite
+/// Aktivierung ist besonders in SwiftUI-Sheets und bei gekoppeltem Apple
+/// Pencil nötig, wo UIKit gelegentlich nur den Cursor anzeigt.
+private final class SystemKeyboardTextField: UITextField {
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        requestSystemKeyboard()
+    }
+
+    func requestSystemKeyboard() {
+        guard isEnabled, isUserInteractionEnabled, window != nil else { return }
+
+        // `nil` bedeutet die normale, von iPadOS/iOS bereitgestellte Tastatur.
+        // Erst danach First Responder werden, damit keine veraltete
+        // PencilKit-/Scribble-Eingabeansicht wiederverwendet wird.
+        inputView = nil
+        if !isFirstResponder {
+            _ = becomeFirstResponder()
+        }
+        guard isFirstResponder else { return }
+
+        // Nach Ende des aktuellen Touch-/Fokus-Ereignisses neu laden. Direkt
+        // innerhalb von `touchesEnded` kann UIKit die Anforderung sonst noch
+        // durch seine eigene Responder-Verarbeitung überschreiben.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isFirstResponder, self.window != nil else { return }
+            self.inputView = nil
+            self.reloadInputViews()
         }
     }
 }

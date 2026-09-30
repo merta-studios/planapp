@@ -13,9 +13,6 @@ import UIKit
 struct NoteTextEditor: UIViewRepresentable {
     let text: String
     let fontSize: CGFloat
-    /// Textfarbe des Felds (liegt auf dem festen weißen Papier, kein
-    /// dynamisches Dark-Mode-Schwarzweiß).
-    let textColor: UIColor
     /// Ob das Feld gerade bearbeitet wird (Fokus halten/aufheben).
     let isEditing: Bool
     /// Wird bei jeder Texteingabe aufgerufen.
@@ -35,15 +32,17 @@ struct NoteTextEditor: UIViewRepresentable {
         textView.isScrollEnabled = false
         textView.font = .systemFont(ofSize: max(1, fontSize))
         // Text liegt auf dem festen weißen Papier und darf nicht mit dem
-        // globalen Dark-Mode-Farbschema weiß werden – die Farbe kommt aus
-        // dem Textfeld selbst (Standard: Schwarz).
-        textView.textColor = textColor
+        // globalen Dark-Mode-Farbschema weiß werden.
+        textView.textColor = .black
         textView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
         textView.textContainer.lineFragmentPadding = 0
         textView.textContainer.widthTracksTextView = true
         textView.autocorrectionType = .default
         textView.autocapitalizationType = .sentences
         textView.keyboardDismissMode = .none
+        // Immer die Apple-Systemtastatur verwenden; keine alte Eingabeansicht
+        // vom PencilKit-Canvas übernehmen.
+        textView.inputView = nil
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.setContentHuggingPriority(.required, for: .vertical)
         textView.text = text
@@ -52,12 +51,10 @@ struct NoteTextEditor: UIViewRepresentable {
             guard let textView,
                   let coordinator,
                   !coordinator.isDismantled,
-                  coordinator.parent.isEditing,
-                  !textView.isFirstResponder else { return }
+                  coordinator.parent.isEditing else { return }
             DispatchQueue.main.async {
-                if coordinator.parent.isEditing && !coordinator.isDismantled && !textView.isFirstResponder {
-                    textView.becomeFirstResponder()
-                }
+                guard coordinator.parent.isEditing, !coordinator.isDismantled else { return }
+                textView.requestSystemKeyboard()
             }
         }
 
@@ -68,9 +65,8 @@ struct NoteTextEditor: UIViewRepresentable {
                       let coordinator,
                       !coordinator.isDismantled,
                       coordinator.parent.isEditing,
-                      textView.window != nil,
-                      !textView.isFirstResponder else { return }
-                textView.becomeFirstResponder()
+                      textView.window != nil else { return }
+                textView.requestSystemKeyboard()
             }
         }
 
@@ -84,8 +80,8 @@ struct NoteTextEditor: UIViewRepresentable {
         if uiView.font?.pointSize != resolvedFontSize {
             uiView.font = .systemFont(ofSize: resolvedFontSize)
         }
-        if uiView.textColor != textColor {
-            uiView.textColor = textColor
+        if uiView.textColor != .black {
+            uiView.textColor = .black
         }
 
         // Externe Änderungen (Undo/Redo) auch während der Bearbeitung anzeigen,
@@ -114,9 +110,8 @@ struct NoteTextEditor: UIViewRepresentable {
                       let coordinator,
                       !coordinator.isDismantled,
                       coordinator.parent.isEditing,
-                      uiView.window != nil,
-                      !uiView.isFirstResponder else { return }
-                uiView.becomeFirstResponder()
+                      uiView.window != nil else { return }
+                uiView.requestSystemKeyboard()
             }
         } else if !isEditing, uiView.isFirstResponder {
             uiView.resignFirstResponder()
@@ -144,6 +139,13 @@ struct NoteTextEditor: UIViewRepresentable {
             self.parent = parent
         }
 
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            guard !isDismantled else { return }
+            // Wie bei den einzeiligen Einstellungsfeldern die native
+            // Systemtastatur nach dem Fokuswechsel ausdrücklich neu laden.
+            (textView as? CustomNoteTextView)?.requestSystemKeyboard()
+        }
+
         func textViewDidChange(_ textView: UITextView) {
             guard !isApplyingExternalChange, !isDismantled else { return }
             let newText = textView.text ?? ""
@@ -168,6 +170,30 @@ final class CustomNoteTextView: UITextView {
         super.didMoveToWindow()
         if window != nil {
             onWindowAttached?()
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        requestSystemKeyboard()
+    }
+
+    /// Fordert neben dem First-Responder-Status ausdrücklich die native
+    /// iPadOS-/iOS-Tastatur an. Das behebt den Zustand „Cursor sichtbar,
+    /// Tastatur fehlt", der in SwiftUI-Overlays mit PencilKit auftreten kann.
+    func requestSystemKeyboard() {
+        guard isEditable, isUserInteractionEnabled, window != nil else { return }
+
+        inputView = nil
+        if !isFirstResponder {
+            _ = becomeFirstResponder()
+        }
+        guard isFirstResponder else { return }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isFirstResponder, self.window != nil else { return }
+            self.inputView = nil
+            self.reloadInputViews()
         }
     }
 }

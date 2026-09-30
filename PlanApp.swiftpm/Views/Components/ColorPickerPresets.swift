@@ -36,7 +36,6 @@ public struct ColorPickerPresets: View {
                 HStack(spacing: 12) {
                     ForEach(presetColors, id: \.hex) { preset in
                         Button(action: {
-                            Haptics.select()
                             withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
                                 selectedHex = preset.hex
                             }

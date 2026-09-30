@@ -137,16 +137,7 @@ struct NoteTextBoxesLayer: View {
                 editSessionSnapshot = nil
                 pruneEmptyBoxes(keeping: selectedID)
                 if let before, before != textBoxes {
-                    // Externe Änderungen während der Bearbeitung (z. B.
-                    // „Handschrift in Text umwandeln", die neue Felder anfügt)
-                    // haben bereits ihren eigenen, kombinierten Undo-Schritt
-                    // registriert – hier keinen zusätzlichen Schritt mit
-                    // veraltetem Snapshot ablegen.
-                    let beforeIDs = Set(before.map(\.id))
-                    let hasExternalAdditions = textBoxes.contains { !beforeIDs.contains($0.id) }
-                    if !hasExternalAdditions {
-                        registerUndo(before, textBoxes)
-                    }
+                    registerUndo(before, textBoxes)
                 }
             }
         }
@@ -448,9 +439,8 @@ private struct NoteTextBoxView: View {
         return Text(trimmed.isEmpty ? "Text" : box.text)
             .font(.system(size: boxFontSize))
             // Die Zeichenfläche ist immer weiß, auch wenn die App im Dark
-            // Mode läuft. Deshalb kein dynamisches `.primary` verwenden –
-            // die Textfarbe kommt aus dem Textfeld (Standard: Schwarz).
-            .foregroundColor(trimmed.isEmpty ? .gray : Color(hex: box.color))
+            // Mode läuft. Deshalb kein dynamisches `.primary` verwenden.
+            .foregroundColor(trimmed.isEmpty ? .gray : .black)
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
             .frame(width: max(20, boxWidth - 16), alignment: .topLeading)
@@ -476,7 +466,6 @@ private struct NoteTextBoxView: View {
         NoteTextEditor(
             text: box.text,
             fontSize: boxFontSize,
-            textColor: UIColor(hex: box.color),
             isEditing: isEditing,
             onChangeText: onChangeText,
             onEndEditing: onEndEditing
@@ -545,7 +534,6 @@ private struct NoteTextBoxView: View {
                     resizeStartX = boxOrigin.x
                     resizeStartWidth = boxWidth
                     onGestureStart()
-                    Haptics.tap()
                 }
                 guard let startX = resizeStartX, let startWidth = resizeStartWidth else { return }
 
@@ -584,43 +572,41 @@ private struct NoteTextBoxView: View {
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
-        .pencilHoverFeedback()
         .accessibilityLabel("Textfeld löschen")
     }
 
-    /// Schriftgrößen-Steuerung: zwei große, runde Liquid-Glass-Buttons –
-    /// gut mit Finger UND Apple Pencil zu treffen.
     private var fontSizeControls: some View {
-        HStack(spacing: 10) {
-            fontSizeButton(
-                icon: "textformat.size.smaller",
-                delta: -2,
-                accessibilityLabel: "Schrift verkleinern"
-            )
-            fontSizeButton(
-                icon: "textformat.size.larger",
-                delta: 2,
-                accessibilityLabel: "Schrift vergrößern"
-            )
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Schriftgröße ändern")
-    }
+        HStack(spacing: 0) {
+            Button {
+                onChangeFontSize(-2)
+            } label: {
+                Image(systemName: "textformat.size.smaller")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 34, height: 30)
+            }
+            .buttonStyle(.plain)
 
-    private func fontSizeButton(icon: String, delta: Double, accessibilityLabel: String) -> some View {
-        Button {
-            onChangeFontSize(delta)
-        } label: {
-            Image(systemName: icon)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(.primary)
-                .frame(width: 46, height: 46)
-                // cornerRadius = halbe Größe → runder Liquid-Glass-Button.
-                .liquidGlassButton(cornerRadius: 23)
+            Divider()
+                .frame(height: 18)
+
+            Button {
+                onChangeFontSize(2)
+            } label: {
+                Image(systemName: "textformat.size.larger")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 34, height: 30)
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
-        .hoverEffect(.lift)
-        .pencilHoverFeedback()
-        .accessibilityLabel(accessibilityLabel)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.15), radius: 3, x: 0, y: 1)
+        .accessibilityLabel("Schriftgröße ändern")
     }
 }

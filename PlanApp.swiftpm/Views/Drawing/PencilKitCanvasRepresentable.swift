@@ -295,7 +295,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 let font = UIFont.systemFont(ofSize: CGFloat(box.fontSize))
                 let attributes: [NSAttributedString.Key: Any] = [
                     .font: font,
-                    .foregroundColor: UIColor(hex: box.color)
+                    .foregroundColor: UIColor.black
                 ]
                 let innerWidth = max(20, CGFloat(box.width) - 16)
                 let textRect = CGRect(
