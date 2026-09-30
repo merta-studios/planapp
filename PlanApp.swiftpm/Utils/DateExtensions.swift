@@ -67,14 +67,15 @@ extension Date {
         let monday = self.startOfWeek(using: calendar)
         let friday = calendar.date(byAdding: .day, value: 4, to: monday) ?? monday
 
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "de_DE")
-        f.dateFormat = "dd.MM."
+        let startFormatter = DateFormatter()
+        startFormatter.locale = Locale(identifier: "de_DE")
+        startFormatter.dateFormat = "dd.MM."
 
-        let yearFormatter = DateFormatter()
-        yearFormatter.dateFormat = "yyyy"
+        let endFormatter = DateFormatter()
+        endFormatter.locale = Locale(identifier: "de_DE")
+        endFormatter.dateFormat = "dd.MM.yyyy"
 
-        return "\(f.string(from: monday)) – \(f.string(from: friday))\(yearFormatter.string(from: friday))"
+        return "\(startFormatter.string(from: monday)) – \(endFormatter.string(from: friday))"
     }
 }
 

@@ -2,7 +2,18 @@
 
 Eine moderne, elegante und leistungsstarke Stundenplan-App für das **iPad**, entwickelt in **Swift & SwiftUI** mit voller Unterstützung für **Apple Pencil Pro**, **PencilKit** und die **WebUntis API**.
 
-Dieses Repository kann direkt auf das iPad geklont werden und öffnet sich sofort als lauffähige App in **Swift Playgrounds 4+** oder Xcode.
+Das Repository enthält das fertige App-Package **`PlanApp.swiftpm`**, welches auf dem Mac oder iPad direkt mit App-Icon angezeigt wird und mit einem Klick in **Swift Playgrounds 4+** oder **Xcode** geöffnet und gestartet werden kann.
+
+---
+
+## 🚀 Direktstarten in Swift Playgrounds
+
+1. **Repository herunterladen / entpacken** (z. B. als ZIP von GitHub oder auf das iPad geladen).
+2. Den Ordner öffnen: Darin befindet sich direkt die Datei **`PlanApp.swiftpm`** mit App-Icon.
+3. **`PlanApp.swiftpm` doppelt anklicken / antippen**:
+   - Auf dem **iPad**: Öffnet sich sofort in **Swift Playgrounds** als lauffähige App.
+   - Auf dem **Mac**: Öffnet sich direkt in **Swift Playgrounds** oder **Xcode**.
+4. Auf **App starten** (Play-Button) tippen – fertig!
 
 ---
 
@@ -66,57 +77,51 @@ Dieses Repository kann direkt auf das iPad geklont werden und öffnet sich sofor
 
 ```
 planapp/
-├── Package.swift                             # Swift Package App Manifest für Swift Playgrounds 4+
-├── App.swift                                 # App Entry Point (@main)
-├── .swiftpm/
-│   └── xcode/package.xcworkspace/            # Swift Playgrounds Workspace
-├── Models/
-│   ├── Period.swift                          # Stundenzeiten & Perioden-Modell
-│   ├── Lesson.swift                          # Unterrichtsstunden & Doppelstunden-Logik
-│   ├── SubjectCustomization.swift            # Fächer-Ersetzungen & Farbkonfiguration
-│   ├── BlockDisplaySettings.swift            # Sichtbare Block-Elemente
-│   ├── LessonNote.swift                      # Handschriftliche Notizen & Bilddaten
-│   └── UntisCredentials.swift                # WebUntis JSON-RPC Zugangsdaten
-├── Services/
-│   ├── WebUntisService.swift                 # WebUntis JSON-RPC 2.0 API Client
-│   ├── TimetableStorageService.swift         # Lokale Speicherung (UserDefaults & Dateien)
-│   └── DemoDataService.swift                 # Beispieldaten-Generator
-├── ViewModels/
-│   └── TimetableViewModel.swift              # Zentraler Zustand & Controller
-├── Views/
-│   ├── Timetable/
-│   │   ├── TimetableView.swift               # Hauptansicht mit 6-Spalten-Raster & Wischgesten
-│   │   ├── TimetableHeaderView.swift         # Kopfzeile mit Wochennavigation & Sync
-│   │   ├── PeriodColumnView.swift            # 1. Spalte: Stundennummern & Uhrzeiten
-│   │   ├── DayColumnView.swift               # Wochentagsspalten mit Zebra-Muster
-│   │   ├── LessonBlockView.swift             # Stunden-Karten mit Status & Notiz-Vorschau
-│   │   └── EmptyTimetableView.swift          # Willkommens-Ansicht bei leerem Plan
-│   ├── Drawing/
-│   │   ├── LessonDrawingOverlayView.swift    # Fullscreen-Overlay mit Zettel & Gesten
-│   │   ├── LinedPaperBackground.swift        # Linierter Zettel mit rotem Rand
-│   │   ├── PencilKitCanvasRepresentable.swift# PencilKit Wrapper & Apple Pencil Pro Squeeze
-│   │   └── DrawingToolbarView.swift          # Vorgegebene Stift-, Textmarker- & Radier-Tools
-│   ├── Settings/
-│   │   ├── SettingsView.swift                # Einstellungen-Hauptmenü
-│   │   ├── UntisConfigSection.swift          # WebUntis Zugangsdaten & Sync-Test
-│   │   ├── SubjectCustomizationSection.swift # Fächer anlegen & Farben wählen
-│   │   ├── BlockDisplaySettingsSection.swift # Block-Inhalte anpassen
-│   │   └── PeriodConfigSection.swift         # Stundenzeiten anzeigen & bearbeiten
-│   └── Components/
-│       ├── HoverButton.swift                 # Apple Pencil Hover Buttons
-│       ├── ColorPickerPresets.swift          # Farbpaletten-Auswahl
-│       └── StatusBadge.swift                 # Status-Badges (Entfall, Vertretung, Heute)
-└── Utils/
-    ├── ColorExtensions.swift                 # Hex-Konvertierung & Kontrastfarben
-    ├── DateExtensions.swift                  # Kalenderwochen & Tagesberechnungen
-    └── PencilInteractions.swift              # Apple Pencil Pro Squeeze- & Hover-Handler
+├── PlanApp.swiftpm/                          # Swift Playgrounds App Paket (direkt startbar)
+│   ├── Package.swift                         # Swift Package App Manifest mit iOSApplication Produkt
+│   ├── App.swift                             # App Entry Point (@main)
+│   ├── .swiftpm/
+│   │   └── xcode/package.xcworkspace/        # Playgrounds Workspace Konfiguration
+│   ├── Models/
+│   │   ├── Period.swift                      # Stundenzeiten & Perioden-Modell
+│   │   ├── Lesson.swift                      # Unterrichtsstunden & Doppelstunden-Logik
+│   │   ├── SubjectCustomization.swift        # Fächer-Ersetzungen & Farbkonfiguration
+│   │   ├── BlockDisplaySettings.swift        # Sichtbare Block-Elemente
+│   │   ├── LessonNote.swift                  # Handschriftliche Notizen & Bilddaten
+│   │   └── UntisCredentials.swift            # WebUntis JSON-RPC Zugangsdaten
+│   ├── Services/
+│   │   ├── WebUntisService.swift             # WebUntis JSON-RPC 2.0 API Client
+│   │   ├── TimetableStorageService.swift     # Lokale Speicherung (UserDefaults & Notiz-Dateien)
+│   │   └── DemoDataService.swift             # Beispieldaten-Generator
+│   ├── ViewModels/
+│   │   └── TimetableViewModel.swift          # Zentraler Zustand & Controller
+│   ├── Views/
+│   │   ├── Timetable/
+│   │   │   ├── TimetableView.swift           # Hauptansicht mit 6-Spalten-Raster & Wischgesten
+│   │   │   ├── TimetableHeaderView.swift     # Kopfzeile mit Wochennavigation & Sync
+│   │   │   ├── PeriodColumnView.swift        # 1. Spalte: Stundennummern & Uhrzeiten
+│   │   │   ├── DayColumnView.swift           # Wochentagsspalten mit Zebra-Muster
+│   │   │   ├── LessonBlockView.swift         # Stunden-Karten mit Status & Notiz-Vorschau
+│   │   │   └── EmptyTimetableView.swift      # Willkommens-Ansicht bei leerem Plan
+│   │   ├── Drawing/
+│   │   │   ├── LessonDrawingOverlayView.swift# Fullscreen-Overlay mit Zettel & Gesten
+│   │   │   ├── LinedPaperBackground.swift    # Linierter Zettel mit rotem Rand
+│   │   │   ├── PencilKitCanvasRepresentable.swift # PencilKit Wrapper & Apple Pencil Pro Squeeze
+│   │   │   └── DrawingToolbarView.swift      # Vorgegebene Stift-, Textmarker- & Radier-Tools
+│   │   ├── Settings/
+│   │   │   ├── SettingsView.swift            # Einstellungen-Hauptmenü
+│   │   │   ├── UntisConfigSection.swift      # WebUntis Zugangsdaten & Sync-Test
+│   │   │   ├── SubjectCustomizationSection.swift # Fächer anlegen & Farben wählen
+│   │   │   ├── BlockDisplaySettingsSection.swift # Block-Inhalte anpassen
+│   │   │   └── PeriodConfigSection.swift     # Stundenzeiten anzeigen & bearbeiten
+│   │   └── Components/
+│   │       ├── HoverButton.swift             # Apple Pencil Hover Buttons
+│   │       ├── ColorPickerPresets.swift      # Farbpaletten-Auswahl
+│   │       └── StatusBadge.swift             # Status-Badges (Entfall, Vertretung, Heute)
+│   └── Utils/
+│       ├── ColorExtensions.swift             # Hex-Konvertierung & Kontrastfarben
+│       ├── DateExtensions.swift              # Kalenderwochen & Tagesberechnungen
+│       └── PencilInteractions.swift          # Apple Pencil Pro Squeeze- & Hover-Handler
+├── README.md
+└── .gitignore
 ```
-
----
-
-## 🚀 Inbetriebnahme auf dem iPad
-
-1. Klone dieses Repository auf dein iPad (z. B. mit *Working Copy* oder erstelle einen Ordner in der *Dateien*-App).
-2. Öffne **Swift Playgrounds** auf deinem iPad.
-3. Wähle **App-Playground öffnen** und navigiere zum geklonten Ordner `planapp`.
-4. Tippe auf **App starten** (Play-Button) – die App öffnet sich sofort im Vollbildmodus auf deinem iPad!

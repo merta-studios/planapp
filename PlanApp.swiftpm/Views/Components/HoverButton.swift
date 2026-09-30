@@ -8,7 +8,7 @@ public struct HoverButton<Content: View>: View {
     @State private var isHovered: Bool = false
     @State private var isPressed: Bool = false
 
-    public init(action: @escaping () -> Void, @激励: () -> Void = {}, @ViewBuilder content: @escaping () -> Content) {
+    public init(action: @escaping () -> Void, @ViewBuilder content: @escaping () -> Content) {
         self.action = action
         self.content = content
     }

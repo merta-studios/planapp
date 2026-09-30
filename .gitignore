@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode & Swift Package Manager
+.build/
+*.xcodeproj
+xcuserdata/
+DerivedData/
+
+# Swift Playgrounds local user state
+.swiftpm/configuration/
