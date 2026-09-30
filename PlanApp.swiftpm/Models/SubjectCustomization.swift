@@ -6,13 +6,21 @@ public struct SubjectCustomization: Identifiable, Codable, Equatable, Hashable {
     public var id: UUID
     public var originalSubject: String // Name von WebUntis (z.B. "M", "D", "ENG")
     public var customName: String      // Neuer schöner Name (z.B. "Mathematik")
-    public var colorHex: String        // Hex-Farbcode (z.B. "#3B82F6")
+    public var colorHex: String        // Hex-Farbcode (z.B. "#3B82F6") – obere Anfangs-Farbe
+    public var gradientEndHex: String? // Optionale untere End-Farbe für einen Farbverlauf
 
-    public init(id: UUID = UUID(), originalSubject: String, customName: String, colorHex: String) {
+    public init(
+        id: UUID = UUID(),
+        originalSubject: String,
+        customName: String,
+        colorHex: String,
+        gradientEndHex: String? = nil
+    ) {
         self.id = id
         self.originalSubject = originalSubject.trimmingCharacters(in: .whitespacesAndNewlines)
         self.customName = customName.trimmingCharacters(in: .whitespacesAndNewlines)
         self.colorHex = colorHex
+        self.gradientEndHex = gradientEndHex
     }
 
     /// Schnelle Standard-Vorlagen für gängige Schulfächer

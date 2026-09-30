@@ -24,10 +24,13 @@ public struct SettingsView: View {
                         // 3. Block-Inhalte anpassen
                         BlockDisplaySettingsSection()
 
-                        // 4. Stundenraster & Zeiten
+                        // 4. Zeichenfläche & Notizen
+                        DrawingSettingsSection()
+
+                        // 5. Stundenraster & Zeiten
                         PeriodConfigSection()
 
-                        // 5. Apple Pencil Pro & Bedienungshinweise
+                        // 6. Apple Pencil Pro & Bedienungshinweise
                         VStack(alignment: .leading, spacing: 14) {
                             HStack(spacing: 8) {
                                 Image(systemName: "pencil.and.scribble")
@@ -73,9 +76,9 @@ public struct SettingsView: View {
                                         .foregroundColor(.green)
                                         .frame(width: 24)
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text("Flüssiges Verschieben & Zoomen")
+                                        Text("Verschieben & Größe ändern")
                                             .font(.system(size: 14, weight: .regular, design: .default))
-                                        Text("Die Zeichenfläche lässt sich mit Fingern flüssig und stufenlos verschieben sowie vergrößern und verkleinern.")
+                                        Text("Die Zeichenfläche lässt sich mit Fingern flüssig verschieben und über den runden Griff unten vergrößern oder verkleinern. Mit dem Text-Werkzeug erstellst du frei bewegliche Textfelder.")
                                             .font(.system(size: 12, weight: .regular, design: .default))
                                             .foregroundColor(.secondary)
                                     }
@@ -85,7 +88,7 @@ public struct SettingsView: View {
                         .padding(16)
                         .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
 
-                        // 6. Stundenplan leeren (Zurücksetzen)
+                        // 7. Stundenplan leeren (Zurücksetzen)
                         Button(action: {
                             viewModel.clearTimetable()
                         }) {

@@ -2,11 +2,13 @@ import SwiftUI
 import PencilKit
 
 /// Always-visible, horizontally scrollable drawing controls. The toolbar is
-/// deliberately independent from the editor card so moving or scaling the note
-/// never moves the tools off-screen.
+/// deliberately independent from the editor card so moving or resizing the
+/// note never moves the tools off-screen.
 public struct DrawingToolbarView: View {
     @Binding public var toolSelection: DrawingToolSelection
     @Binding public var penWidth: CGFloat
+    @Binding public var markerWidth: CGFloat
+    @Binding public var eraserWidth: CGFloat
 
     public let onUndo: () -> Void
     public let onRedo: () -> Void
@@ -14,31 +16,24 @@ public struct DrawingToolbarView: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var showThicknessSlider = false
+    @State private var showClearConfirmation = false
 
-    public let penColors: [(name: String, color: UIColor, lightColor: Color, darkColor: Color)] = [
-        ("Schwarz", .black, .black, .white),
-        ("Rot", UIColor(red: 0.88, green: 0.15, blue: 0.15, alpha: 1), .red, .red),
-        ("Blau", UIColor(red: 0.10, green: 0.45, blue: 0.90, alpha: 1), .blue, .blue),
-        ("Grün", UIColor(red: 0.12, green: 0.65, blue: 0.25, alpha: 1), .green, .green)
-    ]
-
-    public let markerColors: [(name: String, color: UIColor, swiftColor: Color)] = [
-        ("Gelb", UIColor(red: 1, green: 0.90, blue: 0.20, alpha: 0.60), Color(red: 1, green: 0.90, blue: 0.20)),
-        ("Orange", UIColor(red: 1, green: 0.58, blue: 0.15, alpha: 0.60), .orange),
-        ("Grün", UIColor(red: 0.25, green: 0.85, blue: 0.35, alpha: 0.60), Color(red: 0.25, green: 0.85, blue: 0.35)),
-        ("Blau", UIColor(red: 0.20, green: 0.65, blue: 1, alpha: 0.60), Color(red: 0.20, green: 0.65, blue: 1)),
-        ("Lila", UIColor(red: 0.75, green: 0.35, blue: 0.95, alpha: 0.60), .purple)
-    ]
+    private let buttonSize: CGFloat = 40
+    private let buttonCornerRadius: CGFloat = 10
 
     public init(
         toolSelection: Binding<DrawingToolSelection>,
         penWidth: Binding<CGFloat>,
+        markerWidth: Binding<CGFloat>,
+        eraserWidth: Binding<CGFloat>,
         onUndo: @escaping () -> Void,
         onRedo: @escaping () -> Void,
         onClear: @escaping () -> Void
     ) {
         _toolSelection = toolSelection
         _penWidth = penWidth
+        _markerWidth = markerWidth
+        _eraserWidth = eraserWidth
         self.onUndo = onUndo
         self.onRedo = onRedo
         self.onClear = onClear
@@ -46,26 +41,29 @@ public struct DrawingToolbarView: View {
 
     public var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 penControls
                 toolbarDivider
                 markerControls
                 toolbarDivider
+                textToolButton
                 thicknessButton
-                toolbarDivider
                 eraserButton
                 toolbarDivider
                 historyControls
                 toolbarDivider
-                clearButton
+                moreOptionsButton
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
             .fixedSize(horizontal: true, vertical: false)
         }
-        .background(Capsule().fill(.ultraThinMaterial))
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
         .overlay(
-            Capsule()
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(
                     LinearGradient(
                         colors: [Color.white.opacity(0.3), Color.white.opacity(0.1)],
@@ -75,47 +73,57 @@ public struct DrawingToolbarView: View {
                     lineWidth: 1
                 )
         )
-        .clipShape(Capsule())
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .shadow(color: Color.black.opacity(0.12), radius: 6, x: 0, y: 2)
         .fixedSize(horizontal: true, vertical: false)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Zeichenwerkzeuge")
     }
 
+    // MARK: - Stift-Farben
+
     private var penControls: some View {
         HStack(spacing: 6) {
             Image(systemName: "pencil.tip")
-                .font(.system(size: 13))
+                .font(.system(size: 15))
                 .foregroundColor(.primary)
                 .accessibilityHidden(true)
 
-            ForEach(penColors, id: \.name) { item in
+            ForEach(DrawingPalette.penColors, id: \.hex) { item in
                 let isSelected: Bool = {
                     if case .pen(let selectedColor) = toolSelection {
-                        return selectedColor == item.color
+                        return selectedColor == item.uiColor
                     }
                     return false
                 }()
-                let swatch = colorScheme == .dark ? item.darkColor : item.lightColor
+                let swatch: Color = {
+                    if item.hex == "#000000" {
+                        return colorScheme == .dark ? .white : .black
+                    }
+                    return Color(uiColor: item.uiColor)
+                }()
 
                 Button {
-                    toolSelection = .pen(color: item.color)
+                    Haptics.select()
+                    toolSelection = .pen(color: item.uiColor)
                 } label: {
                     ZStack {
+                        RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous)
+                            .fill(isSelected ? Color.blue.opacity(0.18) : Color.clear)
+
                         Circle()
                             .fill(swatch)
-                            .frame(width: 20, height: 20)
+                            .frame(width: 22, height: 22)
                             .overlay(
                                 Circle().strokeBorder(Color.white.opacity(0.4), lineWidth: 1)
                             )
 
                         if isSelected {
-                            Circle()
+                            RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous)
                                 .strokeBorder(Color.blue, lineWidth: 2)
-                                .frame(width: 25, height: 25)
                         }
                     }
-                    .frame(width: 27, height: 27)
+                    .frame(width: buttonSize - 4, height: buttonSize - 4)
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.lift)
@@ -123,38 +131,161 @@ public struct DrawingToolbarView: View {
                 .accessibilityValue(isSelected ? "Ausgewählt" : "")
             }
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
         .background(Color(UIColor.tertiarySystemBackground).opacity(0.72))
-        .clipShape(Capsule())
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    /// General stroke-thickness control. It applies to every tool (pen and
-    /// marker), which is why it lives on its own, right before the eraser,
-    /// instead of being nested inside the pen's color group.
+    // MARK: - Textmarker-Farben
+
+    private var markerControls: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "highlighter")
+                .font(.system(size: 15))
+                .foregroundColor(.primary)
+                .accessibilityHidden(true)
+
+            ForEach(DrawingPalette.markerColors, id: \.hex) { item in
+                let isSelected: Bool = {
+                    if case .marker(let selectedColor) = toolSelection {
+                        return selectedColor == item.uiColor
+                    }
+                    return false
+                }()
+                let swatch = Color(uiColor: item.uiColor.withAlphaComponent(1))
+
+                Button {
+                    Haptics.select()
+                    toolSelection = .marker(color: item.uiColor)
+                } label: {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous)
+                            .fill(isSelected ? Color.blue.opacity(0.18) : Color.clear)
+
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(swatch)
+                            .frame(width: 21, height: 21)
+
+                        if isSelected {
+                            RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous)
+                                .strokeBorder(Color.blue, lineWidth: 2)
+                        }
+                    }
+                    .frame(width: buttonSize - 4, height: buttonSize - 4)
+                }
+                .buttonStyle(.plain)
+                .hoverEffect(.lift)
+                .accessibilityLabel("Textmarker \(item.name)")
+                .accessibilityValue(isSelected ? "Ausgewählt" : "")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color(UIColor.tertiarySystemBackground).opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    // MARK: - Text-Werkzeug
+
+    private var textToolButton: some View {
+        let isSelected: Bool = {
+            if case .text = toolSelection { return true }
+            return false
+        }()
+
+        return Button {
+            Haptics.select()
+            toolSelection = .text
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "textformat")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("Text")
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .padding(.horizontal, 12)
+            .frame(height: buttonSize)
+            .background(isSelected ? Color.blue : Color(UIColor.tertiarySystemBackground).opacity(0.72))
+            .foregroundColor(isSelected ? .white : .primary)
+            .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+        .accessibilityLabel("Text-Werkzeug")
+        .accessibilityValue(isSelected ? "Ausgewählt" : "")
+    }
+
+    // MARK: - Strichstärke (pro Werkzeug getrennt)
+
+    /// Öffnet den Dicken-Regler für das aktuell gewählte Werkzeug. Stift,
+    /// Textmarker und Radierer merken sich ihre Dicke unabhängig voneinander.
     private var thicknessButton: some View {
         Button {
+            Haptics.tap()
             showThicknessSlider = true
         } label: {
             ZStack {
-                Circle()
-                    .fill(Color(UIColor.tertiarySystemFill))
-                    .frame(width: 27, height: 27)
+                RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous)
+                    .fill(Color(UIColor.tertiarySystemBackground).opacity(0.72))
                 Circle()
                     .fill(Color.primary)
                     .frame(
-                        width: max(2, min(14, penWidth * 1.5)),
-                        height: max(2, min(14, penWidth * 1.5))
+                        width: max(3, min(20, currentToolWidth * 0.9)),
+                        height: max(3, min(20, currentToolWidth * 0.9))
                     )
             }
+            .frame(width: buttonSize, height: buttonSize)
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
         .accessibilityLabel("Strichstärke")
-        .popover(isPresented: $showThicknessSlider, arrowEdge: .bottom) {
-            VerticalThicknessSlider(penWidth: $penWidth, previewColor: currentToolPreviewColor)
-                .frame(width: 110, height: 260)
-                .presentationCompactAdaptation(.popover)
+        // Öffnet sich nach UNTEN, weil über der Leiste kein Platz ist.
+        .popover(isPresented: $showThicknessSlider, arrowEdge: .top) {
+            ThicknessSliderPanel(
+                width: currentWidthBinding,
+                range: currentWidthRange,
+                previewColor: currentToolPreviewColor,
+                title: currentThicknessTitle
+            )
+            .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    private var currentWidthBinding: Binding<CGFloat> {
+        switch toolSelection {
+        case .pen, .text:
+            return $penWidth
+        case .marker:
+            return $markerWidth
+        case .eraser:
+            return $eraserWidth
+        }
+    }
+
+    private var currentToolWidth: CGFloat {
+        currentWidthBinding.wrappedValue
+    }
+
+    private var currentWidthRange: ClosedRange<CGFloat> {
+        switch toolSelection {
+        case .pen, .text:
+            return 1...20
+        case .marker:
+            return 4...40
+        case .eraser:
+            return 4...60
+        }
+    }
+
+    private var currentThicknessTitle: String {
+        switch toolSelection {
+        case .pen, .text:
+            return "Stift-Dicke"
+        case .marker:
+            return "Textmarker-Dicke"
+        case .eraser:
+            return "Radierer-Dicke"
         }
     }
 
@@ -165,54 +296,15 @@ public struct DrawingToolbarView: View {
         case .pen(let color):
             return colorScheme == .dark && color == .black ? .white : Color(uiColor: color)
         case .marker(let color):
-            return Color(uiColor: color)
+            return Color(uiColor: color.withAlphaComponent(1))
         case .eraser:
             return Color(UIColor.systemGray2)
+        case .text:
+            return .primary
         }
     }
 
-    private var markerControls: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "highlighter")
-                .font(.system(size: 13))
-                .foregroundColor(.primary)
-                .accessibilityHidden(true)
-
-            ForEach(markerColors, id: \.name) { item in
-                let isSelected: Bool = {
-                    if case .marker(let selectedColor) = toolSelection {
-                        return selectedColor == item.color
-                    }
-                    return false
-                }()
-
-                Button {
-                    toolSelection = .marker(color: item.color)
-                } label: {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(item.swiftColor)
-                            .frame(width: 19, height: 19)
-
-                        if isSelected {
-                            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .strokeBorder(Color.primary, lineWidth: 2)
-                                .frame(width: 25, height: 25)
-                        }
-                    }
-                    .frame(width: 27, height: 27)
-                }
-                .buttonStyle(.plain)
-                .hoverEffect(.lift)
-                .accessibilityLabel("Textmarker \(item.name)")
-                .accessibilityValue(isSelected ? "Ausgewählt" : "")
-            }
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(Color(UIColor.tertiarySystemBackground).opacity(0.72))
-        .clipShape(Capsule())
-    }
+    // MARK: - Radierer
 
     private var eraserButton: some View {
         let isSelected: Bool = {
@@ -221,33 +313,36 @@ public struct DrawingToolbarView: View {
         }()
 
         return Button {
+            Haptics.select()
             toolSelection = .eraser
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Image(systemName: "eraser")
-                    .font(.system(size: 13))
+                    .font(.system(size: 15))
                 Text("Radierer")
-                    .font(.system(size: 12))
+                    .font(.system(size: 13, weight: .medium))
             }
-            .padding(.horizontal, 9)
-            .frame(height: 29)
+            .padding(.horizontal, 12)
+            .frame(height: buttonSize)
             .background(isSelected ? Color.blue : Color(UIColor.tertiarySystemBackground).opacity(0.72))
             .foregroundColor(isSelected ? .white : .primary)
-            .clipShape(Capsule())
+            .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
         .accessibilityValue(isSelected ? "Ausgewählt" : "")
     }
 
+    // MARK: - Verlauf & mehr Optionen
+
     private var historyControls: some View {
-        HStack(spacing: 5) {
-            roundButton(
+        HStack(spacing: 6) {
+            squareButton(
                 systemName: "arrow.uturn.backward",
                 accessibilityLabel: "Rückgängig",
                 action: onUndo
             )
-            roundButton(
+            squareButton(
                 systemName: "arrow.uturn.forward",
                 accessibilityLabel: "Wiederholen",
                 action: onRedo
@@ -255,35 +350,56 @@ public struct DrawingToolbarView: View {
         }
     }
 
-    private var clearButton: some View {
-        Button(action: onClear) {
-            Image(systemName: "trash")
-                .font(.system(size: 13))
-                .foregroundColor(.red)
-                .frame(width: 29, height: 29)
-                .background(Color.red.opacity(0.12))
-                .clipShape(Circle())
+    private var moreOptionsButton: some View {
+        Menu {
+            Button(role: .destructive) {
+                showClearConfirmation = true
+            } label: {
+                Label("Seite leeren", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.primary)
+                .frame(width: buttonSize, height: buttonSize)
+                .background(Color(UIColor.tertiarySystemBackground).opacity(0.72))
+                .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
         }
-        .buttonStyle(.plain)
         .hoverEffect(.lift)
-        .accessibilityLabel("Zeichnung leeren")
+        .accessibilityLabel("Mehr Optionen")
+        .confirmationDialog(
+            "Seite wirklich leeren?",
+            isPresented: $showClearConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Seite leeren", role: .destructive) {
+                Haptics.warning()
+                onClear()
+            }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text("Alle Zeichnungen und Textfelder auf dieser Seite werden entfernt.")
+        }
     }
 
     private var toolbarDivider: some View {
-        Divider().frame(height: 20)
+        Divider().frame(height: 26)
     }
 
-    private func roundButton(
+    private func squareButton(
         systemName: String,
         accessibilityLabel: String,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        Button {
+            Haptics.tap()
+            action()
+        } label: {
             Image(systemName: systemName)
-                .font(.system(size: 13))
-                .frame(width: 29, height: 29)
+                .font(.system(size: 15, weight: .medium))
+                .frame(width: buttonSize, height: buttonSize)
                 .background(Color(UIColor.tertiarySystemBackground).opacity(0.72))
-                .clipShape(Circle())
+                .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
@@ -291,44 +407,45 @@ public struct DrawingToolbarView: View {
     }
 }
 
-/// Vertical (up/down) thickness slider shown in a popover above the toolbar's
-/// thickness button. A live-updating circle previews exactly how thick the
-/// current tool's stroke would be at the selected width.
-private struct VerticalThicknessSlider: View {
-    @Binding var penWidth: CGFloat
+/// Großer, gut greifbarer Dicken-Regler, der sich UNTER dem Dicken-Knopf
+/// öffnet. Eine live aktualisierte Kreis-Vorschau zeigt exakt, wie dick der
+/// Strich des aktuellen Werkzeugs bei der gewählten Breite wäre.
+private struct ThicknessSliderPanel: View {
+    @Binding var width: CGFloat
+    let range: ClosedRange<CGFloat>
     let previewColor: Color
+    let title: String
 
     private var previewDiameter: CGFloat {
-        max(6, min(52, penWidth * 3.4))
+        max(6, min(64, width * 1.4))
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            Text("Dicke")
-                .font(.system(size: 12, weight: .semibold))
+        VStack(spacing: 18) {
+            Text(title)
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(.secondary)
 
             ZStack {
                 Circle()
                     .fill(Color(UIColor.tertiarySystemFill))
-                    .frame(width: 56, height: 56)
+                    .frame(width: 76, height: 76)
                 Circle()
                     .fill(previewColor)
                     .frame(width: previewDiameter, height: previewDiameter)
             }
-            .frame(height: 60)
-            .animation(.interactiveSpring(response: 0.15, dampingFraction: 0.8), value: penWidth)
+            .frame(height: 80)
+            .animation(.interactiveSpring(response: 0.15, dampingFraction: 0.8), value: width)
 
-            Slider(value: $penWidth, in: 1...20, step: 0.5)
-                .frame(width: 150)
-                .rotationEffect(.degrees(-90))
-                .frame(width: 44, height: 150)
+            Slider(value: $width, in: range, step: 0.5)
+                .frame(width: 260)
 
-            Text(String(format: "%.1f pt", penWidth))
-                .font(.system(size: 12, design: .monospaced))
+            Text(String(format: "%.1f pt", width))
+                .font(.system(size: 13, design: .monospaced))
                 .foregroundColor(.secondary)
         }
-        .padding(.vertical, 18)
-        .frame(maxHeight: .infinity)
+        .padding(.horizontal, 28)
+        .padding(.vertical, 22)
+        .frame(width: 320)
     }
 }

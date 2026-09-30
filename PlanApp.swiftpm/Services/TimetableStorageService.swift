@@ -14,6 +14,7 @@ public final class TimetableStorageService {
         static let periods = "planapp_periods"
         static let lessons = "planapp_lessons"
         static let notesMetadata = "planapp_notes_metadata"
+        static let drawingSettings = "planapp_drawing_settings"
     }
 
     private var documentsDirectory: URL {
@@ -76,6 +77,22 @@ public final class TimetableStorageService {
         return settings
     }
 
+    // MARK: - Drawing Settings
+
+    public func saveDrawingSettings(_ settings: DrawingSettings) {
+        if let data = try? JSONEncoder().encode(settings) {
+            defaults.set(data, forKey: Keys.drawingSettings)
+        }
+    }
+
+    public func loadDrawingSettings() -> DrawingSettings {
+        guard let data = defaults.data(forKey: Keys.drawingSettings),
+              let settings = try? JSONDecoder().decode(DrawingSettings.self, from: data) else {
+            return DrawingSettings.default
+        }
+        return settings
+    }
+
     // MARK: - Periods
 
     public func savePeriods(_ periods: [Period]) {
@@ -114,6 +131,7 @@ public final class TimetableStorageService {
         // Metadaten und Pfade speichern
         let noteFile = notesDirectory.appendingPathComponent("\(note.id).note")
         let imageFile = notesDirectory.appendingPathComponent("\(note.id).png")
+        let textFile = notesDirectory.appendingPathComponent("\(note.id).text.json")
 
         try? note.drawingData.write(to: noteFile)
         if let imgData = note.croppedImageData {
@@ -122,11 +140,17 @@ public final class TimetableStorageService {
             try? fileManager.removeItem(at: imageFile)
         }
 
+        if !note.textBoxes.isEmpty, let textData = try? JSONEncoder().encode(note.textBoxes) {
+            try? textData.write(to: textFile)
+        } else {
+            try? fileManager.removeItem(at: textFile)
+        }
+
         var metadata = loadNotesMetadata()
         metadata[note.id] = [
             "lineCount": note.lineCount,
             "updatedAt": note.updatedAt.timeIntervalSince1970,
-            "hasDrawing": !note.drawingData.isEmpty
+            "hasDrawing": !note.drawingData.isEmpty || !note.textBoxes.isEmpty
         ]
         defaults.set(metadata, forKey: Keys.notesMetadata)
     }
@@ -134,6 +158,7 @@ public final class TimetableStorageService {
     public func loadLessonNote(for noteKey: String) -> LessonNote? {
         let noteFile = notesDirectory.appendingPathComponent("\(noteKey).note")
         let imageFile = notesDirectory.appendingPathComponent("\(noteKey).png")
+        let textFile = notesDirectory.appendingPathComponent("\(noteKey).text.json")
 
         guard fileManager.fileExists(atPath: noteFile.path),
               let drawingData = try? Data(contentsOf: noteFile) else {
@@ -141,6 +166,13 @@ public final class TimetableStorageService {
         }
 
         let imageData = try? Data(contentsOf: imageFile)
+
+        var textBoxes: [NoteTextBox] = []
+        if let textData = try? Data(contentsOf: textFile),
+           let decoded = try? JSONDecoder().decode([NoteTextBox].self, from: textData) {
+            textBoxes = decoded
+        }
+
         let metadata = loadNotesMetadata()[noteKey] as? [String: Any]
         let lineCount = metadata?["lineCount"] as? Int ?? 6
         let timeInterval = metadata?["updatedAt"] as? Double ?? Date().timeIntervalSince1970
@@ -151,6 +183,7 @@ public final class TimetableStorageService {
             drawingData: drawingData,
             croppedImageData: imageData,
             lineCount: lineCount,
+            textBoxes: textBoxes,
             updatedAt: date
         )
     }
@@ -169,12 +202,28 @@ public final class TimetableStorageService {
     public func deleteLessonNote(for noteKey: String) {
         let noteFile = notesDirectory.appendingPathComponent("\(noteKey).note")
         let imageFile = notesDirectory.appendingPathComponent("\(noteKey).png")
+        let textFile = notesDirectory.appendingPathComponent("\(noteKey).text.json")
         try? fileManager.removeItem(at: noteFile)
         try? fileManager.removeItem(at: imageFile)
+        try? fileManager.removeItem(at: textFile)
 
         var metadata = loadNotesMetadata()
         metadata.removeValue(forKey: noteKey)
         defaults.set(metadata, forKey: Keys.notesMetadata)
+    }
+
+    /// Löscht sämtliche gespeicherten Notizen (Zeichnungen, Vorschaubilder
+    /// und Textfelder) unwiderruflich.
+    public func deleteAllLessonNotes() {
+        if let files = try? fileManager.contentsOfDirectory(
+            at: notesDirectory,
+            includingPropertiesForKeys: nil
+        ) {
+            for file in files {
+                try? fileManager.removeItem(at: file)
+            }
+        }
+        defaults.set([String: Any](), forKey: Keys.notesMetadata)
     }
 
     private func loadNotesMetadata() -> [String: Any] {

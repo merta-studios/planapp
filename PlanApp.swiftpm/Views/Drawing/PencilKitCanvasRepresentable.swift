@@ -4,38 +4,42 @@ import UIKit
 
 /// SwiftUI wrapper for `PKCanvasView` with Apple Pencil drawing and direct
 /// finger gestures. PencilKit owns Pencil input, while one or two fingers are
-/// forwarded to the surrounding note as incremental pan/zoom updates.
+/// forwarded to the surrounding note as incremental pan updates. Zooming is
+/// deliberately not supported anymore – the note is moved and resized only.
 public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     @Binding public var drawing: PKDrawing
     public let toolSelection: DrawingToolSelection
     public let penWidth: CGFloat
+    public let markerWidth: CGFloat
+    public let eraserWidth: CGFloat
     public let colorScheme: ColorScheme
     public let onUndoAvailable: (Bool) -> Void
     public let onRedoAvailable: (Bool) -> Void
     public let onCanvasCreated: (PKCanvasView) -> Void
     public let onFingerPan: (CGSize) -> Void
-    public let onFingerZoom: (CGFloat, CGPoint) -> Void
 
     public init(
         drawing: Binding<PKDrawing>,
         toolSelection: DrawingToolSelection,
         penWidth: CGFloat = 3.5,
+        markerWidth: CGFloat = 16,
+        eraserWidth: CGFloat = 24,
         colorScheme: ColorScheme = .light,
         onUndoAvailable: @escaping (Bool) -> Void = { _ in },
         onRedoAvailable: @escaping (Bool) -> Void = { _ in },
         onCanvasCreated: @escaping (PKCanvasView) -> Void = { _ in },
-        onFingerPan: @escaping (CGSize) -> Void = { _ in },
-        onFingerZoom: @escaping (CGFloat, CGPoint) -> Void = { _, _ in }
+        onFingerPan: @escaping (CGSize) -> Void = { _ in }
     ) {
         self._drawing = drawing
         self.toolSelection = toolSelection
         self.penWidth = penWidth
+        self.markerWidth = markerWidth
+        self.eraserWidth = eraserWidth
         self.colorScheme = colorScheme
         self.onUndoAvailable = onUndoAvailable
         self.onRedoAvailable = onRedoAvailable
         self.onCanvasCreated = onCanvasCreated
         self.onFingerPan = onFingerPan
-        self.onFingerZoom = onFingerZoom
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -56,11 +60,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         canvasView.isScrollEnabled = false
         canvasView.bounces = false
         // PKCanvasView is itself a UIScrollView subclass and keeps its own
-        // built-in pan (and, if zooming were enabled, pinch) recognizer alive
-        // even while isScrollEnabled is false. That recognizer still competes
-        // for single- and two-finger drags, which is why one/two-finger
-        // panning previously never reached our own gesture below. Disabling
-        // it explicitly frees finger touches for `fingerPan`/`fingerPinch`.
+        // built-in pan (and pinch) recognizers alive even while
+        // isScrollEnabled is false. Disabling them explicitly frees finger
+        // touches for `fingerPan`.
         canvasView.panGestureRecognizer.isEnabled = false
         canvasView.pinchGestureRecognizer?.isEnabled = false
 
@@ -74,15 +76,6 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         fingerPan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         fingerPan.delegate = context.coordinator
         canvasView.addGestureRecognizer(fingerPan)
-
-        let fingerPinch = UIPinchGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleFingerPinch(_:))
-        )
-        fingerPinch.cancelsTouchesInView = false
-        fingerPinch.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
-        fingerPinch.delegate = context.coordinator
-        canvasView.addGestureRecognizer(fingerPinch)
 
         // Apple Pencil Pro squeeze / Pencil double tap.
         let pencilInteraction = UIPencilInteraction()
@@ -108,15 +101,23 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     }
 
     private func applyTool(to canvasView: PKCanvasView) {
+        var isTextTool = false
+
         switch toolSelection {
         case .pen(let color):
             let resolvedColor = resolveDynamicColor(color)
             canvasView.tool = PKInkingTool(.pen, color: resolvedColor, width: penWidth)
         case .marker(let color):
-            canvasView.tool = PKInkingTool(.marker, color: color, width: max(16.0, penWidth * 4.0))
+            canvasView.tool = PKInkingTool(.marker, color: color, width: markerWidth)
         case .eraser:
-            canvasView.tool = PKEraserTool(.bitmap)
+            canvasView.tool = PKEraserTool(.bitmap, width: eraserWidth)
+        case .text:
+            // While the text tool is active the Pencil must not draw; taps
+            // create text boxes in the SwiftUI layer above the canvas.
+            isTextTool = true
         }
+
+        canvasView.drawingGestureRecognizer.isEnabled = !isTextTool
     }
 
     /// Adapts the black preset to dark appearance without changing stored
@@ -167,17 +168,6 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             }
         }
 
-        @objc func handleFingerPinch(_ recognizer: UIPinchGestureRecognizer) {
-            guard let canvasView else { return }
-            let factor = recognizer.scale
-            if factor.isFinite && factor > 0 && abs(factor - 1) > 0.0001 {
-                // The local focal point is used by the SwiftUI container to
-                // keep the content under both fingers while zooming.
-                parent.onFingerZoom(factor, recognizer.location(in: canvasView))
-                recognizer.scale = 1
-            }
-        }
-
         public func gestureRecognizer(
             _ gestureRecognizer: UIGestureRecognizer,
             shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
@@ -201,6 +191,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         ) {
             if squeeze.phase == .ended {
                 DispatchQueue.main.async { [weak self] in
+                    Haptics.tap()
                     self?.canvasView?.undoManager?.undo()
                 }
             }
@@ -209,30 +200,88 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         // Double-tap fallback -> undo.
         public func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
             DispatchQueue.main.async { [weak self] in
+                Haptics.tap()
                 self?.canvasView?.undoManager?.undo()
             }
         }
     }
 
-    // MARK: - Auto-Crop Helper
+    // MARK: - Notiz-Vorschau (Zeichnung + Textfelder)
 
-    /// Crops a note preview to the outer bounds of its strokes.
-    public static func cropDrawingToContent(_ drawing: PKDrawing) -> UIImage? {
-        guard !drawing.strokes.isEmpty else { return nil }
+    /// Rendert die Vorschau einer Notiz, zugeschnitten auf den Inhalt.
+    /// Sowohl Pencil-Striche als auch Textfelder werden berücksichtigt.
+    public static func renderNotePreview(drawing: PKDrawing, textBoxes: [NoteTextBox]) -> UIImage? {
+        var contentRect = CGRect.null
 
-        let bounds = drawing.bounds
-        guard bounds.width > 2 && bounds.height > 2 && !bounds.isNull && !bounds.isInfinite else {
+        if !drawing.strokes.isEmpty {
+            let bounds = drawing.bounds
+            if !bounds.isNull && !bounds.isInfinite && bounds.width > 2 && bounds.height > 2 {
+                contentRect = contentRect.union(bounds)
+            }
+        }
+
+        let visibleBoxes = textBoxes.filter {
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        func attributes(for box: NoteTextBox) -> [NSAttributedString.Key: Any] {
+            [
+                .font: UIFont.systemFont(ofSize: box.fontSize),
+                .foregroundColor: UIColor.black
+            ]
+        }
+
+        func textRect(for box: NoteTextBox) -> CGRect {
+            let attrs = attributes(for: box)
+            let innerWidth = max(20, box.width - 16)
+            let bounding = (box.text as NSString).boundingRect(
+                with: CGSize(width: innerWidth, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin],
+                attributes: attrs,
+                context: nil
+            )
+            return CGRect(
+                x: box.x + 8,
+                y: box.y + 8,
+                width: innerWidth,
+                height: ceil(bounding.height)
+            )
+        }
+
+        for box in visibleBoxes {
+            contentRect = contentRect.union(textRect(for: box))
+        }
+
+        guard !contentRect.isNull, contentRect.width > 2, contentRect.height > 2 else {
             return nil
         }
 
-        let padding: CGFloat = 12
-        let paddedRect = CGRect(
-            x: max(0, bounds.origin.x - padding),
-            y: max(0, bounds.origin.y - padding),
-            width: bounds.width + (padding * 2),
-            height: bounds.height + (padding * 2)
-        )
+        let padded = contentRect.insetBy(dx: -12, dy: -12)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 2
+        format.opaque = false
+        let renderer = UIGraphicsImageRenderer(size: padded.size, format: format)
 
-        return drawing.image(from: paddedRect, scale: 2.0)
+        return renderer.image { _ in
+            if !drawing.strokes.isEmpty {
+                let drawingImage = drawing.image(from: padded, scale: 2)
+                drawingImage.draw(in: CGRect(origin: .zero, size: padded.size))
+            }
+            for box in visibleBoxes {
+                let rect = textRect(for: box)
+                let localRect = CGRect(
+                    x: rect.minX - padded.minX,
+                    y: rect.minY - padded.minY,
+                    width: rect.width,
+                    height: rect.height
+                )
+                (box.text as NSString).draw(
+                    with: localRect,
+                    options: [.usesLineFragmentOrigin],
+                    attributes: attributes(for: box),
+                    context: nil
+                )
+            }
+        }
     }
 }

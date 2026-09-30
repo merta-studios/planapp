@@ -22,11 +22,14 @@ public struct LessonBlockView: View {
     }
 
     public var body: some View {
-        let (displayName, _, subjectColor) = viewModel.resolveSubjectDisplay(for: lesson)
+        let display = viewModel.resolveSubjectDisplay(for: lesson)
+        let displayName = display.name
+        let subjectColor = display.color
         let note = viewModel.noteFor(lesson: lesson)
         let settings = viewModel.displaySettings
         let isActive = viewModel.isDrawingOverlayPresented
             && viewModel.activeNoteLesson?.noteKey == lesson.noteKey
+        let hasGradient = display.gradientEndColor != nil
         let cardColors: [Color] = {
             if isActive {
                 return [
@@ -36,6 +39,9 @@ public struct LessonBlockView: View {
             }
             if lesson.isCancelled {
                 return [Color.gray.opacity(0.35), Color.gray.opacity(0.45)]
+            }
+            if let endColor = display.gradientEndColor {
+                return [subjectColor, endColor]
             }
             return [subjectColor, subjectColor.opacity(0.88)]
         }()
@@ -47,8 +53,10 @@ public struct LessonBlockView: View {
                 .fill(
                     LinearGradient(
                         colors: cardColors,
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+                        // Benutzerdefinierte Farbverläufe laufen von der
+                        // oberen Anfangs- zur unteren End-Farbe.
+                        startPoint: hasGradient ? .top : .topLeading,
+                        endPoint: hasGradient ? .bottom : .bottomTrailing
                     )
                 )
                 .overlay(
@@ -138,24 +146,33 @@ public struct LessonBlockView: View {
                         .padding(.top, 1)
                 }
 
-                Spacer(minLength: 2)
-
-                // Handschriftliche Notiz-Vorschau
-                if settings.showNotesPreview, let imgData = note?.croppedImageData, let uiImg = UIImage(data: imgData) {
-                    HStack {
-                        Spacer()
-                        Image(uiImage: uiImg)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxHeight: max(24, height * 0.42))
-                        Spacer()
-                    }
-                    .padding(.bottom, 2)
-                }
+                Spacer(minLength: 0)
             }
             .padding(8)
         }
         .frame(height: height)
+        // Handschriftliche Notiz-Vorschau: Als Overlay unten rechts, damit sie
+        // auch in kleinen Blöcken sichtbar bleibt statt zu verschwinden.
+        .overlay(alignment: .bottomTrailing) {
+            if settings.showNotesPreview,
+               let imgData = note?.croppedImageData,
+               let uiImg = UIImage(data: imgData) {
+                Image(uiImage: uiImg)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(
+                        maxWidth: 110,
+                        maxHeight: max(18, min(height * 0.45, height - 10))
+                    )
+                    .padding(3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.white.opacity(0.55))
+                    )
+                    .padding(5)
+                    .allowsHitTesting(false)
+            }
+        }
         .background(
             GeometryReader { proxy in
                 Color.clear
@@ -175,13 +192,16 @@ public struct LessonBlockView: View {
                 }
                 .onEnded { scale in
                     if scale > 1.15 {
+                        Haptics.tap()
                         viewModel.openNote(for: lesson, sourceFrame: globalFrame)
                     }
                     pinchScale = 1.0
                 }
         )
-        // Klick öffnet Notiz-Bereich
+        // Klick öffnet Notiz-Bereich (mit haptischem Feedback, auch beim
+        // Antippen mit dem Apple Pencil)
         .onTapGesture {
+            Haptics.tap()
             viewModel.openNote(for: lesson, sourceFrame: globalFrame)
         }
     }

@@ -1,17 +1,16 @@
 import SwiftUI
 
-private enum WeekSwipeAxis: Equatable {
-    case horizontal
-    case vertical
-}
-
 /// Hauptansicht der PlanApp: Stundenplan mit flüssigem 3-Wochen-Karussell und Liquid-Glass Design
 public struct TimetableView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
 
     @State private var dragOffset: CGFloat = 0
-    @State private var weekSwipeAxis: WeekSwipeAxis?
     @State private var isSettlingWeek = false
+    // Beim "Heute"-Sprung wird die Nachbarseite vorübergehend durch die
+    // Zielwoche ersetzt, damit auch Sprünge über mehrere Wochen hinweg die
+    // korrekte Woche hereinrutschen sehen.
+    @State private var jumpNeighborWeek: Date? = nil
+    @State private var jumpDirection: Int = 0
     @State private var toastMessage: String? = nil
     @State private var toastIsError: Bool = false
     @Namespace private var noteNamespace
@@ -22,11 +21,17 @@ public struct TimetableView: View {
     public init() {}
 
     private var previousWeekStart: Date {
-        Calendar.germanCalendar.date(byAdding: .day, value: -7, to: viewModel.selectedWeekStart) ?? viewModel.selectedWeekStart
+        if jumpDirection == -1, let jumpNeighborWeek {
+            return jumpNeighborWeek
+        }
+        return Calendar.germanCalendar.date(byAdding: .day, value: -7, to: viewModel.selectedWeekStart) ?? viewModel.selectedWeekStart
     }
 
     private var nextWeekStart: Date {
-        Calendar.germanCalendar.date(byAdding: .day, value: 7, to: viewModel.selectedWeekStart) ?? viewModel.selectedWeekStart
+        if jumpDirection == 1, let jumpNeighborWeek {
+            return jumpNeighborWeek
+        }
+        return Calendar.germanCalendar.date(byAdding: .day, value: 7, to: viewModel.selectedWeekStart) ?? viewModel.selectedWeekStart
     }
 
     public var body: some View {
@@ -90,13 +95,22 @@ public struct TimetableView: View {
                         .offset(x: -availableWidth + dragOffset)
                         .frame(width: availableWidth, alignment: .leading)
                         .clipped()
+                        // A UIKit pan recognizer on the enclosing scroll view
+                        // makes horizontal swiping track the finger even when
+                        // the swipe starts on top of a (tappable) lesson block.
+                        .background(
+                            WeekPanGestureAttachment(
+                                onChanged: { translation in
+                                    handleWeekPanChanged(translation, pageWidth: availableWidth)
+                                },
+                                onEnded: { translation, velocity in
+                                    handleWeekPanEnded(translation, velocity: velocity, pageWidth: availableWidth)
+                                },
+                                isEnabled: !isSettlingWeek && !viewModel.isDrawingOverlayPresented
+                            )
+                        )
                     }
-                    .scrollDisabled(weekSwipeAxis == .horizontal || isSettlingWeek)
-                    .contentShape(Rectangle())
-                    // A high-priority recognizer prevents the vertical scroll
-                    // view from swallowing diagonal week swipes. Direction is
-                    // locked with generous tolerance after a few points.
-                    .highPriorityGesture(weekSwipeGesture(pageWidth: availableWidth))
+                    .scrollDisabled(isSettlingWeek)
                 }
 
                 // 3. TOAST-BENACHRICHTIGUNGEN
@@ -129,6 +143,13 @@ public struct TimetableView: View {
                         .zIndex(100)
                 }
             }
+            // "Heute"-Button: Woche rutscht animiert in die richtige Richtung
+            // statt überblendet zu werden.
+            .onChange(of: viewModel.weekJumpRequest) { _, newValue in
+                guard let target = newValue else { return }
+                viewModel.weekJumpRequest = nil
+                performJump(to: target, pageWidth: availableWidth)
+            }
         }
         // Einstellungs-Sheet
         .sheet(isPresented: $viewModel.isSettingsPresented) {
@@ -151,90 +172,97 @@ public struct TimetableView: View {
         }
     }
 
-    private func weekSwipeGesture(pageWidth: CGFloat) -> some Gesture {
-        // Using .global here (instead of .local) matters: with a .local
-        // coordinate space nested inside a ScrollView, UIKit can silently let
-        // the ScrollView's own pan recognizer take over mid-gesture, so this
-        // DragGesture only ever reported a value once on release instead of
-        // continuously while the finger moved. .global keeps this gesture in
-        // control for the whole drag, so the week already follows the finger.
-        DragGesture(minimumDistance: 5, coordinateSpace: .global)
-            .onChanged { value in
-                guard !isSettlingWeek else { return }
+    // MARK: - Wochen-Wischen (kontinuierlich, folgt dem Finger)
 
-                let horizontal = abs(value.translation.width)
-                let vertical = abs(value.translation.height)
+    private func handleWeekPanChanged(_ translation: CGFloat, pageWidth: CGFloat) {
+        guard !isSettlingWeek else { return }
 
-                if weekSwipeAxis == nil, max(horizontal, vertical) > 7 {
-                    // Horizontal intent remains valid even with a pronounced
-                    // diagonal component (roughly up to 60 degrees).
-                    if horizontal >= vertical * 0.55 {
-                        weekSwipeAxis = .horizontal
-                    } else if vertical >= horizontal * 1.45 {
-                        weekSwipeAxis = .vertical
-                    }
-                }
+        if abs(translation) <= pageWidth {
+            dragOffset = translation
+        } else {
+            // Soft resistance when dragging past the prepared page.
+            let overflow = abs(translation) - pageWidth
+            dragOffset = translation < 0
+                ? -(pageWidth + overflow * 0.16)
+                : pageWidth + overflow * 0.16
+        }
+    }
 
-                guard weekSwipeAxis == .horizontal else { return }
+    private func handleWeekPanEnded(_ translation: CGFloat, velocity: CGFloat, pageWidth: CGFloat) {
+        guard !isSettlingWeek else { return }
 
-                let rawOffset = value.translation.width
-                if abs(rawOffset) <= pageWidth {
-                    dragOffset = rawOffset
-                } else {
-                    // Soft resistance when dragging past the prepared page.
-                    let overflow = abs(rawOffset) - pageWidth
-                    dragOffset = rawOffset < 0
-                        ? -(pageWidth + overflow * 0.16)
-                        : pageWidth + overflow * 0.16
+        // Abgebrochene Geste ohne Bewegung: nur zurückfedern.
+        guard translation != 0 || velocity != 0 else {
+            if dragOffset != 0 {
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
+                    dragOffset = 0
                 }
             }
-            .onEnded { value in
-                defer { weekSwipeAxis = nil }
-                guard weekSwipeAxis == .horizontal, !isSettlingWeek else {
-                    if dragOffset != 0 {
-                        withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
-                            dragOffset = 0
-                        }
-                    }
-                    return
-                }
+            return
+        }
 
-                let distance = value.translation.width
-                let projectedDistance = value.predictedEndTranslation.width
-                let crossedDistanceThreshold = abs(distance) > max(44, pageWidth * 0.12)
-                let hasFlickVelocity = abs(projectedDistance) > max(90, pageWidth * 0.28)
+        let projectedDistance = translation + velocity * 0.2
+        let crossedDistanceThreshold = abs(translation) > max(44, pageWidth * 0.12)
+        let hasFlickVelocity = abs(velocity) > 220 && abs(projectedDistance) > max(90, pageWidth * 0.20)
 
-                guard crossedDistanceThreshold || hasFlickVelocity else {
-                    withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
-                        dragOffset = 0
-                    }
-                    return
-                }
-
-                isSettlingWeek = true
-                let directionValue = abs(distance) > 8 ? distance : projectedDistance
-                let movingToNext = directionValue < 0
-                let targetOffset: CGFloat = movingToNext ? -pageWidth : pageWidth
-
-                withAnimation(.interactiveSpring(response: 0.27, dampingFraction: 0.90)) {
-                    dragOffset = targetOffset
-                }
-
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.27) {
-                    if movingToNext {
-                        viewModel.goToNextWeek()
-                    } else {
-                        viewModel.goToPreviousWeek()
-                    }
-
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        dragOffset = 0
-                        isSettlingWeek = false
-                    }
-                }
+        guard crossedDistanceThreshold || hasFlickVelocity else {
+            withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
+                dragOffset = 0
             }
+            return
+        }
+
+        let directionValue = abs(translation) > 8 ? translation : projectedDistance
+        let movingToNext = directionValue < 0
+        settleWeek(movingToNext: movingToNext, pageWidth: pageWidth) {
+            if movingToNext {
+                viewModel.goToNextWeek()
+            } else {
+                viewModel.goToPreviousWeek()
+            }
+        }
+    }
+
+    /// Animiert das Karussell eine Seite weiter und tauscht anschließend die
+    /// Wochen ohne sichtbaren Sprung aus.
+    private func settleWeek(movingToNext: Bool, pageWidth: CGFloat, completion: @escaping () -> Void) {
+        isSettlingWeek = true
+        let targetOffset: CGFloat = movingToNext ? -pageWidth : pageWidth
+
+        withAnimation(.interactiveSpring(response: 0.27, dampingFraction: 0.90)) {
+            dragOffset = targetOffset
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.27) {
+            completion()
+
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                dragOffset = 0
+                jumpNeighborWeek = nil
+                jumpDirection = 0
+                isSettlingWeek = false
+            }
+        }
+    }
+
+    /// Rutscht animiert zur Zielwoche (z.B. beim "Heute"-Button). Die
+    /// Zielwoche wird dafür auf der passenden Nachbarseite vorbereitet.
+    private func performJump(to target: Date, pageWidth: CGFloat) {
+        guard target != viewModel.selectedWeekStart else { return }
+        guard !isSettlingWeek else {
+            viewModel.selectWeek(target)
+            return
+        }
+
+        let movingToNext = target > viewModel.selectedWeekStart
+        jumpDirection = movingToNext ? 1 : -1
+        jumpNeighborWeek = target
+
+        settleWeek(movingToNext: movingToNext, pageWidth: pageWidth) {
+            viewModel.selectWeek(target)
+        }
     }
 
     private func showToast(_ message: String, isError: Bool) {

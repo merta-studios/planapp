@@ -38,6 +38,28 @@ extension Color {
         return String(format: "#%02X%02X%02X", Int(r * 255), Int(g * 255), Int(b * 255))
     }
 
+    /// Pastell-Variante der Farbe: Für alle Fach-Farben gilt eine begrenzte
+    /// Sättigung und eine Mindest-Helligkeit ("maximaler Schwarz-Anteil").
+    /// Egal welche Farbe eingestellt wird, das Ergebnis bleibt immer sanft.
+    public var pastel: Color {
+        let uic = UIColor(self)
+        var h: CGFloat = 0
+        var s: CGFloat = 0
+        var b: CGFloat = 0
+        var a: CGFloat = 0
+        guard uic.getHue(&h, saturation: &s, brightness: &b, alpha: &a) else {
+            return self
+        }
+        let pastelSaturation = min(s, 0.42)
+        let pastelBrightness = max(b, 0.88)
+        return Color(
+            hue: Double(h),
+            saturation: Double(pastelSaturation),
+            brightness: Double(pastelBrightness),
+            opacity: Double(a)
+        )
+    }
+
     /// Gibt eine lesbare Textfarbe (Schwarz oder Weiß) passend zum Hintergrund zurück
     public var contrastingTextColor: Color {
         let uic = UIColor(self)

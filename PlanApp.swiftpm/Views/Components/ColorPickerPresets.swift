@@ -3,6 +3,7 @@ import SwiftUI
 /// Farbauswahl-Leiste mit vordefinierten Schulfach-Farben und Custom-Farbwähler
 public struct ColorPickerPresets: View {
     @Binding public var selectedHex: String
+    public var title: String
 
     public let presetColors: [(name: String, hex: String)] = [
         ("Klassisch Blau", "#3B82F6"),
@@ -20,13 +21,14 @@ public struct ColorPickerPresets: View {
         ("Koralle Orange", "#F97316")
     ]
 
-    public init(selectedHex: Binding<String>) {
+    public init(selectedHex: Binding<String>, title: String = "Fach-Farbe wählen:") {
         self._selectedHex = selectedHex
+        self.title = title
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Fach-Farbe wählen:")
+            Text(title)
                 .font(.system(size: 14, weight: .regular, design: .default))
                 .foregroundColor(.secondary)
 
