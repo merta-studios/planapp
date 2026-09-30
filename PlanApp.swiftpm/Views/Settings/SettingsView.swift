@@ -14,7 +14,7 @@ public struct SettingsView: View {
                 Color(UIColor.systemBackground).ignoresSafeArea()
 
                 ScrollView(.vertical, showsIndicators: true) {
-                    VStack(spacing: 20) {
+                    LazyVStack(spacing: 20) {
                         // 1. WebUntis API Konfiguration
                         UntisConfigSection()
 

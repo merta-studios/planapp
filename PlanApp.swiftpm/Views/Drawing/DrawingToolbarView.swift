@@ -339,11 +339,12 @@ public struct DrawingToolbarView: View {
                     .fill(Color(UIColor.tertiarySystemBackground).opacity(0.72))
                 // Sichtbare Vorschau: Die echte Zeichnung liegt auf der skalierten
                 // Notizfläche, daher wird nur die Vorschau mit derselben Skala angepasst.
+                // Keine künstliche Mindestgröße: 1 pt soll auch wie 1 pt wirken.
                 Circle()
-                    .fill(Color.primary)
+                    .fill(currentToolPreviewColor)
                     .frame(
-                        width: max(3, min(24, currentToolWidth * previewScale)),
-                        height: max(3, min(24, currentToolWidth * previewScale))
+                        width: compactPreviewDiameter,
+                        height: compactPreviewDiameter
                     )
             }
             .frame(width: buttonSize, height: buttonSize)
@@ -377,6 +378,10 @@ public struct DrawingToolbarView: View {
 
     private var currentToolWidth: CGFloat {
         currentWidthBinding.wrappedValue
+    }
+
+    private var compactPreviewDiameter: CGFloat {
+        min(34, max(0.1, currentToolWidth * previewScale))
     }
 
     private var currentWidthRange: ClosedRange<CGFloat> {
@@ -558,8 +563,10 @@ private struct ThicknessSliderPanel: View {
 
     /// Sichtbare Vorschau: Die Zeichenfläche selbst kann verkleinert dargestellt
     /// sein. Nur die Vorschau wird deshalb skaliert, die echte Werkzeug-Dicke nicht.
+    /// Es gibt keine künstliche Mindestgröße mehr – dadurch entspricht die
+    /// Anzeige auch bei sehr dünnen Stiften der tatsächlichen Strichstärke.
     private var previewDiameter: CGFloat {
-        max(3, min(72, width * previewScale))
+        min(72, max(0.1, width * previewScale))
     }
 
     var body: some View {

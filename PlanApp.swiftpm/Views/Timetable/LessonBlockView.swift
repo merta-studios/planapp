@@ -33,7 +33,7 @@ public struct LessonBlockView: View {
         let isActive = viewModel.isDrawingOverlayPresented
             && viewModel.activeNoteLesson?.noteKey == lesson.noteKey
         guard !isActive else { return false }
-        return !(viewModel.noteFor(lesson: lesson)?.hasVisibleContent ?? false)
+        return !viewModel.hasVisibleNote(for: lesson)
     }
 
     public var body: some View {
@@ -41,6 +41,7 @@ public struct LessonBlockView: View {
         let displayName = display.name
         let subjectColor = display.color
         let note = viewModel.noteFor(lesson: lesson)
+        let hasVisibleNote = viewModel.hasVisibleNote(for: lesson)
         let settings = viewModel.displaySettings
         let isActive = viewModel.isDrawingOverlayPresented
             && viewModel.activeNoteLesson?.noteKey == lesson.noteKey
@@ -199,6 +200,7 @@ public struct LessonBlockView: View {
         // den Text erreicht.
         .overlay(alignment: .bottomTrailing) {
             if settings.showNotesPreview,
+               hasVisibleNote,
                let imgData = note?.croppedImageData,
                let uiImg = UIImage(data: imgData) {
                 // Verfügbare Breite: komplette Blockbreite abzüglich der
@@ -229,9 +231,9 @@ public struct LessonBlockView: View {
         .background(
             GeometryReader { proxy in
                 Color.clear
-                    .onAppear { globalFrame = proxy.frame(in: .global) }
+                    .onAppear { updateGlobalFrameIfNeeded(proxy.frame(in: .global)) }
                     .onChange(of: proxy.frame(in: .global)) { _, newValue in
-                        globalFrame = newValue
+                        updateGlobalFrameIfNeeded(newValue)
                     }
             }
         )
@@ -302,11 +304,13 @@ public struct LessonBlockView: View {
 
     @ViewBuilder
     private var lessonActionButtons: some View {
+        let hasVisibleNote = viewModel.hasVisibleNote(for: lesson)
+
         Button {
             openCurrentNote()
         } label: {
             Label(
-                viewModel.noteFor(lesson: lesson) == nil ? "Notiz erstellen" : "Notiz bearbeiten",
+                hasVisibleNote ? "Notiz bearbeiten" : "Notiz erstellen",
                 systemImage: "square.and.pencil"
             )
         }
@@ -320,13 +324,30 @@ public struct LessonBlockView: View {
             Label("Notiz für die nächste Stunde erstellen", systemImage: "calendar.badge.plus")
         }
 
-        if viewModel.noteFor(lesson: lesson) != nil {
+        if hasVisibleNote {
             Button(role: .destructive) {
                 requestDeleteConfirmation()
             } label: {
                 Label("Notiz löschen", systemImage: "trash")
             }
         }
+    }
+
+    private func updateGlobalFrameIfNeeded(_ newFrame: CGRect) {
+        // GeometryReader kann während Sheet-/Scroll-Animationen sehr viele fast
+        // identische Werte liefern. Während Settings/Overlay sichtbar sind, ist
+        // der Quellrahmen ohnehin nicht nutzbar; danach reicht der nächste
+        // relevante Layout-Wert. Nur relevante Änderungen als State setzen,
+        // sonst werden alle Stundenblöcke unnötig neu gerendert.
+        guard !viewModel.isSettingsPresented, !viewModel.isDrawingOverlayPresented else { return }
+        let threshold: CGFloat = 2
+        guard abs(globalFrame.origin.x - newFrame.origin.x) > threshold
+            || abs(globalFrame.origin.y - newFrame.origin.y) > threshold
+            || abs(globalFrame.size.width - newFrame.size.width) > threshold
+            || abs(globalFrame.size.height - newFrame.size.height) > threshold else {
+            return
+        }
+        globalFrame = newFrame
     }
 
     private func openCurrentNote() {

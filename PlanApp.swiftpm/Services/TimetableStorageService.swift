@@ -165,7 +165,7 @@ public final class TimetableStorageService {
         metadata[note.id] = [
             "lineCount": note.lineCount,
             "updatedAt": note.updatedAt.timeIntervalSince1970,
-            "hasDrawing": !note.drawingData.isEmpty || !note.textBoxes.isEmpty,
+            "hasDrawing": note.hasVisibleContent,
             "backgroundStyle": note.backgroundStyle.rawValue
         ]
         defaults.set(metadata, forKey: Keys.notesMetadata)

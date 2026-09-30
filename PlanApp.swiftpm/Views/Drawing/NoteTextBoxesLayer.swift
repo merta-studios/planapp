@@ -8,7 +8,7 @@ func estimatedTextBoxHeight(_ box: NoteTextBox) -> CGFloat {
     let bounding = (box.text as NSString).boundingRect(
         with: CGSize(width: innerWidth, height: .greatestFiniteMagnitude),
         options: [.usesLineFragmentOrigin],
-        attributes: [.font: UIFont.systemFont(ofSize: box.fontSize)],
+        attributes: [.font: UIFont.systemFont(ofSize: CGFloat(box.fontSize))],
         context: nil
     )
     return max(36, ceil(bounding.height) + 16)
@@ -160,9 +160,15 @@ struct NoteTextBoxesLayer: View {
         }
         registerUndo(before, textBoxes)
 
-        // Neues Feld direkt auswählen und zum Bearbeiten öffnen.
-        selectedID = box.id
-        editingID = box.id
+        // Neues Feld direkt auswählen und zum Bearbeiten öffnen. Das Fokussieren
+        // läuft bewusst im nächsten Main-Loop, nachdem SwiftUI die neue
+        // ForEach-Zeile materialisiert hat; so wird beim Text-Werkzeug kein
+        // Binding-Element mitten im Update fokussiert/ersetzt.
+        DispatchQueue.main.async {
+            guard textBoxes.contains(where: { $0.id == box.id }) else { return }
+            selectedID = box.id
+            editingID = box.id
+        }
     }
 
     private func deleteBox(_ box: NoteTextBox) {

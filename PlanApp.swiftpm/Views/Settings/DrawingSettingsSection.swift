@@ -6,6 +6,11 @@ public struct DrawingSettingsSection: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
 
     @State private var showDeleteAllNotesAlert = false
+    /// Lokaler Entwurf für Slider-Werte. Während des Ziehens wird dadurch nicht
+    /// der komplette Stundenplan über `@Published` neu aufgebaut; gespeichert
+    /// wird erst beim Loslassen bzw. beim Schließen der Einstellungen.
+    @State private var draftSettings: DrawingSettings = .default
+    @State private var didLoadDraft = false
 
     public init() {}
 
@@ -26,21 +31,21 @@ public struct DrawingSettingsSection: View {
                 thicknessSlider(
                     title: "Standard-Dicke Stift",
                     systemImage: "pencil.tip",
-                    value: binding(\.penWidth),
+                    value: draftBinding(\.penWidth),
                     range: 1...20
                 )
 
                 thicknessSlider(
                     title: "Standard-Dicke Textmarker",
                     systemImage: "highlighter",
-                    value: binding(\.markerWidth),
+                    value: draftBinding(\.markerWidth),
                     range: 4...40
                 )
 
                 thicknessSlider(
                     title: "Standard-Dicke Radierer",
                     systemImage: "eraser",
-                    value: binding(\.eraserWidth),
+                    value: draftBinding(\.eraserWidth),
                     range: 4...60
                 )
             }
@@ -56,12 +61,17 @@ public struct DrawingSettingsSection: View {
                     Text("Standard-Größe der Zeichenfläche")
                         .font(.system(size: 14, weight: .regular, design: .default))
                     Spacer()
-                    Text("\(Int(viewModel.drawingSettings.defaultCanvasHeight)) pt")
+                    Text("\(Int(draftSettings.defaultCanvasHeight)) pt")
                         .font(.system(size: 13, design: .monospaced))
                         .foregroundColor(.secondary)
                 }
 
-                Slider(value: binding(\.defaultCanvasHeight), in: 280...656, step: 4)
+                Slider(
+                    value: draftBinding(\.defaultCanvasHeight),
+                    in: 280...656,
+                    step: 4,
+                    onEditingChanged: handleSliderEditingChanged
+                )
 
                 Text("Höhe, mit der die Zeichenfläche beim neuen Öffnen einer Notiz startet.")
                     .font(.system(size: 12, weight: .regular, design: .default))
@@ -79,16 +89,16 @@ public struct DrawingSettingsSection: View {
                     Text("Standard-Hintergrund")
                         .font(.system(size: 14, weight: .regular, design: .default))
                     Spacer()
-                    Text(viewModel.drawingSettings.defaultBackgroundStyle.title)
+                    Text(draftSettings.defaultBackgroundStyle.title)
                         .font(.system(size: 13, weight: .regular, design: .default))
                         .foregroundColor(.secondary)
                 }
 
                 Picker("Standard-Hintergrund", selection: Binding(
-                    get: { viewModel.drawingSettings.defaultBackgroundStyle },
+                    get: { draftSettings.defaultBackgroundStyle },
                     set: { newValue in
-                        viewModel.drawingSettings.defaultBackgroundStyle = newValue
-                        viewModel.saveDrawingSettings()
+                        draftSettings.defaultBackgroundStyle = newValue
+                        commitDraftSettings()
                     }
                 )) {
                     ForEach(NoteBackgroundStyle.allCases) { style in
@@ -108,10 +118,10 @@ public struct DrawingSettingsSection: View {
             // 4. AUTOMATISCHES AUFRÄUMEN & ALLES LÖSCHEN
             VStack(alignment: .leading, spacing: 12) {
                 Toggle(isOn: Binding(
-                    get: { viewModel.drawingSettings.autoDeletePastNotes },
+                    get: { draftSettings.autoDeletePastNotes },
                     set: { newValue in
-                        viewModel.drawingSettings.autoDeletePastNotes = newValue
-                        viewModel.saveDrawingSettings()
+                        draftSettings.autoDeletePastNotes = newValue
+                        commitDraftSettings()
                         if newValue {
                             viewModel.cleanupPastNotesIfEnabled()
                         }
@@ -153,6 +163,8 @@ public struct DrawingSettingsSection: View {
         }
         .padding(16)
         .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
+        .onAppear(perform: loadDraftIfNeeded)
+        .onDisappear(perform: commitDraftSettings)
         .alert("Alle Notizen löschen", isPresented: $showDeleteAllNotesAlert) {
             Button("Abbrechen", role: .cancel) {}
             Button("Alle löschen", role: .destructive) {
@@ -168,15 +180,33 @@ public struct DrawingSettingsSection: View {
 
     // MARK: - Hilfselemente
 
-    /// Binding auf ein Feld der DrawingSettings, das Änderungen sofort speichert.
-    private func binding<T>(_ keyPath: WritableKeyPath<DrawingSettings, T>) -> Binding<T> {
+    private func loadDraftIfNeeded() {
+        guard !didLoadDraft else { return }
+        draftSettings = viewModel.drawingSettings
+        didLoadDraft = true
+    }
+
+    private func commitDraftSettings() {
+        guard didLoadDraft, viewModel.drawingSettings != draftSettings else { return }
+        viewModel.drawingSettings = draftSettings
+        viewModel.saveDrawingSettings()
+    }
+
+    /// Binding auf ein Feld des lokalen Entwurfs. Dadurch bleiben Slider flüssig
+    /// und schreiben nicht bei jedem einzelnen Drag-Pixel in `UserDefaults`.
+    private func draftBinding<T>(_ keyPath: WritableKeyPath<DrawingSettings, T>) -> Binding<T> {
         Binding(
-            get: { viewModel.drawingSettings[keyPath: keyPath] },
+            get: { draftSettings[keyPath: keyPath] },
             set: { newValue in
-                viewModel.drawingSettings[keyPath: keyPath] = newValue
-                viewModel.saveDrawingSettings()
+                draftSettings[keyPath: keyPath] = newValue
             }
         )
+    }
+
+    private func handleSliderEditingChanged(_ isEditing: Bool) {
+        if !isEditing {
+            commitDraftSettings()
+        }
     }
 
     private func thicknessSlider(
@@ -199,7 +229,12 @@ public struct DrawingSettingsSection: View {
                     .foregroundColor(.secondary)
             }
 
-            Slider(value: value, in: range, step: 0.5)
+            Slider(
+                value: value,
+                in: range,
+                step: 0.5,
+                onEditingChanged: handleSliderEditingChanged
+            )
         }
     }
 }

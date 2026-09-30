@@ -58,6 +58,9 @@ public final class TimetableViewModel: ObservableObject {
     @Published public var weekJumpRequest: Date? = nil
 
     private var activeSyncCount: Int = 0
+    /// Cache sichtbarer Notiz-Keys. Das vermeidet wiederholtes Decodieren großer
+    /// PKDrawing-Daten während SwiftUI den Stundenplan neu rendert.
+    private var visibleNoteKeys: Set<String> = []
     private var autoRefreshTimer: AnyCancellable? = nil
     private let storage = TimetableStorageService.shared
     private let untis = WebUntisService.shared
@@ -81,6 +84,12 @@ public final class TimetableViewModel: ObservableObject {
         self.lessonNotes = storage.loadAllLessonNotes()
         self.viewMode = storage.loadViewMode()
         self.lastSyncDate = untisCredentials.lastSyncDate ?? Date()
+
+        // Alte, versehentlich leer gespeicherte Notizen (PKDrawing-Daten ohne
+        // Strokes / leere Textfelder) direkt entfernen, damit sie nicht in
+        // Optionen, Hervorhebung oder der Nur-Notizen-Übersicht auftauchen.
+        cleanupEmptyNotes()
+        rebuildVisibleNoteCache()
 
         // Optional: Notizen zu bereits vergangenen Stunden automatisch entfernen
         cleanupPastNotesIfEnabled()
@@ -284,7 +293,7 @@ public final class TimetableViewModel: ObservableObject {
 
     /// Prüft, ob eine Stunde eine Notiz mit sichtbarem Inhalt hat.
     public func hasVisibleNote(for lesson: Lesson) -> Bool {
-        noteFor(lesson: lesson)?.hasVisibleContent ?? false
+        visibleNoteKeys.contains(lesson.noteKey)
     }
 
     // MARK: - Drawing & Notes Handling
@@ -319,8 +328,20 @@ public final class TimetableViewModel: ObservableObject {
             backgroundStyle: backgroundStyle,
             updatedAt: Date()
         )
-        self.lessonNotes[key] = note
-        storage.saveLessonNote(note)
+
+        if note.hasVisibleContent {
+            self.lessonNotes[key] = note
+            visibleNoteKeys.insert(key)
+            storage.saveLessonNote(note)
+        } else {
+            // Eine nur geöffnete oder komplett geleerte Seite bleibt wirklich
+            // "keine Notiz". PKDrawing liefert auch für leere Zeichnungen Daten,
+            // deshalb entscheidet hier `hasVisibleContent`, nicht die Datenlänge.
+            self.lessonNotes.removeValue(forKey: key)
+            visibleNoteKeys.remove(key)
+            storage.deleteLessonNote(for: key)
+        }
+
         withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
             self.isDrawingOverlayPresented = false
             self.activeNoteLesson = nil
@@ -337,6 +358,7 @@ public final class TimetableViewModel: ObservableObject {
         let key = lesson.noteKey
         guard lessonNotes[key] != nil else { return }
         lessonNotes.removeValue(forKey: key)
+        visibleNoteKeys.remove(key)
         storage.deleteLessonNote(for: key)
         successMessage = "Notiz gelöscht."
     }
@@ -412,8 +434,32 @@ public final class TimetableViewModel: ObservableObject {
     /// Löscht ALLE gespeicherten Notizen zu Stunden-Blöcken.
     public func deleteAllNotes() {
         lessonNotes.removeAll()
+        visibleNoteKeys.removeAll()
         storage.deleteAllLessonNotes()
         successMessage = "Alle Notizen wurden gelöscht."
+    }
+
+    /// Entfernt Notiz-Datensätze ohne sichtbaren Inhalt. Solche Datensätze
+    /// entstanden früher schon beim bloßen Öffnen/Schließen einer Zeichenfläche.
+    public func cleanupEmptyNotes() {
+        let emptyKeys = lessonNotes.compactMap { entry -> String? in
+            let (key, note) = entry
+            return note.hasVisibleContent ? nil : key
+        }
+        guard !emptyKeys.isEmpty else { return }
+
+        for key in emptyKeys {
+            lessonNotes.removeValue(forKey: key)
+            visibleNoteKeys.remove(key)
+            storage.deleteLessonNote(for: key)
+        }
+    }
+
+    private func rebuildVisibleNoteCache() {
+        visibleNoteKeys = Set(lessonNotes.compactMap { entry -> String? in
+            let (key, note) = entry
+            return note.hasVisibleContent ? key : nil
+        })
     }
 
     /// Entfernt Notizen zu Stunden, die bereits in der Vergangenheit liegen –
@@ -427,6 +473,7 @@ public final class TimetableViewModel: ObservableObject {
             let datePrefix = String(key.prefix(10))
             if let date = Date.fromYyyyMMdd(datePrefix), date < todayStart {
                 lessonNotes.removeValue(forKey: key)
+                visibleNoteKeys.remove(key)
                 storage.deleteLessonNote(for: key)
             }
         }

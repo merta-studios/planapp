@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import PencilKit
 
 /// Enthält handschriftliche Notizen/Zeichnungen für eine Unterrichtsstunde
 public struct LessonNote: Identifiable, Codable, Equatable {
@@ -56,17 +57,36 @@ public struct LessonNote: Identifiable, Codable, Equatable {
         try container.encode(updatedAt, forKey: .updatedAt)
     }
 
-    /// Hilfsmethode: Prüft, ob eine Zeichnung oder Textfelder vorhanden sind
-    public var hasDrawing: Bool {
-        return (croppedImageData != nil && !drawingData.isEmpty) || !textBoxes.isEmpty
+    /// Prüft, ob mindestens ein Textfeld wirklich Text enthält.
+    public var hasTextContent: Bool {
+        textBoxes.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
-    /// Prüft, ob die Notiz sichtbaren Inhalt hat (Striche, Textfelder oder ein
-    /// bereits gerendertes Vorschaubild). Wird für die Ansichtsmodi
-    /// "Notizen hervorgehoben" und "Nur Notizen" sowie die Vorschau genutzt.
+    /// Prüft die eigentliche PencilKit-Zeichnung auf sichtbare Striche.
+    ///
+    /// Wichtig: `PKDrawing().dataRepresentation()` ist nicht leer. Eine reine
+    /// Datenlängen-Prüfung markiert deshalb schon eine gerade geöffnete, aber
+    /// komplett leere Notiz als "vorhanden". Für Hervorhebung, Optionen und
+    /// die "Nur Notizen"-Liste zählen daher nur echte Strokes.
+    public var hasInkContent: Bool {
+        guard !drawingData.isEmpty else { return false }
+        guard let drawing = try? PKDrawing(data: drawingData) else {
+            // Fallback für sehr alte/unerwartete Daten: lieber erhalten als
+            // versehentlich eine tatsächlich beschriebene Notiz ausblenden.
+            return true
+        }
+        return !drawing.strokes.isEmpty
+    }
+
+    /// Hilfsmethode: Prüft, ob eine Zeichnung oder nicht-leere Textfelder vorhanden sind
+    public var hasDrawing: Bool {
+        hasInkContent || hasTextContent
+    }
+
+    /// Prüft, ob die Notiz sichtbaren Inhalt hat (Striche oder Textfelder).
+    /// Das Vorschaubild ist nur Cache und zählt bewusst nicht als Inhalt, damit
+    /// alte leer gespeicherte Vorschaubilder keine "Geister-Notizen" erzeugen.
     public var hasVisibleContent: Bool {
-        if croppedImageData != nil { return true }
-        if textBoxes.contains(where: { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) { return true }
-        return !drawingData.isEmpty
+        hasInkContent || hasTextContent
     }
 }
