@@ -24,7 +24,8 @@ private struct DrawingViewport {
 }
 
 /// Full-screen editor which expands the selected lesson card into a centered,
-/// grey note. Apple Pencil draws; one or two fingers move and zoom the note.
+/// grey note. Apple Pencil draws; fingers move the note, the round handle
+/// below resizes it. Zooming is intentionally not supported.
 public struct LessonDrawingOverlayView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
     @Environment(\.colorScheme) private var colorScheme
@@ -36,7 +37,13 @@ public struct LessonDrawingOverlayView: View {
     @State private var canvasHeight: CGFloat = 460
     @State private var toolSelection: DrawingToolSelection = .pen(color: .black)
     @State private var penWidth: CGFloat = 3.5
+    @State private var markerWidth: CGFloat = 16
+    @State private var eraserWidth: CGFloat = 24
     @State private var canvasView: PKCanvasView?
+
+    // Textfelder (Text-Werkzeug)
+    @State private var textBoxes: [NoteTextBox] = []
+    @State private var selectedTextBoxID: UUID? = nil
 
     // Live transform state. Updates come incrementally from the UIKit canvas so
     // there is no jump when the fingers are released.
@@ -48,9 +55,6 @@ public struct LessonDrawingOverlayView: View {
     // just cross-fading in place.
     @State private var heroSourceFrame: CGRect = .zero
     @State private var heroBlend: CGFloat = 0
-    // The scale right after opening. Used to keep header text and the resize
-    // handle visually constant while the user later pinch-zooms the canvas.
-    @State private var baseScale: CGFloat = 1
 
     // Header drag state.
     @State private var isMovingFromHeader = false
@@ -69,7 +73,7 @@ public struct LessonDrawingOverlayView: View {
     @State private var didInitialize = false
 
     private let paperWidth: CGFloat = 640
-    private let headerHeight: CGFloat = 56
+    private let headerHeight: CGFloat = 64
     private let handleSpacing: CGFloat = 8
     private let handleSize: CGFloat = 36
     private let minimumCanvasHeight: CGFloat = 280
@@ -80,8 +84,13 @@ public struct LessonDrawingOverlayView: View {
         self.noteNamespace = noteNamespace
     }
 
+    private var isTextToolActive: Bool {
+        if case .text = toolSelection { return true }
+        return false
+    }
+
     public var body: some View {
-        let (displayName, _, subjectColor) = viewModel.resolveSubjectDisplay(for: lesson)
+        let display = viewModel.resolveSubjectDisplay(for: lesson)
 
         GeometryReader { geometry in
             let viewport = DrawingViewport(
@@ -100,8 +109,7 @@ public struct LessonDrawingOverlayView: View {
                     .onTapGesture(perform: saveAndDismiss)
 
                 editorPanel(
-                    displayName: displayName,
-                    subjectColor: subjectColor,
+                    display: display,
                     viewport: viewport
                 )
                 .zIndex(10)
@@ -112,6 +120,7 @@ public struct LessonDrawingOverlayView: View {
                     .zIndex(20)
             }
             .onAppear {
+                applyDrawingDefaults()
                 loadExistingNote()
                 heroSourceFrame = viewModel.activeNoteSourceFrame
 
@@ -119,7 +128,6 @@ public struct LessonDrawingOverlayView: View {
                 // are both present before calculating the initial fit.
                 DispatchQueue.main.async {
                     initializeTransform(in: viewport)
-                    baseScale = scale
                     didInitialize = true
 
                     // isExpanded fades the card to grey while heroBlend morphs
@@ -141,14 +149,18 @@ public struct LessonDrawingOverlayView: View {
                 guard didInitialize else { return }
                 normalizeTransform(in: viewport)
             }
+            .onChange(of: isTextToolActive) { _, nowActive in
+                if !nowActive {
+                    selectedTextBoxID = nil
+                }
+            }
         }
     }
 
     // MARK: - Editor panel
 
     private func editorPanel(
-        displayName: String,
-        subjectColor: Color,
+        display: SubjectDisplay,
         viewport: DrawingViewport
     ) -> some View {
         VStack(spacing: handleSpacing) {
@@ -157,14 +169,14 @@ public struct LessonDrawingOverlayView: View {
                     .fill(
                         isExpanded
                             ? Color(UIColor.secondarySystemBackground)
-                            : subjectColor
+                            : display.color
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .strokeBorder(
                                 isExpanded
                                     ? Color.white.opacity(0.28)
-                                    : subjectColor.contrastingTextColor.opacity(0.25),
+                                    : display.color.contrastingTextColor.opacity(0.25),
                                 lineWidth: 1
                             )
                     )
@@ -185,15 +197,14 @@ public struct LessonDrawingOverlayView: View {
                     drawing: $drawing,
                     toolSelection: toolSelection,
                     penWidth: penWidth,
+                    markerWidth: markerWidth,
+                    eraserWidth: eraserWidth,
                     colorScheme: colorScheme,
                     onCanvasCreated: { createdCanvas in
                         canvasView = createdCanvas
                     },
                     onFingerPan: { delta in
                         applyFingerPan(delta, in: viewport)
-                    },
-                    onFingerZoom: { factor, focalPoint in
-                        applyFingerZoom(factor, focalPoint: focalPoint, in: viewport)
                     }
                 )
                 .frame(
@@ -204,9 +215,27 @@ public struct LessonDrawingOverlayView: View {
                 .opacity(showsEditor ? 1 : 0)
                 .allowsHitTesting(showsEditor)
 
+                // Frei bewegliche Textfelder über der Zeichenfläche.
+                NoteTextBoxesLayer(
+                    textBoxes: $textBoxes,
+                    selectedID: $selectedTextBoxID,
+                    isTextToolActive: isTextToolActive,
+                    areaSize: CGSize(
+                        width: paperWidth,
+                        height: max(180, canvasHeight - headerHeight)
+                    )
+                )
+                .frame(
+                    width: paperWidth,
+                    height: max(180, canvasHeight - headerHeight),
+                    alignment: .topLeading
+                )
+                .offset(y: headerHeight)
+                .opacity(showsEditor ? 1 : 0)
+                .allowsHitTesting(showsEditor)
+
                 noteHeader(
-                    displayName: displayName,
-                    subjectColor: subjectColor,
+                    display: display,
                     viewport: viewport
                 )
             }
@@ -228,8 +257,7 @@ public struct LessonDrawingOverlayView: View {
 
     /// Non-uniform scale used while the note morphs from the small lesson
     /// card into its expanded, centered shape (and back on close). Once the
-    /// hero transition has settled this simply equals the normal uniform
-    /// pinch-zoom `scale`.
+    /// hero transition has settled this simply equals the fixed fitting scale.
     private func renderScale(in viewport: DrawingViewport) -> CGSize {
         let target = CGSize(width: scale, height: scale)
         guard heroBlend < 0.999, heroSourceFrame != .zero, panelHeight > 0 else {
@@ -257,37 +285,52 @@ public struct LessonDrawingOverlayView: View {
         )
     }
 
-    /// Counter-scale so header text and the resize handle keep a constant
-    /// apparent size while the user pinch-zooms the drawing canvas. During the
-    /// opening/closing hero transition this stays neutral (1), so everything
-    /// morphs together for the "cool" zoom animation.
-    private var chromeScaleCompensation: CGFloat {
-        guard baseScale > 0.0001 else { return 1 }
-        return min(1.6, max(0.6, baseScale / max(scale, 0.0001)))
-    }
+    // MARK: - Kopfzeile der Notiz
 
     private func noteHeader(
-        displayName: String,
-        subjectColor: Color,
+        display: SubjectDisplay,
         viewport: DrawingViewport
     ) -> some View {
         HStack(alignment: .center, spacing: 12) {
-            Text(displayName)
-                .font(.system(size: 18, weight: .semibold, design: .default))
-                .lineLimit(1)
+            // Farbiger Kreis mit der Fach-Farbe vor dem Fachnamen.
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [display.color, display.gradientEndColor ?? display.color],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .overlay(
+                    Circle().strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
+                )
+                .frame(width: 16, height: 16)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(display.name)
+                    .font(.system(size: 18, weight: .semibold, design: .default))
+                    .lineLimit(1)
+
+                if hasHeaderDetails {
+                    headerDetails
+                }
+            }
 
             Spacer(minLength: 8)
 
-            Text("\(lesson.dateString) • \(lesson.periodNumber). Stunde")
-                .font(.system(size: 13, weight: .regular, design: .default))
-                .opacity(0.78)
-                .lineLimit(1)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("\(lesson.periodNumber). Stunde")
+                    .font(.system(size: 13, weight: .semibold, design: .default))
+                Text(headerDateText)
+                    .font(.system(size: 12, weight: .regular, design: .default))
+                    .opacity(0.78)
+            }
+            .lineLimit(1)
         }
         .foregroundColor(
-            isExpanded ? .primary : subjectColor.contrastingTextColor
+            isExpanded ? .primary : display.color.contrastingTextColor
         )
         .padding(.horizontal, 20)
-        .scaleEffect(chromeScaleCompensation, anchor: .center)
         .frame(width: paperWidth, height: headerHeight)
         .contentShape(Rectangle())
         .gesture(
@@ -311,6 +354,79 @@ public struct LessonDrawingOverlayView: View {
         )
     }
 
+    /// Zusatz-Infos unter dem Fachnamen – exakt die Elemente, die auch im
+    /// Stundenplan-Block aktiviert sind (Lehrer, Raum, Klasse, Uhrzeiten).
+    private var hasHeaderDetails: Bool {
+        let settings = viewModel.displaySettings
+        return (settings.showTeacher && !lesson.teacherRaw.isEmpty)
+            || (settings.showRoom && !lesson.roomRaw.isEmpty)
+            || (settings.showKlasse && !lesson.klasseRaw.isEmpty)
+            || settings.showTimes
+    }
+
+    private var headerDetails: some View {
+        let settings = viewModel.displaySettings
+
+        return HStack(spacing: 10) {
+            if settings.showTeacher && !lesson.teacherRaw.isEmpty {
+                HStack(spacing: 3) {
+                    Image(systemName: "person")
+                        .font(.system(size: 10, weight: .regular, design: .default))
+                    if let orig = lesson.originalTeacher, lesson.isSubstitution {
+                        Text(orig)
+                            .strikethrough(true, color: .red)
+                        Text("➔ \(lesson.teacherRaw)")
+                    } else {
+                        Text(lesson.teacherRaw)
+                    }
+                }
+            }
+
+            if settings.showRoom && !lesson.roomRaw.isEmpty {
+                HStack(spacing: 3) {
+                    Image(systemName: "mappin.and.ellipse")
+                        .font(.system(size: 10, weight: .regular, design: .default))
+                    if let orig = lesson.originalRoom, lesson.isSubstitution {
+                        Text(orig)
+                            .strikethrough(true, color: .red)
+                        Text("➔ \(lesson.roomRaw)")
+                    } else {
+                        Text(lesson.roomRaw)
+                    }
+                }
+            }
+
+            if settings.showKlasse && !lesson.klasseRaw.isEmpty {
+                HStack(spacing: 3) {
+                    Image(systemName: "person.3")
+                        .font(.system(size: 10, weight: .regular, design: .default))
+                    Text(lesson.klasseRaw)
+                }
+            }
+
+            if settings.showTimes,
+               let period = viewModel.periods.first(where: { $0.periodNumber == lesson.periodNumber }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 10, weight: .regular, design: .default))
+                    Text("\(period.startTime) – \(period.endTime)")
+                }
+            }
+        }
+        .font(.system(size: 12, weight: .regular, design: .default))
+        .opacity(0.75)
+        .lineLimit(1)
+    }
+
+    /// Rechte Kopfzeile: relative Angabe wie "Morgen" oder "Nächste Woche
+    /// Montag" plus deutsches Datumsformat (z.B. "01.10.2026").
+    private var headerDateText: String {
+        guard let date = Date.fromYyyyMMdd(lesson.dateString) else {
+            return lesson.dateString
+        }
+        return "\(date.relativeDayDescription()) • \(date.germanDateString)"
+    }
+
     private func resizeHandle(viewport: DrawingViewport) -> some View {
         Circle()
             .fill(.ultraThinMaterial)
@@ -325,8 +441,6 @@ public struct LessonDrawingOverlayView: View {
                     .strokeBorder(Color.white.opacity(0.35), lineWidth: 1)
             )
             .shadow(color: Color.black.opacity(0.18), radius: 4, x: 0, y: 2)
-            .scaleEffect(chromeScaleCompensation, anchor: .center)
-            .frame(width: handleSize, height: handleSize)
             .contentShape(Circle())
             .hoverEffect(.lift)
             .gesture(
@@ -381,20 +495,22 @@ public struct LessonDrawingOverlayView: View {
 
     private func editorToolbar(viewport: DrawingViewport) -> some View {
         // Closing happens by tapping the dimmed edge around the note, so the
-        // toolbar only needs to hold the drawing tools. Centering it (instead
-        // of stretching it edge-to-edge) avoids the large empty area that
-        // used to sit to the right of it.
+        // toolbar only needs to hold the drawing tools.
         HStack {
             Spacer(minLength: 0)
             DrawingToolbarView(
                 toolSelection: $toolSelection,
                 penWidth: $penWidth,
+                markerWidth: $markerWidth,
+                eraserWidth: $eraserWidth,
                 onUndo: { canvasView?.undoManager?.undo() },
                 onRedo: { canvasView?.undoManager?.redo() },
                 onClear: {
                     let emptyDrawing = PKDrawing()
                     drawing = emptyDrawing
                     canvasView?.drawing = emptyDrawing
+                    textBoxes = []
+                    selectedTextBoxID = nil
                 }
             )
             Spacer(minLength: 0)
@@ -404,7 +520,7 @@ public struct LessonDrawingOverlayView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    // MARK: - Live pan, zoom and constraints
+    // MARK: - Live pan and constraints
 
     private var handleExtent: CGFloat {
         handleSpacing + handleSize
@@ -424,20 +540,14 @@ public struct LessonDrawingOverlayView: View {
         return max(0.2, min(3.0, min(widthLimit, heightLimit)))
     }
 
-    private func minimumScale(for height: CGFloat, in viewport: DrawingViewport) -> CGFloat {
-        min(0.58, maximumScale(for: height, in: viewport))
-    }
-
     private func initializeTransform(in viewport: DrawingViewport) {
         scale = min(1, maximumScale(for: canvasHeight, in: viewport))
         offset = clampedOffset(.zero, scale: scale, height: canvasHeight, in: viewport)
     }
 
+    /// Ohne Zoom entspricht die Skalierung immer der Einpass-Skalierung.
     private func normalizeTransform(in viewport: DrawingViewport) {
-        let normalizedScale = max(
-            minimumScale(for: canvasHeight, in: viewport),
-            min(maximumScale(for: canvasHeight, in: viewport), scale)
-        )
+        let normalizedScale = min(1, maximumScale(for: canvasHeight, in: viewport))
         scale = normalizedScale
         offset = clampedOffset(offset, scale: normalizedScale, height: canvasHeight, in: viewport)
     }
@@ -477,36 +587,32 @@ public struct LessonDrawingOverlayView: View {
         offset = clampedOffset(candidate, scale: scale, height: canvasHeight, in: viewport)
     }
 
-    private func applyFingerZoom(
-        _ factor: CGFloat,
-        focalPoint: CGPoint,
-        in viewport: DrawingViewport
-    ) {
-        guard showsEditor, factor.isFinite, factor > 0 else { return }
-
-        let oldScale = scale
-        let newScale = max(
-            minimumScale(for: canvasHeight, in: viewport),
-            min(maximumScale(for: canvasHeight, in: viewport), oldScale * factor)
-        )
-        guard abs(newScale - oldScale) > 0.0001 else { return }
-
-        // focalPoint is local to the Pencil canvas. Convert it to a vector from
-        // the center of the complete note (including header and resize handle).
-        let localFocus = CGPoint(
-            x: focalPoint.x - (paperWidth / 2),
-            y: headerHeight + focalPoint.y - (panelHeight / 2)
-        )
-
-        var candidate = offset
-        candidate.width += localFocus.x * (oldScale - newScale)
-        candidate.height += localFocus.y * (oldScale - newScale)
-
-        scale = newScale
-        offset = clampedOffset(candidate, scale: newScale, height: canvasHeight, in: viewport)
-    }
-
     // MARK: - Persistence and transition
+
+    /// Übernimmt Standard-Werkzeug, Standard-Farbe, Standard-Dicken und die
+    /// Standard-Größe der Zeichenfläche aus den Einstellungen.
+    private func applyDrawingDefaults() {
+        let settings = viewModel.drawingSettings
+
+        penWidth = CGFloat(settings.penWidth)
+        markerWidth = CGFloat(settings.markerWidth)
+        eraserWidth = CGFloat(settings.eraserWidth)
+
+        switch settings.defaultTool {
+        case .pen:
+            toolSelection = .pen(color: DrawingPalette.penColor(forHex: settings.defaultPenColorHex).uiColor)
+        case .marker:
+            toolSelection = .marker(color: DrawingPalette.markerColor(forHex: settings.defaultMarkerColorHex).uiColor)
+        case .eraser:
+            toolSelection = .eraser
+        }
+
+        canvasHeight = min(
+            maximumCanvasHeight,
+            max(minimumCanvasHeight, CGFloat(settings.defaultCanvasHeight))
+        )
+        resizeStartHeight = canvasHeight
+    }
 
     private func loadExistingNote() {
         guard let note = viewModel.noteFor(lesson: lesson) else { return }
@@ -516,6 +622,7 @@ public struct LessonDrawingOverlayView: View {
             min(maximumCanvasHeight, CGFloat(note.lineCount) * 56 + headerHeight + 40)
         )
         resizeStartHeight = canvasHeight
+        textBoxes = note.textBoxes
 
         if let savedDrawing = try? PKDrawing(data: note.drawingData) {
             drawing = savedDrawing
@@ -525,8 +632,16 @@ public struct LessonDrawingOverlayView: View {
     private func saveAndDismiss() {
         guard viewModel.isDrawingOverlayPresented else { return }
 
+        selectedTextBoxID = nil
+
         let currentDrawing = canvasView?.drawing ?? drawing
-        let croppedImage = PencilKitCanvasRepresentable.cropDrawingToContent(currentDrawing)
+        let cleanedTextBoxes = textBoxes.filter {
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let croppedImage = PencilKitCanvasRepresentable.renderNotePreview(
+            drawing: currentDrawing,
+            textBoxes: cleanedTextBoxes
+        )
         let drawingData = currentDrawing.dataRepresentation()
         let calculatedLines = max(3, min(10, Int((canvasHeight - headerHeight) / 56)))
 
@@ -546,7 +661,8 @@ public struct LessonDrawingOverlayView: View {
                 for: lesson,
                 drawingData: drawingData,
                 croppedImageData: croppedImage?.pngData(),
-                lineCount: calculatedLines
+                lineCount: calculatedLines,
+                textBoxes: cleanedTextBoxes
             )
         }
     }

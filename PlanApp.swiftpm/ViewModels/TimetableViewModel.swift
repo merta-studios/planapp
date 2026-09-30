@@ -2,6 +2,22 @@ import Foundation
 import SwiftUI
 import Combine
 
+/// Anzeigename und Farben (inkl. optionalem Farbverlauf) eines Fachs.
+/// Alle Farben sind bereits pastellisiert.
+public struct SubjectDisplay {
+    public let name: String
+    public let colorHex: String
+    public let color: Color
+    public let gradientEndColor: Color?
+
+    public init(name: String, colorHex: String, color: Color, gradientEndColor: Color? = nil) {
+        self.name = name
+        self.colorHex = colorHex
+        self.color = color
+        self.gradientEndColor = gradientEndColor
+    }
+}
+
 /// Haupt-ViewModel zur Verwaltung von Stundenplan, Untis-Synchronisation, Einstellungen und Notizen
 @MainActor
 public final class TimetableViewModel: ObservableObject {
@@ -12,6 +28,7 @@ public final class TimetableViewModel: ObservableObject {
     @Published public var lessons: [Lesson] = []
     @Published public var subjectCustomizations: [SubjectCustomization] = []
     @Published public var displaySettings: BlockDisplaySettings = .default
+    @Published public var drawingSettings: DrawingSettings = .default
     @Published public var untisCredentials: UntisCredentials = UntisCredentials()
     @Published public var lessonNotes: [String: LessonNote] = [:]
 
@@ -33,6 +50,9 @@ public final class TimetableViewModel: ObservableObject {
     @Published public var successMessage: String? = nil
     /// -1 = ältere Woche gleitet von links herein, 1 = neuere Woche von rechts.
     @Published public private(set) var weekNavigationDirection: Int = 1
+    /// Wird vom "Heute"-Button gesetzt: Der Stundenplan soll animiert (per
+    /// Rutsch-Animation, nicht Überblendung) zu dieser Woche wechseln.
+    @Published public var weekJumpRequest: Date? = nil
 
     private var activeSyncCount: Int = 0
     private var autoRefreshTimer: AnyCancellable? = nil
@@ -52,10 +72,14 @@ public final class TimetableViewModel: ObservableObject {
         self.untisCredentials = storage.loadCredentials()
         self.subjectCustomizations = storage.loadCustomizations()
         self.displaySettings = storage.loadDisplaySettings()
+        self.drawingSettings = storage.loadDrawingSettings()
         self.periods = storage.loadPeriods()
         self.lessons = storage.loadLessons()
         self.lessonNotes = storage.loadAllLessonNotes()
         self.lastSyncDate = untisCredentials.lastSyncDate ?? Date()
+
+        // Optional: Notizen zu bereits vergangenen Stunden automatisch entfernen
+        cleanupPastNotesIfEnabled()
 
         // Falls noch keine Perioden definiert sind, Standardraster laden
         if periods.isEmpty {
@@ -123,6 +147,14 @@ public final class TimetableViewModel: ObservableObject {
         selectWeek(current)
     }
 
+    /// Fordert einen animierten Rutsch zur aktuellen Woche an. Die eigentliche
+    /// Slide-Animation übernimmt die TimetableView (Wochen-Karussell).
+    public func requestJumpToCurrentWeek() {
+        let target = Date.relevantCurrentWeekStart()
+        guard target != selectedWeekStart else { return }
+        weekJumpRequest = target
+    }
+
     /// Springt zur nächsten Woche. Die Navigation wird bewusst nur per Swipe aufgerufen.
     public func goToNextWeek() {
         guard let next = Calendar.germanCalendar.date(byAdding: .day, value: 7, to: selectedWeekStart) else { return }
@@ -187,24 +219,35 @@ public final class TimetableViewModel: ObservableObject {
         return nil
     }
 
-    /// Ermittelt den Anzeigennamen und die Hintergrundfarbe für ein Fach
-    public func resolveSubjectDisplay(for lesson: Lesson) -> (name: String, colorHex: String, color: Color) {
+    /// Ermittelt den Anzeigennamen und die Farben für ein Fach. Alle Farben
+    /// werden pastellisiert – egal was eingestellt ist, es gibt einen
+    /// maximalen Schwarz-Anteil.
+    public func resolveSubjectDisplay(for lesson: Lesson) -> SubjectDisplay {
         let raw = lesson.subjectRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        func display(for custom: SubjectCustomization) -> SubjectDisplay {
+            let name = custom.customName.isEmpty ? raw : custom.customName
+            let endColor = custom.gradientEndHex.map { Color(hex: $0).pastel }
+            return SubjectDisplay(
+                name: name,
+                colorHex: custom.colorHex,
+                color: Color(hex: custom.colorHex).pastel,
+                gradientEndColor: endColor
+            )
+        }
 
         // 1. Suche in benutzerdefinierten Fächereinstellungen
         if let custom = subjectCustomizations.first(where: {
             $0.originalSubject.caseInsensitiveCompare(raw) == .orderedSame ||
             $0.originalSubject.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == raw.lowercased()
         }) {
-            let name = custom.customName.isEmpty ? raw : custom.customName
-            return (name, custom.colorHex, Color(hex: custom.colorHex))
+            return display(for: custom)
         }
 
         // 2. Suche nach Teilübereinstimmung (z.B. "M-LK" matcht "M")
         for custom in subjectCustomizations {
             if raw.lowercased().hasPrefix(custom.originalSubject.lowercased()) && !custom.originalSubject.isEmpty {
-                let name = custom.customName.isEmpty ? raw : custom.customName
-                return (name, custom.colorHex, Color(hex: custom.colorHex))
+                return display(for: custom)
             }
         }
 
@@ -215,7 +258,12 @@ public final class TimetableViewModel: ObservableObject {
         ]
         let hash = abs(raw.hashValue)
         let colorHex = fallbackColors[hash % fallbackColors.count]
-        return (raw, colorHex, Color(hex: colorHex))
+        return SubjectDisplay(
+            name: raw,
+            colorHex: colorHex,
+            color: Color(hex: colorHex).pastel,
+            gradientEndColor: nil
+        )
     }
 
     // MARK: - Drawing & Notes Handling
@@ -232,13 +280,20 @@ public final class TimetableViewModel: ObservableObject {
     }
 
     /// Schließt und speichert die Notiz
-    public func saveNote(for lesson: Lesson, drawingData: Data, croppedImageData: Data?, lineCount: Int) {
+    public func saveNote(
+        for lesson: Lesson,
+        drawingData: Data,
+        croppedImageData: Data?,
+        lineCount: Int,
+        textBoxes: [NoteTextBox] = []
+    ) {
         let key = lesson.noteKey
         let note = LessonNote(
             id: key,
             drawingData: drawingData,
             croppedImageData: croppedImageData,
             lineCount: lineCount,
+            textBoxes: textBoxes,
             updatedAt: Date()
         )
         self.lessonNotes[key] = note
@@ -252,6 +307,29 @@ public final class TimetableViewModel: ObservableObject {
     /// Gibt die Notiz für eine bestimmte Stunde zurück
     public func noteFor(lesson: Lesson) -> LessonNote? {
         return lessonNotes[lesson.noteKey]
+    }
+
+    /// Löscht ALLE gespeicherten Notizen zu Stunden-Blöcken.
+    public func deleteAllNotes() {
+        lessonNotes.removeAll()
+        storage.deleteAllLessonNotes()
+        successMessage = "Alle Notizen wurden gelöscht."
+    }
+
+    /// Entfernt Notizen zu Stunden, die bereits in der Vergangenheit liegen –
+    /// sofern die entsprechende Einstellung aktiviert ist.
+    public func cleanupPastNotesIfEnabled() {
+        guard drawingSettings.autoDeletePastNotes else { return }
+
+        let todayStart = Calendar.germanCalendar.startOfDay(for: Date())
+        let keys = Array(lessonNotes.keys)
+        for key in keys {
+            let datePrefix = String(key.prefix(10))
+            if let date = Date.fromYyyyMMdd(datePrefix), date < todayStart {
+                lessonNotes.removeValue(forKey: key)
+                storage.deleteLessonNote(for: key)
+            }
+        }
     }
 
     // MARK: - Settings & Customization Management
@@ -287,6 +365,10 @@ public final class TimetableViewModel: ObservableObject {
 
     public func saveDisplaySettings() {
         storage.saveDisplaySettings(displaySettings)
+    }
+
+    public func saveDrawingSettings() {
+        storage.saveDrawingSettings(drawingSettings)
     }
 
     public func saveCredentials() {
@@ -389,9 +471,8 @@ public final class TimetableViewModel: ObservableObject {
             storage.saveCredentials(untisCredentials)
             await untis.logout(credentials: untisCredentials, sessionId: auth.sessionId)
 
-            if showsSuccessMessage {
-                self.successMessage = "Stundenplan erfolgreich synchronisiert!"
-            }
+            // Bewusst keine "synchronisiert"-Erfolgsmeldung mehr – die
+            // Live-Anzeige im Header zeigt den Sync-Status bereits an.
         } catch {
             self.errorMessage = error.localizedDescription
         }

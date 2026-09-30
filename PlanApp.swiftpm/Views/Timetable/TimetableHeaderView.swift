@@ -28,79 +28,104 @@ public struct TimetableHeaderView: View {
         .zIndex(50)
     }
 
+    private var appTitle: some View {
+        let neonBlue = Color(red: 0.10, green: 0.75, blue: 1.0)
+
+        return HStack(spacing: 8) {
+            Image(systemName: "calendar")
+                .font(.system(size: 19, weight: .medium))
+                .foregroundColor(.blue)
+            Text("Untis Planner")
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundColor(.primary)
+            Text("PLUS")
+                .font(.system(size: 19, weight: .heavy))
+                .foregroundColor(neonBlue)
+                .shadow(color: neonBlue.opacity(0.9), radius: 5, x: 0, y: 0)
+                .shadow(color: neonBlue.opacity(0.55), radius: 12, x: 0, y: 0)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
     private func regularHeader(relativeTo date: Date) -> some View {
-        HStack(spacing: 14) {
-            HStack(spacing: 8) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 19, weight: .medium))
-                    .foregroundColor(.blue)
-                Text("PlanApp")
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundColor(.primary)
-            }
-            .fixedSize(horizontal: true, vertical: false)
+        let showsJumpButton = !viewModel.isViewingRelevantCurrentWeek(relativeTo: date)
+
+        return HStack(spacing: 14) {
+            appTitle
+
+            Spacer(minLength: 12)
+
+            weekCard
+                .layoutPriority(2)
 
             Spacer(minLength: 12)
 
             HStack(spacing: 10) {
-                if !viewModel.isViewingRelevantCurrentWeek(relativeTo: date) {
+                if showsJumpButton {
                     jumpToCurrentWeekButton
-                        .transition(.scale.combined(with: .opacity))
+                        .transition(
+                            .scale(scale: 0.8)
+                                .combined(with: .opacity)
+                                .combined(with: .move(edge: .trailing))
+                        )
                 }
-                weekCard
-            }
-            .layoutPriority(2)
-
-            Spacer(minLength: 12)
-
-            HStack(spacing: 10) {
                 refreshBadge(
                     text: viewModel.relativeLastSyncString(relativeTo: date)
                 )
                 settingsButton
             }
+            .animation(.spring(response: 0.45, dampingFraction: 0.82), value: showsJumpButton)
             .fixedSize(horizontal: true, vertical: false)
         }
     }
 
     private func compactHeader(relativeTo date: Date) -> some View {
-        HStack(spacing: 8) {
-            if !viewModel.isViewingRelevantCurrentWeek(relativeTo: date) {
-                jumpToCurrentWeekButton
-                    .transition(.scale.combined(with: .opacity))
-            }
+        let showsJumpButton = !viewModel.isViewingRelevantCurrentWeek(relativeTo: date)
 
+        return HStack(spacing: 8) {
             weekCard
                 .layoutPriority(2)
 
             Spacer(minLength: 4)
 
-            refreshBadge(text: compactRefreshString(relativeTo: date))
-                .fixedSize(horizontal: true, vertical: false)
+            HStack(spacing: 8) {
+                if showsJumpButton {
+                    jumpToCurrentWeekButton
+                        .transition(
+                            .scale(scale: 0.8)
+                                .combined(with: .opacity)
+                                .combined(with: .move(edge: .trailing))
+                        )
+                }
 
-            settingsButton
+                refreshBadge(text: compactRefreshString(relativeTo: date))
+                    .fixedSize(horizontal: true, vertical: false)
+
+                settingsButton
+            }
+            .animation(.spring(response: 0.45, dampingFraction: 0.82), value: showsJumpButton)
         }
     }
 
     /// Appears whenever the displayed week has no day that is "today" (this
     /// already accounts for weekends, where the relevant week is the next
-    /// one), letting the user jump back with a single tap.
+    /// one), letting the user jump back with a single tap. Pressing it slides
+    /// the carousel towards the current week instead of cross-fading.
     private var jumpToCurrentWeekButton: some View {
         Button {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
-                viewModel.goToCurrentWeek()
-            }
+            Haptics.tap()
+            viewModel.requestJumpToCurrentWeek()
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 7) {
                 Image(systemName: "arrow.uturn.backward")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                 Text("Heute")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
         }
-        .liquidGlassButton(cornerRadius: 14, tint: .blue, isFilled: true)
+        .liquidGlassButton(cornerRadius: 16, tint: .blue, isFilled: true)
         .foregroundColor(.white)
         .fixedSize()
         .accessibilityLabel("Zur aktuellen Woche springen")

@@ -8,6 +8,8 @@ public struct SubjectCustomizationSection: View {
     @State private var originalSubjectInput: String = ""
     @State private var customNameInput: String = ""
     @State private var selectedColorHex: String = "#3B82F6"
+    @State private var useGradientInput: Bool = false
+    @State private var gradientEndHexInput: String = "#06B6D4"
 
     // Dialog & Sheet Zustände
     @State private var showImportAlert: Bool = false
@@ -64,7 +66,45 @@ public struct SubjectCustomizationSection: View {
                     }
                 }
 
-                ColorPickerPresets(selectedHex: $selectedColorHex)
+                ColorPickerPresets(
+                    selectedHex: $selectedColorHex,
+                    title: useGradientInput ? "Obere Anfangs-Farbe wählen:" : "Fach-Farbe wählen:"
+                )
+
+                Toggle(isOn: $useGradientInput.animation(.spring(response: 0.3, dampingFraction: 0.8))) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "square.bottomhalf.filled")
+                            .font(.system(size: 14, weight: .regular, design: .default))
+                            .foregroundColor(.blue)
+                        Text("Farbverlauf (obere → untere Farbe)")
+                            .font(.system(size: 14, weight: .regular, design: .default))
+                    }
+                }
+
+                if useGradientInput {
+                    ColorPickerPresets(
+                        selectedHex: $gradientEndHexInput,
+                        title: "Untere End-Farbe wählen:"
+                    )
+
+                    // Live-Vorschau des Verlaufs
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(hex: selectedColorHex).pastel,
+                                    Color(hex: gradientEndHexInput).pastel
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .frame(height: 44)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                        )
+                }
 
                 HStack {
                     Spacer()
@@ -155,7 +195,16 @@ public struct SubjectCustomizationSection: View {
                     ForEach(viewModel.subjectCustomizations) { item in
                         HStack(spacing: 12) {
                             Circle()
-                                .fill(Color(hex: item.colorHex))
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color(hex: item.colorHex),
+                                            Color(hex: item.gradientEndHex ?? item.colorHex)
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
                                 .frame(width: 22, height: 22)
 
                             Text(item.originalSubject)
@@ -248,7 +297,8 @@ public struct SubjectCustomizationSection: View {
         let item = SubjectCustomization(
             originalSubject: original,
             customName: custom.isEmpty ? original : custom,
-            colorHex: selectedColorHex
+            colorHex: selectedColorHex,
+            gradientEndHex: useGradientInput ? gradientEndHexInput : nil
         )
 
         withAnimation {
@@ -257,6 +307,8 @@ public struct SubjectCustomizationSection: View {
         originalSubjectInput = ""
         customNameInput = ""
         selectedColorHex = "#3B82F6"
+        useGradientInput = false
+        gradientEndHexInput = "#06B6D4"
     }
 }
 
@@ -269,6 +321,8 @@ struct EditSubjectSheet: View {
     @State private var originalSubject: String = ""
     @State private var customName: String = ""
     @State private var colorHex: String = "#3B82F6"
+    @State private var useGradient: Bool = false
+    @State private var gradientEndHex: String = "#06B6D4"
 
     init(
         subject: SubjectCustomization,
@@ -281,6 +335,8 @@ struct EditSubjectSheet: View {
         self._originalSubject = State(initialValue: subject.originalSubject)
         self._customName = State(initialValue: subject.customName)
         self._colorHex = State(initialValue: subject.colorHex)
+        self._useGradient = State(initialValue: subject.gradientEndHex != nil)
+        self._gradientEndHex = State(initialValue: subject.gradientEndHex ?? "#06B6D4")
     }
 
     var body: some View {
@@ -318,7 +374,44 @@ struct EditSubjectSheet: View {
                             )
                         }
 
-                        ColorPickerPresets(selectedHex: $colorHex)
+                        ColorPickerPresets(
+                            selectedHex: $colorHex,
+                            title: useGradient ? "Obere Anfangs-Farbe wählen:" : "Fach-Farbe wählen:"
+                        )
+
+                        Toggle(isOn: $useGradient.animation(.spring(response: 0.3, dampingFraction: 0.8))) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "square.bottomhalf.filled")
+                                    .font(.system(size: 14, weight: .regular, design: .default))
+                                    .foregroundColor(.blue)
+                                Text("Farbverlauf (obere → untere Farbe)")
+                                    .font(.system(size: 14, weight: .regular, design: .default))
+                            }
+                        }
+
+                        if useGradient {
+                            ColorPickerPresets(
+                                selectedHex: $gradientEndHex,
+                                title: "Untere End-Farbe wählen:"
+                            )
+
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color(hex: colorHex).pastel,
+                                            Color(hex: gradientEndHex).pastel
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
+                                .frame(height: 44)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                                )
+                        }
                     }
                     .padding(16)
                     .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
@@ -372,7 +465,8 @@ struct EditSubjectSheet: View {
             id: subject.id,
             originalSubject: cleanOriginal,
             customName: cleanCustom.isEmpty ? cleanOriginal : cleanCustom,
-            colorHex: colorHex
+            colorHex: colorHex,
+            gradientEndHex: useGradient ? gradientEndHex : nil
         )
         onSave(updated)
     }

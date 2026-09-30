@@ -55,6 +55,64 @@ extension Date {
         return formatter.string(from: self)
     }
 
+    /// Parst einen "YYYY-MM-DD"-String zurück in ein Datum
+    public static func fromYyyyMMdd(_ string: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        return formatter.date(from: string)
+    }
+
+    /// Deutsches Datumsformat, z.B. "01.10.2026"
+    public var germanDateString: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "de_DE")
+        formatter.dateFormat = "dd.MM.yyyy"
+        return formatter.string(from: self)
+    }
+
+    /// Relative, deutsche Beschreibung des Tages, z.B. "Heute", "Morgen",
+    /// "Übermorgen", "Montag" (gleiche Woche), "Nächste Woche Montag",
+    /// "Übernächste Woche Montag" oder "Montag in 3 Wochen".
+    public func relativeDayDescription(relativeTo now: Date = Date()) -> String {
+        let cal = Calendar.germanCalendar
+        let startToday = cal.startOfDay(for: now)
+        let startSelf = cal.startOfDay(for: self)
+        let dayDiff = cal.dateComponents([.day], from: startToday, to: startSelf).day ?? 0
+
+        switch dayDiff {
+        case 0: return "Heute"
+        case 1: return "Morgen"
+        case 2: return "Übermorgen"
+        case -1: return "Gestern"
+        case -2: return "Vorgestern"
+        default: break
+        }
+
+        let weekday = self.weekdayLongString
+        let weekDays = cal.dateComponents(
+            [.day],
+            from: now.startOfWeek(using: cal),
+            to: self.startOfWeek(using: cal)
+        ).day ?? 0
+        let weeks = weekDays / 7
+
+        switch weeks {
+        case 0: return weekday
+        case 1: return "Nächste Woche \(weekday)"
+        case 2: return "Übernächste Woche \(weekday)"
+        case -1: return "Letzte Woche \(weekday)"
+        case -2: return "Vorletzte Woche \(weekday)"
+        default:
+            if weeks > 0 {
+                return "\(weekday) in \(weeks) Wochen"
+            } else {
+                return "\(weekday) vor \(-weeks) Wochen"
+            }
+        }
+    }
+
     /// Kalenderwoche (z.B. "KW 40")
     public var calendarWeekString: String {
         let cal = Calendar.germanCalendar

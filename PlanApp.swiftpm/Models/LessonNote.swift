@@ -7,6 +7,7 @@ public struct LessonNote: Identifiable, Codable, Equatable {
     public var drawingData: Data      // PKDrawing.dataRepresentation()
     public var croppedImageData: Data? // PNG-Bild der zugeschnittenen Zeichnung
     public var lineCount: Int         // Anzahl der Zeilen auf dem Zettel (max. 10)
+    public var textBoxes: [NoteTextBox] // Frei bewegliche Textfelder
     public var updatedAt: Date
 
     public init(
@@ -14,17 +15,19 @@ public struct LessonNote: Identifiable, Codable, Equatable {
         drawingData: Data = Data(),
         croppedImageData: Data? = nil,
         lineCount: Int = 6,
+        textBoxes: [NoteTextBox] = [],
         updatedAt: Date = Date()
     ) {
         self.id = id
         self.drawingData = drawingData
         self.croppedImageData = croppedImageData
         self.lineCount = max(3, min(10, lineCount))
+        self.textBoxes = textBoxes
         self.updatedAt = updatedAt
     }
 
-    /// Hilfsmethode: Prüft, ob eine Zeichnung vorhanden ist
+    /// Hilfsmethode: Prüft, ob eine Zeichnung oder Textfelder vorhanden sind
     public var hasDrawing: Bool {
-        return croppedImageData != nil && !drawingData.isEmpty
+        return (croppedImageData != nil && !drawingData.isEmpty) || !textBoxes.isEmpty
     }
 }
