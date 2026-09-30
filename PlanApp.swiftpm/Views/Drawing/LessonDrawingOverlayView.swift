@@ -1,7 +1,5 @@
 import SwiftUI
 import PencilKit
-import Vision
-import ImageIO
 
 private struct DrawingViewport {
     let size: CGSize
@@ -604,14 +602,13 @@ public struct LessonDrawingOverlayView: View {
             return
         }
 
-        let canvasSize = CGSize(
-            width: paperWidth,
-            height: max(180, canvasHeight - headerHeight)
-        )
-        guard let cgImage = PencilKitCanvasRepresentable.renderDrawingForRecognition(
-            drawing: currentDrawing,
-            canvasSize: canvasSize
-        )?.cgImage else {
+        let canvasSize = recognitionCanvasSize
+        guard canvasSize.width > 0, canvasSize.height > 0,
+              let renderedImage = PencilKitCanvasRepresentable.renderDrawingForRecognition(
+                drawing: currentDrawing,
+                canvasSize: canvasSize
+              ),
+              let cgImage = renderedImage.cgImage else {
             Haptics.warning()
             recognitionAlertMessage = "Die Zeichnung konnte nicht für die Texterkennung vorbereitet werden."
             return
@@ -619,134 +616,59 @@ public struct LessonDrawingOverlayView: View {
 
         isConvertingHandwriting = true
 
-        let request = VNRecognizeTextRequest { request, error in
-            let recognizedBoxes: [NoteTextBox]
-            if error == nil,
-               let observations = request.results as? [VNRecognizedTextObservation] {
-                recognizedBoxes = makeTextBoxes(from: observations, canvasSize: canvasSize)
-            } else {
-                recognizedBoxes = []
-            }
+        // Die komplette Vision-Arbeit liegt in `HandwritingRecognizer`. Dort
+        // laufen Bildanalyse und Fehlerbehandlung vollständig gekapselt ab und
+        // das Ergebnis kommt garantiert auf dem Main-Thread zurück.
+        HandwritingRecognizer.recognizeTextBoxes(
+            in: cgImage,
+            canvasSize: canvasSize
+        ) { result in
+            isConvertingHandwriting = false
 
-            DispatchQueue.main.async {
-                isConvertingHandwriting = false
+            switch result {
+            case .failure:
+                Haptics.warning()
+                recognitionAlertMessage = "Die Handschrift konnte nicht umgewandelt werden. Bitte versuche es noch einmal."
 
+            case .success(let recognizedBoxes):
                 guard !recognizedBoxes.isEmpty else {
                     Haptics.warning()
                     recognitionAlertMessage = "Es konnte keine gut lesbare Handschrift erkannt werden."
                     return
                 }
 
-                let beforeBoxes = textBoxes
-                textBoxes.append(contentsOf: recognizedBoxes)
-                textUndo.push(before: beforeBoxes, after: textBoxes)
-
-                // Die erkannten Striche werden durch bearbeitbare Textfelder ersetzt.
-                let emptyDrawing = PKDrawing()
-                drawing = emptyDrawing
-                canvasView?.drawing = emptyDrawing
-                lastStrokeMutation = Date()
-
-                selectedTextBoxID = recognizedBoxes.first?.id
-                editingTextBoxID = nil
-                toolSelection = .text
-                Haptics.success()
-            }
-        }
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
-        configureRecognitionLanguages(for: request)
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
-            do {
-                try handler.perform([request])
-            } catch {
-                DispatchQueue.main.async {
-                    isConvertingHandwriting = false
-                    Haptics.warning()
-                    recognitionAlertMessage = "Die Handschrift konnte nicht umgewandelt werden."
-                }
+                applyRecognizedTextBoxes(recognizedBoxes)
             }
         }
     }
 
-    /// Vision bricht auf einigen iOS-Versionen mit einer Exception ab, wenn
-    /// nicht unterstützte Sprachcodes direkt gesetzt werden. Deshalb werden die
-    /// gewünschten Sprachen vorher gegen die tatsächlich verfügbare Liste
-    /// gefiltert; ohne Treffer bleibt Visions Standardkonfiguration aktiv.
-    private func configureRecognitionLanguages(for request: VNRecognizeTextRequest) {
-        let preferredLanguages = ["de-DE", "de", "en-US", "en"]
-        if let supportedLanguages = try? request.supportedRecognitionLanguages() {
-            let selected = preferredLanguages.filter { supportedLanguages.contains($0) }
-            if !selected.isEmpty {
-                request.recognitionLanguages = selected
-            }
-        }
+    /// Ersetzt die erkannten Striche durch bearbeitbare Textfelder.
+    private func applyRecognizedTextBoxes(_ recognizedBoxes: [NoteTextBox]) {
+        // Erst die Auswahl auflösen: So hängt kein Textfeld-Zustand mehr an
+        // Elementen, die gleich ersetzt werden.
+        selectedTextBoxID = nil
+        editingTextBoxID = nil
+
+        let beforeBoxes = textBoxes
+        textBoxes.append(contentsOf: recognizedBoxes)
+        textUndo.push(before: beforeBoxes, after: textBoxes)
+
+        let emptyDrawing = PKDrawing()
+        drawing = emptyDrawing
+        canvasView?.drawing = emptyDrawing
+        lastStrokeMutation = Date()
+
+        toolSelection = .text
+        Haptics.success()
     }
 
-    private func makeTextBoxes(
-        from observations: [VNRecognizedTextObservation],
-        canvasSize: CGSize
-    ) -> [NoteTextBox] {
-        let margin: CGFloat = 6
-        let sorted = observations.sorted {
-            if abs($0.boundingBox.minY - $1.boundingBox.minY) > 0.02 {
-                return $0.boundingBox.minY > $1.boundingBox.minY
-            }
-            return $0.boundingBox.minX < $1.boundingBox.minX
-        }
-
-        return sorted.compactMap { observation in
-            guard let candidate = observation.topCandidates(1).first else { return nil }
-            let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return nil }
-
-            let normalized = observation.boundingBox
-            guard normalized.minX.isFinite,
-                  normalized.minY.isFinite,
-                  normalized.width.isFinite,
-                  normalized.height.isFinite,
-                  normalized.width > 0,
-                  normalized.height > 0 else {
-                return nil
-            }
-
-            let rawX = normalized.minX * canvasSize.width
-            let rawY = (1 - normalized.maxY) * canvasSize.height
-            let rawWidth = normalized.width * canvasSize.width
-            let rawHeight = normalized.height * canvasSize.height
-            guard rawX.isFinite,
-                  rawY.isFinite,
-                  rawWidth.isFinite,
-                  rawHeight.isFinite,
-                  rawWidth > 0,
-                  rawHeight > 0 else {
-                return nil
-            }
-
-            let fontSize = max(12, min(34, rawHeight * 0.82))
-            let width = min(
-                max(90, rawWidth + 28),
-                max(90, canvasSize.width - (margin * 2))
-            )
-            let x = min(
-                max(margin, rawX - 8),
-                max(margin, canvasSize.width - width - margin)
-            )
-            let y = min(
-                max(margin, rawY - 6),
-                max(margin, canvasSize.height - max(42, rawHeight + 16) - margin)
-            )
-
-            return NoteTextBox(
-                text: text,
-                x: Double(x),
-                y: Double(y),
-                width: Double(width),
-                fontSize: Double(fontSize)
-            ).sanitized(in: canvasSize)
-        }
+    /// Größe der Zeichenfläche in Punkten – Basis für die Rückrechnung der
+    /// von Vision gelieferten, normalisierten Koordinaten.
+    private var recognitionCanvasSize: CGSize {
+        CGSize(
+            width: paperWidth,
+            height: max(180, canvasHeight - headerHeight)
+        )
     }
 
     // MARK: - Persistence and transition

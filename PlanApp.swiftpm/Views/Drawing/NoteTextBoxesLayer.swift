@@ -4,27 +4,40 @@ import UIKit
 /// Geschätzte Höhe eines Textfelds inkl. Innenabstand – dieselbe Rechnung
 /// wie beim Rendern der Notiz-Vorschau, damit Klemme und Vorschau übereinstimmen.
 func estimatedTextBoxHeight(_ box: NoteTextBox) -> CGFloat {
-    let innerWidth = max(20, CGFloat(box.width) - 16)
+    let width = box.width.isFinite ? CGFloat(box.width) : 240
+    let fontSize = box.fontSize.isFinite ? CGFloat(box.fontSize) : 17
+    let innerWidth = max(20, width - 16)
     let bounding = (box.text as NSString).boundingRect(
         with: CGSize(width: innerWidth, height: .greatestFiniteMagnitude),
         options: [.usesLineFragmentOrigin],
-        attributes: [.font: UIFont.systemFont(ofSize: CGFloat(box.fontSize))],
+        attributes: [.font: UIFont.systemFont(ofSize: max(1, fontSize))],
         context: nil
     )
-    return max(36, ceil(bounding.height) + 16)
+    let height = bounding.height.isFinite ? bounding.height : 0
+    return max(36, ceil(height) + 16)
 }
 
 /// Ebene über der PencilKit-Zeichenfläche, die frei bewegliche Textfelder
 /// verwaltet.
 ///
 /// Bedienung:
-/// - Einmal tippen auf ein Feld: auswählen (verschiebbar, Breite ändern, löschen).
-/// - Doppeltippen auf ein Feld: Text wirklich bearbeiten (Tastatur erscheint,
-///   Lösch-Kreuz und Seiten-Griffe verschwinden).
-/// - Tippen daneben: Bearbeiten verlassen (zurück in den Verschiebe-Modus),
-///   dann Auswahl aufheben; danach erstellt ein Tipp ein neues Feld.
-/// - Felder, die leer sind oder nur Leerzeichen enthalten, werden beim
-///   Verlassen automatisch gelöscht.
+/// - Tippen auf freie Fläche (Text-Werkzeug aktiv): neues Textfeld, direkt
+///   mit Tastatur.
+/// - Tippen auf ein Feld: auswählen (verschiebbar, Breite ändern, löschen).
+/// - Nochmal tippen auf das ausgewählte Feld: Text bearbeiten.
+/// - Tippen daneben: Bearbeitung beenden und Auswahl aufheben; der nächste
+///   Tipp erzeugt wieder ein neues Feld.
+/// - Felder, die leer sind oder nur Leerzeichen enthalten, verschwinden
+///   automatisch, sobald sie weder ausgewählt noch in Bearbeitung sind.
+///
+/// WICHTIG (Stabilität): Diese Ebene arbeitet bewusst **ohne**
+/// `ForEach($textBoxes)`-Element-Bindings. Ein Element-Binding hält einen
+/// Index in das Array; wird ein Feld entfernt (z. B. ein leeres Feld beim
+/// Verlassen der Tastatur), greift ein noch lebendes Binding auf einen
+/// ungültigen Index zu und die App stürzt mit "Index out of range" ab. Genau
+/// das war die Absturzursache beim Text-Werkzeug und bei „Handschrift in Text
+/// umwandeln“. Stattdessen werden Werte nach unten gereicht und Änderungen
+/// über die stabile `id` zurückgemeldet.
 struct NoteTextBoxesLayer: View {
     @Binding var textBoxes: [NoteTextBox]
     @Binding var selectedID: UUID?
@@ -34,13 +47,24 @@ struct NoteTextBoxesLayer: View {
     /// Undo-Registrierung: (Snapshot vorher, Snapshot nachher).
     let registerUndo: (_ before: [NoteTextBox], _ after: [NoteTextBox]) -> Void
 
+    static let coordinateSpaceName = "noteTextBoxesLayer"
+
     @State private var gestureSnapshot: [NoteTextBox]? = nil
     @State private var editSessionSnapshot: [NoteTextBox]? = nil
 
     private let margin: CGFloat = 6
 
+    private var safeAreaSize: CGSize {
+        CGSize(
+            width: areaSize.width.isFinite && areaSize.width > 0 ? areaSize.width : 320,
+            height: areaSize.height.isFinite && areaSize.height > 0 ? areaSize.height : 180
+        )
+    }
+
     var body: some View {
-        ZStack(alignment: .topLeading) {
+        let size = safeAreaSize
+
+        return ZStack(alignment: .topLeading) {
             // Hintergrund fängt Tipp-Gesten ab: Bearbeiten beenden, Auswahl
             // aufheben oder (mit Text-Werkzeug) ein neues Feld erstellen.
             if isTextToolActive || selectedID != nil || editingID != nil {
@@ -54,79 +78,110 @@ struct NoteTextBoxesLayer: View {
                     )
             }
 
-            ForEach($textBoxes) { $box in
+            ForEach(textBoxes) { box in
                 NoteTextBoxView(
-                    box: $box,
+                    box: box,
                     isSelected: selectedID == box.id,
                     isEditing: editingID == box.id,
-                    areaSize: areaSize,
-                    onSelect: {
-                        if selectedID != box.id {
-                            Haptics.select()
-                            selectedID = box.id
-                        }
+                    areaSize: size,
+                    onSelect: { select(box.id) },
+                    onBeginEditing: { beginEditing(box.id) },
+                    onEndEditing: { endEditing(box.id) },
+                    onDelete: { deleteBox(id: box.id) },
+                    onChangeText: { newText in
+                        updateBox(id: box.id) { $0.text = newText }
                     },
-                    onBeginEditing: {
-                        Haptics.select()
-                        selectedID = box.id
-                        editingID = box.id
-                    },
-                    onEndEditing: {
-                        if editingID == box.id {
-                            editingID = nil
-                        }
-                    },
-                    onDelete: { deleteBox(box) },
                     onGestureStart: {
-                        gestureSnapshot = textBoxes
+                        if gestureSnapshot == nil {
+                            gestureSnapshot = textBoxes
+                        }
                     },
-                    onGestureEnd: {
-                        finishGesture()
+                    onMove: { newOrigin in
+                        updateBox(id: box.id) {
+                            $0.x = Double(newOrigin.x)
+                            $0.y = Double(newOrigin.y)
+                        }
                     },
-                    onRegisterMutation: { oldBox, newBox in
-                        registerBoxMutation(from: oldBox, to: newBox)
+                    onResize: { newX, newWidth in
+                        updateBox(id: box.id) {
+                            $0.x = Double(newX)
+                            $0.width = Double(newWidth)
+                        }
+                    },
+                    onGestureEnd: { finishGesture() },
+                    onChangeFontSize: { delta in
+                        changeFontSize(id: box.id, by: delta)
                     }
                 )
             }
         }
-        .frame(width: areaSize.width, height: areaSize.height, alignment: .topLeading)
-        .coordinateSpace(name: "noteTextBoxesLayer")
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+        .coordinateSpace(name: Self.coordinateSpaceName)
         .clipped()
-        .onChange(of: selectedID) { oldValue, newValue in
-            // Wechsel der Auswahl beendet eine laufende Bearbeitung
-            // (Undo-Eintrag passiert im onChange von editingID).
-            if let oldValue, editingID == oldValue, newValue != oldValue {
-                editingID = nil
+        .onChange(of: selectedID) { _, newValue in
+            if editingID == nil {
+                pruneEmptyBoxes(keeping: newValue)
             }
-            cleanupEmptyBoxes(keeping: newValue ?? editingID)
         }
         .onChange(of: editingID) { oldValue, newValue in
-            if let newValue, oldValue != newValue {
-                editSessionSnapshot = textBoxes
+            if let newValue, newValue != oldValue {
+                if editSessionSnapshot == nil {
+                    editSessionSnapshot = textBoxes
+                }
             } else if oldValue != nil, newValue == nil {
                 let before = editSessionSnapshot
                 editSessionSnapshot = nil
-                cleanupEmptyBoxes(keeping: selectedID)
-                if let before {
+                pruneEmptyBoxes(keeping: selectedID)
+                if let before, before != textBoxes {
                     registerUndo(before, textBoxes)
                 }
             }
         }
     }
 
+    // MARK: - Auswahl & Bearbeitung
+
+    private func select(_ id: UUID) {
+        if editingID == id { return }
+        Haptics.select()
+        // Eine laufende Bearbeitung wird beendet; das onChange oben
+        // registriert dafür den Undo-Schritt.
+        if editingID != nil { editingID = nil }
+        if selectedID != id { selectedID = id }
+    }
+
+    private func beginEditing(_ id: UUID) {
+        guard textBoxes.contains(where: { $0.id == id }) else { return }
+        guard editingID != id else { return }
+        Haptics.select()
+        selectedID = id
+        editingID = id
+    }
+
+    /// Wird vom Textfeld gemeldet, wenn die Tastatur/der Fokus nativ endet.
+    private func endEditing(_ id: UUID) {
+        guard editingID == id else { return }
+        editingID = nil
+    }
+
+    private func finishEditingAndDeselect() {
+        let wasEditing = editingID != nil
+        if wasEditing { editingID = nil }
+        if selectedID != nil { selectedID = nil }
+        if !wasEditing {
+            pruneEmptyBoxes(keeping: nil)
+        }
+    }
+
     // MARK: - Tipp auf leere Fläche
 
     private func handleBackgroundTap(at location: CGPoint) {
-        if editingID != nil {
-            // 1. Schritt: Bearbeiten verlassen → zurück in den Verschiebe-Modus.
+        if editingID != nil || selectedID != nil {
+            // Bearbeiten beenden und Auswahl aufheben – der nächste Tipp
+            // erzeugt dann sofort ein neues Feld.
             Haptics.tap()
-            editingID = nil
-        } else if selectedID != nil {
-            // 2. Schritt: Auswahl aufheben.
-            Haptics.tap()
-            selectedID = nil
+            finishEditingAndDeselect()
         } else if isTextToolActive {
-            // 3. Schritt: Neues Textfeld erstellen (direkt bearbeitbar).
             createTextBox(at: location)
         }
     }
@@ -134,6 +189,9 @@ struct NoteTextBoxesLayer: View {
     // MARK: - Erstellen / Löschen
 
     private func createTextBox(at location: CGPoint) {
+        let size = safeAreaSize
+        guard location.x.isFinite, location.y.isFinite else { return }
+
         Haptics.tap()
 
         let before = textBoxes
@@ -144,108 +202,114 @@ struct NoteTextBoxesLayer: View {
         // oder rutscht nach links, der Text bricht dann automatisch um.
         var x = max(margin, location.x)
         var width = defaultWidth
-        let maxAvailable = areaSize.width - margin - x
+        let maxAvailable = size.width - margin - x
         if width > maxAvailable {
             width = max(minWidth, maxAvailable)
             if maxAvailable < minWidth {
                 width = minWidth
-                x = max(margin, areaSize.width - margin - width)
+                x = max(margin, size.width - margin - width)
             }
         }
-        let y = min(max(margin, location.y - 20), max(margin, areaSize.height - 60))
+        let y = min(max(margin, location.y - 20), max(margin, size.height - 60))
 
-        let box = NoteTextBox(x: Double(x), y: Double(y), width: Double(width))
+        let rawBox = NoteTextBox(x: Double(x), y: Double(y), width: Double(width))
+        guard let box = rawBox.sanitized(in: size) else { return }
+
         withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
             textBoxes.append(box)
         }
         registerUndo(before, textBoxes)
 
-        // Neues Feld direkt auswählen und zum Bearbeiten öffnen. Das Fokussieren
-        // läuft bewusst im nächsten Main-Loop, nachdem SwiftUI die neue
-        // ForEach-Zeile materialisiert hat; so wird beim Text-Werkzeug kein
-        // Binding-Element mitten im Update fokussiert/ersetzt.
-        DispatchQueue.main.async {
-            guard textBoxes.contains(where: { $0.id == box.id }) else { return }
-            selectedID = box.id
-            editingID = box.id
-        }
+        // Kein DispatchQueue-Umweg mehr nötig: Ohne Element-Bindings ist es
+        // sicher, Auswahl und Bearbeitung direkt zu setzen.
+        selectedID = box.id
+        editingID = box.id
     }
 
-    private func deleteBox(_ box: NoteTextBox) {
+    private func deleteBox(id: UUID) {
+        guard textBoxes.contains(where: { $0.id == id }) else { return }
         Haptics.tap()
         let before = textBoxes
+        if editingID == id { editingID = nil }
+        if selectedID == id { selectedID = nil }
         withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-            textBoxes.removeAll { $0.id == box.id }
+            textBoxes.removeAll { $0.id == id }
         }
-        registerUndo(before, textBoxes)
-        if selectedID == box.id { selectedID = nil }
-        if editingID == box.id { editingID = nil }
-    }
-
-    // MARK: - Undo-Registrierung
-
-    /// Wird nach einer Zieh-Geste (Verschieben oder Breite ändern) aufgerufen.
-    private func finishGesture() {
-        guard let before = gestureSnapshot else { return }
-        gestureSnapshot = nil
+        editSessionSnapshot = nil
         registerUndo(before, textBoxes)
     }
 
-    /// Registriert eine Punkt-Änderung an einem Feld (Schriftgröße).
-    /// `oldBox`/`newBox` beschreiben das Feld vor bzw. nach der Mutation.
-    private func registerBoxMutation(from oldBox: NoteTextBox, to newBox: NoteTextBox) {
-        guard oldBox != newBox else { return }
-        let before = textBoxes.map { $0.id == oldBox.id ? oldBox : $0 }
-        registerUndo(before, textBoxes)
+    // MARK: - Änderungen an einem Feld (immer über die stabile id)
+
+    private func updateBox(id: UUID, _ transform: (inout NoteTextBox) -> Void) {
+        guard let index = textBoxes.firstIndex(where: { $0.id == id }) else { return }
+        var updated = textBoxes[index]
+        transform(&updated)
+        guard let sanitized = updated.sanitized(in: safeAreaSize) else { return }
+        guard sanitized != textBoxes[index] else { return }
+        textBoxes[index] = sanitized
+    }
+
+    private func changeFontSize(id: UUID, by delta: Double) {
+        guard textBoxes.contains(where: { $0.id == id }) else { return }
+        let before = textBoxes
+        Haptics.select()
+
+        updateBox(id: id) { box in
+            box.fontSize = min(48, max(10, box.fontSize + delta))
+        }
 
         // Durch größere Schrift könnte das Feld unten herausragen → einklemmen.
-        if let index = textBoxes.firstIndex(where: { $0.id == newBox.id }) {
+        if let index = textBoxes.firstIndex(where: { $0.id == id }) {
             var clamped = textBoxes[index]
             clampBoxIntoArea(&clamped)
             if clamped != textBoxes[index] {
                 textBoxes[index] = clamped
             }
         }
+
+        if before != textBoxes {
+            registerUndo(before, textBoxes)
+        }
+    }
+
+    /// Wird nach einer Zieh-Geste (Verschieben oder Breite ändern) aufgerufen.
+    private func finishGesture() {
+        guard let before = gestureSnapshot else { return }
+        gestureSnapshot = nil
+        guard before != textBoxes else { return }
+        registerUndo(before, textBoxes)
     }
 
     // MARK: - Aufräumen & Klemmen
 
     /// Entfernt Felder, die leer sind oder nur Leerzeichen enthalten.
-    private func cleanupEmptyBoxes(keeping keepID: UUID?) {
-        let removableIDs = Set(textBoxes.compactMap { box -> UUID? in
-            guard box.id != keepID,
-                  box.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                return nil
-            }
-            return box.id
-        })
-        guard !removableIDs.isEmpty else { return }
+    /// Das gerade ausgewählte bzw. bearbeitete Feld bleibt immer erhalten.
+    private func pruneEmptyBoxes(keeping keepID: UUID?) {
+        let editing = editingID
+        let filtered = textBoxes.filter { box in
+            if box.id == keepID || box.id == editing { return true }
+            return !box.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard filtered.count != textBoxes.count else { return }
 
-        // Auf den nächsten Main-Loop schieben: So wird kein Binding-Element
-        // mitten in SwiftUIs ForEach-Update entfernt (das konnte beim Text-Tool
-        // zu instabilen Zuständen führen).
-        let textBoxesBinding = $textBoxes
-        let selectedBinding = $selectedID
-        let editingBinding = $editingID
-        DispatchQueue.main.async {
-            var updatedBoxes = textBoxesBinding.wrappedValue
-            updatedBoxes.removeAll { removableIDs.contains($0.id) }
-            textBoxesBinding.wrappedValue = updatedBoxes
+        let remainingIDs = Set(filtered.map(\.id))
+        textBoxes = filtered
 
-            if let selectedID = selectedBinding.wrappedValue, removableIDs.contains(selectedID) {
-                selectedBinding.wrappedValue = nil
-            }
-            if let editingID = editingBinding.wrappedValue, removableIDs.contains(editingID) {
-                editingBinding.wrappedValue = nil
-            }
+        if let current = selectedID, !remainingIDs.contains(current) {
+            selectedID = nil
+        }
+        if let current = editingID, !remainingIDs.contains(current) {
+            editingID = nil
         }
     }
 
     /// Klemmt ein Feld vollständig in die Zeichenfläche ein.
-    fileprivate func clampBoxIntoArea(_ box: inout NoteTextBox) {
+    private func clampBoxIntoArea(_ box: inout NoteTextBox) {
+        let size = safeAreaSize
         let height = estimatedTextBoxHeight(box)
-        let maxX = max(Double(margin), Double(areaSize.width) - box.width - Double(margin))
-        let maxY = max(Double(margin), Double(areaSize.height - height) - Double(margin))
+        let maxX = max(Double(margin), Double(size.width) - box.width - Double(margin))
+        let maxY = max(Double(margin), Double(size.height - height) - Double(margin))
         box.x = min(max(Double(margin), box.x), maxX)
         box.y = min(max(Double(margin), box.y), maxY)
     }
@@ -255,8 +319,12 @@ struct NoteTextBoxesLayer: View {
 /// Lösch-Kreuz, Seiten-Griffen und Schriftgrößen-Steuerung; im
 /// Bearbeiten-Modus mit echtem Texteingabefeld (Tastatur), ohne Kreuz
 /// und ohne Seiten-Griffe.
+///
+/// Das Feld bekommt seinen Zustand als **Wert** (kein Binding) und meldet
+/// jede Änderung über Callbacks zurück – dadurch kann es gefahrlos entfernt
+/// werden, während eine Geste oder die Tastatur noch aktiv ist.
 private struct NoteTextBoxView: View {
-    @Binding var box: NoteTextBox
+    let box: NoteTextBox
     let isSelected: Bool
     let isEditing: Bool
     let areaSize: CGSize
@@ -264,9 +332,12 @@ private struct NoteTextBoxView: View {
     let onBeginEditing: () -> Void
     let onEndEditing: () -> Void
     let onDelete: () -> Void
+    let onChangeText: (String) -> Void
     let onGestureStart: () -> Void
+    let onMove: (CGPoint) -> Void
+    let onResize: (_ newX: CGFloat, _ newWidth: CGFloat) -> Void
     let onGestureEnd: () -> Void
-    let onRegisterMutation: (_ before: NoteTextBox, _ after: NoteTextBox) -> Void
+    let onChangeFontSize: (Double) -> Void
 
     @State private var moveStart: CGPoint? = nil
     @State private var resizeStartX: CGFloat? = nil
@@ -278,6 +349,23 @@ private struct NoteTextBoxView: View {
     private enum ResizeEdge {
         case leading
         case trailing
+    }
+
+    private var boxWidth: CGFloat {
+        let value = CGFloat(box.width)
+        return value.isFinite && value > 0 ? value : 240
+    }
+
+    private var boxFontSize: CGFloat {
+        let value = CGFloat(box.fontSize)
+        return value.isFinite && value > 0 ? value : 17
+    }
+
+    private var boxOrigin: CGPoint {
+        CGPoint(
+            x: CGFloat(box.x).isFinite ? CGFloat(box.x) : margin,
+            y: CGFloat(box.y).isFinite ? CGFloat(box.y) : margin
+        )
     }
 
     var body: some View {
@@ -330,7 +418,7 @@ private struct NoteTextBoxView: View {
                     .offset(y: 34)
             }
         }
-        .offset(x: CGFloat(box.x), y: CGFloat(box.y))
+        .offset(x: boxOrigin.x, y: boxOrigin.y)
     }
 
     // MARK: - Inhalte
@@ -339,27 +427,27 @@ private struct NoteTextBoxView: View {
     /// Finger oder Apple Pencil sofort greift und nichts erst beim Loslassen
     /// "springt".
     private var displayContent: some View {
-        Text(box.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Text" : box.text)
-            .font(.system(size: CGFloat(box.fontSize)))
-            .foregroundColor(
-                box.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? .secondary
-                    : .primary
-            )
+        let trimmed = box.text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return Text(trimmed.isEmpty ? "Text" : box.text)
+            .font(.system(size: boxFontSize))
+            .foregroundColor(trimmed.isEmpty ? .secondary : .primary)
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(width: max(20, CGFloat(box.width) - 16), alignment: .topLeading)
+            .frame(width: max(20, boxWidth - 16), alignment: .topLeading)
             .padding(8)
-            .frame(width: CGFloat(box.width), alignment: .topLeading)
+            .frame(width: boxWidth, alignment: .topLeading)
             .contentShape(Rectangle())
             .gesture(moveGesture)
-            // Doppeltippen (egal ob ausgewählt oder nicht) = Text bearbeiten.
-            .onTapGesture(count: 2) {
-                onBeginEditing()
-            }
-            // Einfaches Tippen = auswählen.
-            .onTapGesture(count: 1) {
-                onSelect()
+            // Ein Tipp wählt aus, der nächste Tipp öffnet die Tastatur.
+            // (Bewusst kein kombiniertes Einzel-/Doppeltippen: Das war in
+            // SwiftUI unzuverlässig, sodass das Bearbeiten nie startete.)
+            .onTapGesture {
+                if isSelected {
+                    onBeginEditing()
+                } else {
+                    onSelect()
+                }
             }
     }
 
@@ -367,13 +455,14 @@ private struct NoteTextBoxView: View {
     /// (und weiterhin Scribble-Unterstützung für den Apple Pencil).
     private var editingContent: some View {
         NoteTextEditor(
-            text: $box.text,
-            fontSize: CGFloat(box.fontSize),
+            text: box.text,
+            fontSize: boxFontSize,
             isEditing: isEditing,
+            onChangeText: onChangeText,
             onEndEditing: onEndEditing
         )
         .frame(
-            width: CGFloat(box.width),
+            width: boxWidth,
             height: estimatedTextBoxHeight(box),
             alignment: .topLeading
         )
@@ -382,10 +471,10 @@ private struct NoteTextBoxView: View {
     // MARK: - Verschieben (sofort, folgt dem Finger)
 
     private var moveGesture: some Gesture {
-        DragGesture(minimumDistance: 2, coordinateSpace: .named("noteTextBoxesLayer"))
+        DragGesture(minimumDistance: 2, coordinateSpace: .named(NoteTextBoxesLayer.coordinateSpaceName))
             .onChanged { value in
                 if moveStart == nil {
-                    moveStart = CGPoint(x: CGFloat(box.x), y: CGFloat(box.y))
+                    moveStart = boxOrigin
                     onGestureStart()
                     if !isSelected {
                         onSelect()
@@ -394,10 +483,11 @@ private struct NoteTextBoxView: View {
                 }
                 guard let start = moveStart else { return }
                 let boxHeight = estimatedTextBoxHeight(box)
-                let maxX = max(margin, areaSize.width - CGFloat(box.width) - margin)
+                let maxX = max(margin, areaSize.width - boxWidth - margin)
                 let maxY = max(margin, areaSize.height - boxHeight - margin)
-                box.x = Double(min(max(margin, start.x + value.translation.width), maxX))
-                box.y = Double(min(max(margin, start.y + value.translation.height), maxY))
+                let newX = min(max(margin, start.x + value.translation.width), maxX)
+                let newY = min(max(margin, start.y + value.translation.height), maxY)
+                onMove(CGPoint(x: newX, y: newY))
             }
             .onEnded { _ in
                 let hadStarted = moveStart != nil
@@ -425,25 +515,25 @@ private struct NoteTextBoxView: View {
     }
 
     private func resizeGesture(edge: ResizeEdge) -> some Gesture {
-        DragGesture(minimumDistance: 1, coordinateSpace: .named("noteTextBoxesLayer"))
+        DragGesture(minimumDistance: 1, coordinateSpace: .named(NoteTextBoxesLayer.coordinateSpaceName))
             .onChanged { value in
                 if resizeStartX == nil {
-                    resizeStartX = CGFloat(box.x)
-                    resizeStartWidth = CGFloat(box.width)
+                    resizeStartX = boxOrigin.x
+                    resizeStartWidth = boxWidth
                     onGestureStart()
                 }
                 guard let startX = resizeStartX, let startWidth = resizeStartWidth else { return }
 
                 switch edge {
                 case .trailing:
-                    let maxWidth = areaSize.width - margin - startX
-                    box.width = Double(min(max(minWidth, startWidth + value.translation.width), maxWidth))
+                    let maxWidth = max(minWidth, areaSize.width - margin - startX)
+                    let newWidth = min(max(minWidth, startWidth + value.translation.width), maxWidth)
+                    onResize(startX, newWidth)
                 case .leading:
                     let proposedX = startX + value.translation.width
-                    let maxX = startX + startWidth - minWidth
+                    let maxX = max(margin, startX + startWidth - minWidth)
                     let newX = min(max(margin, proposedX), maxX)
-                    box.width = Double(startWidth + (startX - newX))
-                    box.x = Double(newX)
+                    onResize(newX, startWidth + (startX - newX))
                 }
             }
             .onEnded { _ in
@@ -475,10 +565,7 @@ private struct NoteTextBoxView: View {
     private var fontSizeControls: some View {
         HStack(spacing: 0) {
             Button {
-                Haptics.select()
-                let before = box
-                box.fontSize = max(10, box.fontSize - 2)
-                onRegisterMutation(before, box)
+                onChangeFontSize(-2)
             } label: {
                 Image(systemName: "textformat.size.smaller")
                     .font(.system(size: 13, weight: .semibold))
@@ -490,10 +577,7 @@ private struct NoteTextBoxView: View {
                 .frame(height: 18)
 
             Button {
-                Haptics.select()
-                let before = box
-                box.fontSize = min(48, box.fontSize + 2)
-                onRegisterMutation(before, box)
+                onChangeFontSize(2)
             } label: {
                 Image(systemName: "textformat.size.larger")
                     .font(.system(size: 13, weight: .semibold))

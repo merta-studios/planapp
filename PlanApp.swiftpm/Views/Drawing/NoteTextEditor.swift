@@ -5,11 +5,18 @@ import UIKit
 /// der Zeichenfläche. Gegenüber dem SwiftUI-`TextField` garantiert es, dass
 /// die Bildschirmtastatur zuverlässig erscheint (`becomeFirstResponder`), und
 /// unterstützt weiterhin Scribble mit dem Apple Pencil.
+///
+/// Der Text wird bewusst als **Wert** übergeben und über `onChangeText`
+/// zurückgemeldet (kein `@Binding` in ein Array-Element). So kann das Feld
+/// jederzeit gefahrlos aus der Ansicht entfernt werden – auch während die
+/// Tastatur noch offen ist.
 struct NoteTextEditor: UIViewRepresentable {
-    @Binding var text: String
+    let text: String
     let fontSize: CGFloat
     /// Ob das Feld gerade bearbeitet wird (Fokus halten/aufheben).
     let isEditing: Bool
+    /// Wird bei jeder Texteingabe aufgerufen.
+    let onChangeText: (String) -> Void
     /// Wird aufgerufen, wenn die Bearbeitung nativ endet (z. B. Tastatur weg).
     let onEndEditing: () -> Void
 
@@ -23,7 +30,7 @@ struct NoteTextEditor: UIViewRepresentable {
         textView.backgroundColor = .clear
         textView.isOpaque = false
         textView.isScrollEnabled = false
-        textView.font = .systemFont(ofSize: fontSize)
+        textView.font = .systemFont(ofSize: max(1, fontSize))
         textView.textColor = .label
         textView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
         textView.textContainer.lineFragmentPadding = 0
@@ -40,8 +47,9 @@ struct NoteTextEditor: UIViewRepresentable {
     func updateUIView(_ uiView: UITextView, context: Context) {
         context.coordinator.parent = self
 
-        if uiView.font?.pointSize != fontSize {
-            uiView.font = .systemFont(ofSize: fontSize)
+        let resolvedFontSize = max(1, fontSize)
+        if uiView.font?.pointSize != resolvedFontSize {
+            uiView.font = .systemFont(ofSize: resolvedFontSize)
         }
 
         // Externe Änderungen (Undo/Redo) auch während der Bearbeitung anzeigen,
@@ -60,8 +68,8 @@ struct NoteTextEditor: UIViewRepresentable {
         }
 
         if isEditing, !uiView.isFirstResponder {
-            DispatchQueue.main.async {
-                guard isEditing, !uiView.isFirstResponder, uiView.window != nil else { return }
+            DispatchQueue.main.async { [weak uiView] in
+                guard let uiView, uiView.window != nil, !uiView.isFirstResponder else { return }
                 uiView.becomeFirstResponder()
             }
         } else if !isEditing, uiView.isFirstResponder {
@@ -69,22 +77,38 @@ struct NoteTextEditor: UIViewRepresentable {
         }
     }
 
+    /// Aufräumen, bevor die View entfernt wird: Ein noch aktiver First
+    /// Responder würde sonst nach dem Entfernen weiter Delegate-Aufrufe
+    /// auslösen.
+    static func dismantleUIView(_ uiView: UITextView, coordinator: Coordinator) {
+        coordinator.isDismantled = true
+        uiView.delegate = nil
+        if uiView.isFirstResponder {
+            uiView.resignFirstResponder()
+        }
+    }
+
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: NoteTextEditor
         var isApplyingExternalChange = false
+        var isDismantled = false
 
         init(_ parent: NoteTextEditor) {
             self.parent = parent
         }
 
         func textViewDidChange(_ textView: UITextView) {
-            guard !isApplyingExternalChange else { return }
-            parent.text = textView.text
+            guard !isApplyingExternalChange, !isDismantled else { return }
+            let newText = textView.text ?? ""
+            guard newText != parent.text else { return }
+            parent.onChangeText(newText)
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
-            DispatchQueue.main.async { [parent] in
-                parent.onEndEditing()
+            guard !isDismantled else { return }
+            let callback = parent.onEndEditing
+            DispatchQueue.main.async {
+                callback()
             }
         }
     }

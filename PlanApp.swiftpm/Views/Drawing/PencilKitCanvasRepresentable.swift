@@ -126,13 +126,24 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         }
 
         // Im Text-Modus nimmt die SwiftUI-Text-Ebene die Eingaben entgegen.
-        // Der Canvas selbst bleibt interaktiv, damit UIKit/PencilKit intern in
-        // einem stabilen Responder-Zustand bleibt; deaktiviert wird nur der
-        // Zeichnen-Recognizer. Das vermeidet Abstürze beim Wechsel zum
-        // Text-Werkzeug, während die darüberliegende SwiftUI-Ebene die Taps
-        // verarbeitet.
-        canvasView.isUserInteractionEnabled = true
+        //
+        // WICHTIG: Der Canvas ist eine echte UIView im View-Baum. Solange sie
+        // `isUserInteractionEnabled == true` hat, gewinnt sie beim UIKit-
+        // Hit-Testing gegen die darüberliegende SwiftUI-Ebene – Tipps zum
+        // Erstellen/Auswählen von Textfeldern kamen dadurch nie an (das
+        // Text-Werkzeug wirkte schlicht "tot"). Früher wurde hier sogar
+        // ausdrücklich `true` gesetzt und damit das `allowsHitTesting(false)`
+        // der SwiftUI-Seite wieder ausgehebelt.
+        //
+        // Deshalb: im Text-Modus die Interaktion der Canvas-View komplett
+        // abschalten, sonst wieder aktivieren. Zusätzlich wird der
+        // Zeichnen-Recognizer deaktiviert, damit auch keine Striche entstehen.
+        canvasView.isUserInteractionEnabled = !isTextTool
         canvasView.drawingGestureRecognizer.isEnabled = !isTextTool
+
+        if isTextTool, canvasView.isFirstResponder {
+            canvasView.resignFirstResponder()
+        }
     }
 
     /// Passt reines Schwarz/Weiß dynamisch an das Erscheinungsbild an
@@ -313,15 +324,30 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     /// Rendert die Zeichnung auf weißem Hintergrund für Vision-OCR.
     /// Die Ausgabe ist absichtlich nicht zugeschnitten, damit erkannte
     /// Textpositionen direkt in Canvas-Koordinaten zurückgerechnet werden können.
+    ///
+    /// Wichtig: Alle Striche werden vorher auf kräftiges Schwarz umgefärbt.
+    /// Sonst wären helle Striche (z. B. der im Dunkelmodus automatisch weiße
+    /// Stift oder ein gelber Textmarker) auf dem weißen OCR-Hintergrund
+    /// unsichtbar und die Erkennung würde grundsätzlich nichts finden.
     public static func renderDrawingForRecognition(
         drawing: PKDrawing,
         canvasSize: CGSize
     ) -> UIImage? {
-        guard canvasSize.width > 0, canvasSize.height > 0 else { return nil }
+        guard canvasSize.width.isFinite, canvasSize.height.isFinite,
+              canvasSize.width > 0, canvasSize.height > 0,
+              !drawing.strokes.isEmpty else {
+            return nil
+        }
 
         let canvasRect = CGRect(origin: .zero, size: canvasSize)
+        let contrastDrawing = highContrastCopy(of: drawing)
+
+        // Vision erkennt Handschrift deutlich zuverlässiger, wenn das Bild
+        // ausreichend groß ist. Deshalb wird mindestens 2x gerendert.
+        let renderScale = max(2, min(4, 1400 / max(canvasSize.width, 1)))
+
         let format = UIGraphicsImageRendererFormat()
-        format.scale = UIScreen.main.scale
+        format.scale = renderScale
         format.opaque = true
 
         let renderer = UIGraphicsImageRenderer(size: canvasSize, format: format)
@@ -329,10 +355,20 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             UIColor.white.setFill()
             context.cgContext.fill(canvasRect)
 
-            guard !drawing.strokes.isEmpty else { return }
-            let drawingImage = drawing.image(from: canvasRect, scale: UIScreen.main.scale)
+            let drawingImage = contrastDrawing.image(from: canvasRect, scale: renderScale)
             drawingImage.draw(in: canvasRect)
         }
+    }
+
+    /// Kopie der Zeichnung, in der jeder Strich mit deckendem Schwarz
+    /// eingefärbt ist. Der Strichverlauf bleibt unverändert.
+    private static func highContrastCopy(of drawing: PKDrawing) -> PKDrawing {
+        let strokes: [PKStroke] = drawing.strokes.map { stroke in
+            var copy = stroke
+            copy.ink = PKInk(stroke.ink.inkType, color: .black)
+            return copy
+        }
+        return PKDrawing(strokes: strokes)
     }
 
     private static func drawPaperBackground(
@@ -346,13 +382,15 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         UIColor.white.withAlphaComponent(0.70).setFill()
         context.fill(rect)
 
+        let spacing = NoteBackgroundMetrics.spacing(for: style)
+        let alpha = NoteBackgroundMetrics.opacity(for: style)
+
         switch style {
         case .blank:
             break
         case .dotted:
-            let spacing: CGFloat = 22
-            let radius: CGFloat = 1.2
-            UIColor.systemGray.withAlphaComponent(0.30).setFill()
+            let radius = NoteBackgroundMetrics.dotRadius
+            UIColor.systemGray.withAlphaComponent(alpha).setFill()
             var y = floor(rect.minY / spacing) * spacing
             while y <= rect.maxY {
                 var x = floor(rect.minX / spacing) * spacing
@@ -364,10 +402,10 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 y += spacing
             }
         case .lined:
-            drawLines(in: rect, context: context, spacing: 28, vertical: false, alpha: 0.26)
+            drawLines(in: rect, context: context, spacing: spacing, vertical: false, alpha: alpha)
         case .grid:
-            drawLines(in: rect, context: context, spacing: 28, vertical: false, alpha: 0.22)
-            drawLines(in: rect, context: context, spacing: 28, vertical: true, alpha: 0.22)
+            drawLines(in: rect, context: context, spacing: spacing, vertical: false, alpha: alpha)
+            drawLines(in: rect, context: context, spacing: spacing, vertical: true, alpha: alpha)
         }
 
         context.restoreGState()
@@ -380,8 +418,10 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         vertical: Bool,
         alpha: CGFloat
     ) {
+        guard spacing > 0 else { return }
+
         context.setStrokeColor(UIColor.systemGray.withAlphaComponent(alpha).cgColor)
-        context.setLineWidth(1)
+        context.setLineWidth(NoteBackgroundMetrics.lineWidth)
         context.beginPath()
 
         if vertical {

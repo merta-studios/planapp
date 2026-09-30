@@ -337,9 +337,9 @@ public struct DrawingToolbarView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous)
                     .fill(Color(UIColor.tertiarySystemBackground).opacity(0.72))
-                // Sichtbare Vorschau: Die echte Zeichnung liegt auf der skalierten
-                // Notizfläche, daher wird nur die Vorschau mit derselben Skala angepasst.
-                // Keine künstliche Mindestgröße: 1 pt soll auch wie 1 pt wirken.
+                // Sichtbare Vorschau: Sie zeigt die Strichstärke, die PencilKit
+                // wirklich zeichnet (siehe `DrawingStrokeMetrics`) – zusätzlich
+                // mit der Skalierung der Notizfläche multipliziert.
                 Circle()
                     .fill(currentToolPreviewColor)
                     .frame(
@@ -359,7 +359,8 @@ public struct DrawingToolbarView: View {
                 range: currentWidthRange,
                 previewColor: currentToolPreviewColor,
                 title: currentThicknessTitle,
-                previewScale: previewScale
+                previewScale: previewScale,
+                toolSelection: toolSelection
             )
             .presentationCompactAdaptation(.popover)
         }
@@ -380,8 +381,17 @@ public struct DrawingToolbarView: View {
         currentWidthBinding.wrappedValue
     }
 
+    /// Durchmesser des kleinen Punkts im Werkzeugleisten-Knopf. Er entspricht
+    /// exakt der Strichstärke, die beim Zeichnen sichtbar wird.
     private var compactPreviewDiameter: CGFloat {
-        min(34, max(0.1, currentToolWidth * previewScale))
+        min(
+            30,
+            DrawingStrokeMetrics.onScreenWidth(
+                for: toolSelection,
+                width: currentToolWidth,
+                canvasScale: previewScale
+            )
+        )
     }
 
     private var currentWidthRange: ClosedRange<CGFloat> {
@@ -551,22 +561,33 @@ public struct DrawingToolbarView: View {
 }
 
 /// Großer, gut greifbarer Dicken-Regler, der sich UNTER dem Dicken-Knopf
-/// öffnet. Die Kreis-Vorschau hat exakt denselben Durchmesser in Punkten wie
-/// der später gezeichnete Strich (1 pt auf dem Schieberegler = 1 pt auf dem
-/// Display), nur gegen die Rahmengröße der Vorschaufläche geklemmt.
+/// öffnet.
+///
+/// Die Vorschau zeigt einen echten Strich-Ausschnitt mit genau der Dicke, die
+/// später auch auf der Zeichenfläche erscheint: Basiswert × Render-Faktor des
+/// Werkzeugs (`DrawingStrokeMetrics`) × Darstellungs-Skalierung der Notiz.
+/// Ein Balken statt eines Kreises ist dabei die ehrlichere Darstellung – ein
+/// gefüllter Kreis wirkt bei gleichem Durchmesser immer deutlich massiger.
 private struct ThicknessSliderPanel: View {
     @Binding var width: CGFloat
     let range: ClosedRange<CGFloat>
     let previewColor: Color
     let title: String
     let previewScale: CGFloat
+    let toolSelection: DrawingToolSelection
 
-    /// Sichtbare Vorschau: Die Zeichenfläche selbst kann verkleinert dargestellt
-    /// sein. Nur die Vorschau wird deshalb skaliert, die echte Werkzeug-Dicke nicht.
-    /// Es gibt keine künstliche Mindestgröße mehr – dadurch entspricht die
-    /// Anzeige auch bei sehr dünnen Stiften der tatsächlichen Strichstärke.
-    private var previewDiameter: CGFloat {
-        min(72, max(0.1, width * previewScale))
+    private let previewLength: CGFloat = 240
+
+    /// Tatsächlich sichtbare Strichstärke in Punkten.
+    private var previewThickness: CGFloat {
+        min(
+            64,
+            DrawingStrokeMetrics.onScreenWidth(
+                for: toolSelection,
+                width: width,
+                canvasScale: previewScale
+            )
+        )
     }
 
     var body: some View {
@@ -576,14 +597,15 @@ private struct ThicknessSliderPanel: View {
                 .foregroundColor(.secondary)
 
             ZStack {
-                Circle()
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Color(UIColor.tertiarySystemFill))
-                    .frame(width: 76, height: 76)
-                Circle()
+                    .frame(width: previewLength + 20, height: 72)
+
+                Capsule()
                     .fill(previewColor)
-                    .frame(width: previewDiameter, height: previewDiameter)
+                    .frame(width: previewLength, height: previewThickness)
             }
-            .frame(height: 80)
+            .frame(height: 76)
             .animation(.interactiveSpring(response: 0.15, dampingFraction: 0.8), value: width)
 
             Slider(value: $width, in: range, step: 0.5)
