@@ -66,9 +66,8 @@ Das Repository enthält das fertige App-Package **`PlanApp.swiftpm`**, welches a
   - **Buntstift / Stift**: Schwarz (Standard), Rot, Blau, Grün.
   - **Textmarker**: Gelb, Orange, Grün, Blau, Lila.
   - **Radierer**: Einfacher Vektor-Radierer.
-  - **Rückgängig & Vorwärts (Undo/Redo)**: Auch „Handschrift in Text umwandeln" und „Seite leeren" sind als kombinierter Schritt vollständig rückgängig machbar (Striche + Textfelder zusammen).
+  - **Rückgängig & Vorwärts (Undo/Redo)**.
 - **Apple Pencil Pro Squeeze-Unterstützung**: Durch leichtes Zusammendrücken des Apple Pencil Pro wird der letzte Strich sofort rückgängig gemacht (`UIPencilInteraction`).
-- **Apple Pencil Pro Haptik**: Alle Buttons geben eine spürbare Rückmeldung im Stift (`UICanvasFeedbackGenerator`) – auch ein leichter „Tick" beim Hovern über die Werkzeugleiste.
 - **Apple Pencil Hover**: Alle Buttons und Karten unterstützen iPadOS Pointer- & Hover-Effekte (`.hoverEffect(.lift)`).
 - **Automatischer Rand-Zuschnitt**: Beim Schließen wird die Zeichnung exakt an den Rändern der geschriebenen Striche zugeschnitten und als gestochen scharfe Vorschau direkt im Stundenplan-Block angezeigt!
 
