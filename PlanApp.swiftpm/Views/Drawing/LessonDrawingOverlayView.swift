@@ -645,6 +645,10 @@ public struct LessonDrawingOverlayView: View {
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
+            // `saveNote` persists the note and closes the overlay itself.
+            // Do not call a second, non-existent close method here: with an
+            // `@EnvironmentObject` that produces misleading Binding/dynamic
+            // member diagnostics and prevents the package from building.
             viewModel.saveNote(
                 for: lesson,
                 drawingData: drawingData,
@@ -652,7 +656,6 @@ public struct LessonDrawingOverlayView: View {
                 lineCount: calculatedLines,
                 textBoxes: cleanedTextBoxes
             )
-            viewModel.closeDrawingOverlay()
         }
     }
 }
