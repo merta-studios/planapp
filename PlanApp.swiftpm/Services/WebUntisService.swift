@@ -44,6 +44,13 @@ public final class WebUntisService {
 
     // MARK: - JSON-RPC Request Helper
 
+    /// Platzhalter für RPC-Antworten, deren Inhalt nicht ausgewertet wird (z.B. `logout`).
+    /// `[String: Any]` kann nicht `Decodable` sein, daher dieser tolerante Typ,
+    /// der jede beliebige JSON-Antwort akzeptiert.
+    private struct IgnoredRPCResult: Decodable {
+        init(from decoder: Decoder) throws {}
+    }
+
     private func sendRPCRequest<T: Decodable>(
         endpoint: URL,
         method: String,
@@ -96,7 +103,7 @@ public final class WebUntisService {
             throw UntisError.decodingError("Kein 'result' in der Server-Antwort.")
         }
 
-        let resultData = try JSONSerialization.data(withJSONObject: result, options: [])
+        let resultData = try JSONSerialization.data(withJSONObject: result, options: [.fragmentsAllowed])
         do {
             let decoder = JSONDecoder()
             return try decoder.decode(T.self, from: resultData)
@@ -264,7 +271,7 @@ public final class WebUntisService {
     /// Meldet die WebUntis-Session ab
     public func logout(credentials: UntisCredentials, sessionId: String) async {
         guard let url = credentials.rpcEndpointURL else { return }
-        let _: [String: Any]? = try? await sendRPCRequest(
+        let _: IgnoredRPCResult? = try? await sendRPCRequest(
             endpoint: url,
             method: "logout",
             params: [:],

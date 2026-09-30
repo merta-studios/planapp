@@ -31,7 +31,7 @@ public struct SubjectCustomizationSection: View {
                                 .foregroundColor(.secondary)
                             TextField("z.B. M, D, ENG", text: $originalSubjectInput)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .autocapitalization(.characters)
+                                .textInputAutocapitalization(.characters)
                                 .disableAutocorrection(true)
                         }
 
