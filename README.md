@@ -119,9 +119,28 @@ planapp/
 │   │       ├── ColorPickerPresets.swift      # Farbpaletten-Auswahl
 │   │       └── StatusBadge.swift             # Status-Badges (Entfall, Vertretung, Heute)
 │   └── Utils/
+│       ├── AppResources.swift                # Bundle-/Ressourcen-Suche (Playgrounds-kompatibel)
 │       ├── ColorExtensions.swift             # Hex-Konvertierung & Kontrastfarben
 │       ├── DateExtensions.swift              # Kalenderwochen & Tagesberechnungen
 │       └── PencilInteractions.swift          # Apple Pencil Pro Squeeze- & Hover-Handler
 ├── README.md
 └── .gitignore
+```
+
+---
+
+## 🛠 Hinweise zu Ressourcen (`Resources/`)
+
+Bilder und andere Dateien aus dem Ordner `Resources/` **niemals über `Bundle.module`** laden.
+`Bundle.module` wird ausschließlich von SwiftPM generiert (`resource_bundle_accessor.swift`).
+Swift Playgrounds baut das App-Modul selbst und kopiert die Ressourcen direkt in das
+App-Bundle – der Accessor entsteht dort nie. Die Folge wäre der Compilerfehler
+`Type 'Bundle' has no member 'module'` und damit ein fehlgeschlagener Start („Build failed“).
+
+Stattdessen den Helfer `AppResources` verwenden, der das passende Bundle zur Laufzeit ermittelt
+und sowohl in Swift Playgrounds als auch in Xcode funktioniert:
+
+```swift
+let logo = AppResources.image(named: "AppLogo")
+let url  = AppResources.url(forResource: "AppLogo", withExtensions: ["png"])
 ```
