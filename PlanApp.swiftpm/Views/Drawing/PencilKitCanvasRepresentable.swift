@@ -126,11 +126,13 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         }
 
         // Im Text-Modus nimmt die SwiftUI-Text-Ebene die Eingaben entgegen.
-        // Den PencilKit-Recognizer selbst lassen wir aktiv, weil das Umschalten
-        // mitten in UIKit-Gesten instabil sein kann; stattdessen deaktivieren wir
-        // die Interaktion des Canvas als Ganzes.
-        canvasView.drawingGestureRecognizer.isEnabled = true
-        canvasView.isUserInteractionEnabled = !isTextTool
+        // Der Canvas selbst bleibt interaktiv, damit UIKit/PencilKit intern in
+        // einem stabilen Responder-Zustand bleibt; deaktiviert wird nur der
+        // Zeichnen-Recognizer. Das vermeidet Abstürze beim Wechsel zum
+        // Text-Werkzeug, während die darüberliegende SwiftUI-Ebene die Taps
+        // verarbeitet.
+        canvasView.isUserInteractionEnabled = true
+        canvasView.drawingGestureRecognizer.isEnabled = !isTextTool
     }
 
     /// Passt reines Schwarz/Weiß dynamisch an das Erscheinungsbild an
@@ -284,7 +286,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 guard !box.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     continue
                 }
-                let font = UIFont.systemFont(ofSize: box.fontSize)
+                let font = UIFont.systemFont(ofSize: CGFloat(box.fontSize))
                 let attributes: [NSAttributedString.Key: Any] = [
                     .font: font,
                     .foregroundColor: UIColor.label

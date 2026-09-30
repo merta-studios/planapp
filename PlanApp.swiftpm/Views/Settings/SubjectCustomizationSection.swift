@@ -191,7 +191,7 @@ public struct SubjectCustomizationSection: View {
                 .padding(.vertical, 16)
                 .lightCard(cornerRadius: 12, strokeOpacity: 0.15)
             } else {
-                VStack(spacing: 8) {
+                LazyVStack(spacing: 8) {
                     ForEach(viewModel.subjectCustomizations) { item in
                         HStack(spacing: 12) {
                             Circle()

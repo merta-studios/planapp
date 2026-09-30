@@ -655,7 +655,7 @@ public struct LessonDrawingOverlayView: View {
         }
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
-        request.recognitionLanguages = ["de-DE", "en-US"]
+        configureRecognitionLanguages(for: request)
 
         DispatchQueue.global(qos: .userInitiated).async {
             let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
@@ -667,6 +667,20 @@ public struct LessonDrawingOverlayView: View {
                     Haptics.warning()
                     recognitionAlertMessage = "Die Handschrift konnte nicht umgewandelt werden."
                 }
+            }
+        }
+    }
+
+    /// Vision bricht auf einigen iOS-Versionen mit einer Exception ab, wenn
+    /// nicht unterstützte Sprachcodes direkt gesetzt werden. Deshalb werden die
+    /// gewünschten Sprachen vorher gegen die tatsächlich verfügbare Liste
+    /// gefiltert; ohne Treffer bleibt Visions Standardkonfiguration aktiv.
+    private func configureRecognitionLanguages(for request: VNRecognizeTextRequest) {
+        let preferredLanguages = ["de-DE", "de", "en-US", "en"]
+        if let supportedLanguages = try? request.supportedRecognitionLanguages() {
+            let selected = preferredLanguages.filter { supportedLanguages.contains($0) }
+            if !selected.isEmpty {
+                request.recognitionLanguages = selected
             }
         }
     }
@@ -689,10 +703,28 @@ public struct LessonDrawingOverlayView: View {
             guard !text.isEmpty else { return nil }
 
             let normalized = observation.boundingBox
+            guard normalized.minX.isFinite,
+                  normalized.minY.isFinite,
+                  normalized.width.isFinite,
+                  normalized.height.isFinite,
+                  normalized.width > 0,
+                  normalized.height > 0 else {
+                return nil
+            }
+
             let rawX = normalized.minX * canvasSize.width
             let rawY = (1 - normalized.maxY) * canvasSize.height
             let rawWidth = normalized.width * canvasSize.width
             let rawHeight = normalized.height * canvasSize.height
+            guard rawX.isFinite,
+                  rawY.isFinite,
+                  rawWidth.isFinite,
+                  rawHeight.isFinite,
+                  rawWidth > 0,
+                  rawHeight > 0 else {
+                return nil
+            }
+
             let fontSize = max(12, min(34, rawHeight * 0.82))
             let width = min(
                 max(90, rawWidth + 28),
@@ -713,7 +745,7 @@ public struct LessonDrawingOverlayView: View {
                 y: Double(y),
                 width: Double(width),
                 fontSize: Double(fontSize)
-            )
+            ).sanitized(in: canvasSize)
         }
     }
 
@@ -748,8 +780,13 @@ public struct LessonDrawingOverlayView: View {
             min(maximumCanvasHeight, CGFloat(note.lineCount) * 56 + headerHeight + 40)
         )
         resizeStartHeight = canvasHeight
-        textBoxes = note.textBoxes
         noteBackgroundStyle = note.backgroundStyle
+
+        let canvasSize = CGSize(
+            width: paperWidth,
+            height: max(180, canvasHeight - headerHeight)
+        )
+        textBoxes = note.textBoxes.compactMap { $0.sanitized(in: canvasSize) }
 
         if let savedDrawing = try? PKDrawing(data: note.drawingData) {
             drawing = savedDrawing
@@ -763,17 +800,20 @@ public struct LessonDrawingOverlayView: View {
         editingTextBoxID = nil
 
         let currentDrawing = canvasView?.drawing ?? drawing
-        let canvasRect = CGRect(
-            origin: .zero,
-            size: canvasView?.bounds.size ?? CGSize(
-                width: paperWidth,
-                height: max(180, canvasHeight - headerHeight)
-            )
+        let fallbackCanvasSize = CGSize(
+            width: paperWidth,
+            height: max(180, canvasHeight - headerHeight)
         )
+        let rawCanvasSize = canvasView?.bounds.size ?? fallbackCanvasSize
+        let canvasSize = rawCanvasSize.width > 0 && rawCanvasSize.height > 0
+            ? rawCanvasSize
+            : fallbackCanvasSize
+        let canvasRect = CGRect(origin: .zero, size: canvasSize)
         let croppedDrawing = currentDrawing.cropped(to: canvasRect)
 
-        let cleanedTextBoxes = textBoxes.filter {
-            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let cleanedTextBoxes = textBoxes.compactMap { box -> NoteTextBox? in
+            guard !box.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return box.sanitized(in: canvasRect.size)
         }
         let croppedImage = PencilKitCanvasRepresentable.renderNotePreview(
             drawing: croppedDrawing,

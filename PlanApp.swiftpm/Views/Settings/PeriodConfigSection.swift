@@ -23,7 +23,7 @@ public struct PeriodConfigSection: View {
                 .foregroundColor(.secondary)
 
             // Perioden-Liste
-            VStack(spacing: 8) {
+            LazyVStack(spacing: 8) {
                 ForEach(viewModel.periods) { period in
                     HStack {
                         Text("\(period.periodNumber). Stunde")

@@ -216,7 +216,8 @@ public struct NotesOverviewListView: View {
         for dateString in dateStrings {
             guard let date = Date.fromYyyyMMdd(dateString) else { continue }
             for lesson in viewModel.lessonsFor(day: date) {
-                guard let note = viewModel.noteFor(lesson: lesson), note.hasVisibleContent else { continue }
+                guard viewModel.hasVisibleNote(for: lesson),
+                      let note = viewModel.noteFor(lesson: lesson) else { continue }
 
                 let startMinutes = sortedPeriods
                     .first(where: { $0.periodNumber == lesson.periodNumber })?
@@ -312,6 +313,11 @@ public struct NotesOverviewListView: View {
     /// Eine Zeile: Titel exakt wie über der Zeichenfläche, darunter die Notiz.
     private func noteRow(entry: NotedLesson, compact: Bool) -> some View {
         let display = viewModel.resolveSubjectDisplay(for: entry.lesson)
+        let hasGradient = display.gradientEndColor != nil
+        let backgroundColors = entry.lesson.isCancelled
+            ? [Color.gray.opacity(0.35), Color.gray.opacity(0.45)]
+            : [display.color, display.gradientEndColor ?? display.color.opacity(0.88)]
+        let textColor = entry.lesson.isCancelled ? Color.secondary : display.color.contrastingTextColor
 
         return VStack(alignment: .leading, spacing: compact ? 8 : 10) {
             NoteHeaderContent(
@@ -319,15 +325,30 @@ public struct NotesOverviewListView: View {
                 display: display,
                 displaySettings: viewModel.displaySettings,
                 periods: viewModel.periods,
-                primaryColor: .primary
+                primaryColor: textColor,
+                showsColorCircle: false
             )
 
-            noteContent(for: entry.note, compact: compact)
+            noteContent(for: entry.note, compact: compact, textColor: textColor)
         }
         .padding(.horizontal, compact ? 11 : 14)
         .padding(.vertical, compact ? 8 : 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.2)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: backgroundColors,
+                        startPoint: hasGradient ? .top : .topLeading,
+                        endPoint: hasGradient ? .bottom : .bottomTrailing
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.24), lineWidth: 1)
+        )
+        .shadow(color: display.color.opacity(entry.lesson.isCancelled ? 0 : 0.18), radius: 6, x: 0, y: 2)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .hoverEffect(.lift)
         .onTapGesture {
@@ -339,7 +360,7 @@ public struct NotesOverviewListView: View {
     /// Die eigentliche Notiz: gerenderte Vorschau (Handschrift + Textfelder),
     /// mit Text-Fallback, falls kein Vorschaubild existiert.
     @ViewBuilder
-    private func noteContent(for note: LessonNote, compact: Bool) -> some View {
+    private func noteContent(for note: LessonNote, compact: Bool, textColor: Color) -> some View {
         if let imageData = note.croppedImageData, let image = UIImage(data: imageData) {
             Image(uiImage: image)
                 .resizable()
@@ -363,7 +384,7 @@ public struct NotesOverviewListView: View {
                     ForEach(Array(texts.enumerated()), id: \.offset) { _, text in
                         Text(text)
                             .font(.system(size: compact ? 14 : 15, weight: .regular, design: .default))
-                            .foregroundColor(.primary)
+                            .foregroundColor(textColor)
                             .multilineTextAlignment(.leading)
                     }
                 }

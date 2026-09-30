@@ -1,12 +1,13 @@
 import SwiftUI
 
-/// Die Kopfzeile einer Notiz: Fach-Farbe als Kreis, Fachname, darunter die im
-/// Stundenplan aktivierten Zusatzinfos (Lehrer, Raum, Klasse, Uhrzeiten) und
-/// rechts die Stunde samt Datum.
+/// Die Kopfzeile einer Notiz: optionaler Fach-Farbkreis, Fachname, darunter
+/// die im Stundenplan aktivierten Zusatzinfos (Lehrer, Raum, Klasse,
+/// Uhrzeiten) und rechts die Stunde samt Datum.
 ///
 /// Wird sowohl über der Zeichenfläche im Bearbeiten-Overlay als auch in der
-/// "Nur Notizen"-Übersicht verwendet, damit die Titel dort EXAKT gleich
-/// aussehen.
+/// "Nur Notizen"-Übersicht verwendet. In der Übersicht kann der Farbkreis
+/// ausgeblendet werden, weil dort der komplette Karten-Hintergrund bereits die
+/// Fach-Farbe bzw. den Fach-Verlauf trägt.
 public struct NoteHeaderContent: View {
     public let lesson: Lesson
     public let display: SubjectDisplay
@@ -14,36 +15,34 @@ public struct NoteHeaderContent: View {
     public let periods: [Period]
     /// Grundfarbe der Texte (im Overlay z. B. abhängig vom Ausklapp-Zustand).
     public let primaryColor: Color
+    public let showsColorCircle: Bool
 
     public init(
         lesson: Lesson,
         display: SubjectDisplay,
         displaySettings: BlockDisplaySettings,
         periods: [Period],
-        primaryColor: Color = .primary
+        primaryColor: Color = .primary,
+        showsColorCircle: Bool = true
     ) {
         self.lesson = lesson
         self.display = display
         self.displaySettings = displaySettings
         self.periods = periods
         self.primaryColor = primaryColor
+        self.showsColorCircle = showsColorCircle
     }
 
     public var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            // Farbiger Kreis mit der Fach-Farbe vor dem Fachnamen.
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [display.color, display.gradientEndColor ?? display.color],
-                        startPoint: .top,
-                        endPoint: .bottom
+        HStack(alignment: .center, spacing: showsColorCircle ? 12 : 0) {
+            if showsColorCircle {
+                Circle()
+                    .fill(subjectGradient)
+                    .overlay(
+                        Circle().strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
                     )
-                )
-                .overlay(
-                    Circle().strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
-                )
-                .frame(width: 16, height: 16)
+                    .frame(width: 16, height: 16)
+            }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(display.name)
@@ -71,6 +70,14 @@ public struct NoteHeaderContent: View {
         }
         .foregroundColor(primaryColor)
         .frame(height: 64)
+    }
+
+    private var subjectGradient: LinearGradient {
+        LinearGradient(
+            colors: [display.color, display.gradientEndColor ?? display.color],
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
 
     /// Zusatz-Infos unter dem Fachnamen – exakt die Elemente, die auch im
