@@ -2,30 +2,12 @@ import SwiftUI
 import PencilKit
 import UIKit
 
-/// Ausgewähltes Zeichenwerkzeug für die Notizen
-public enum DrawingToolSelection: Equatable {
-    case pen(color: UIColor)
-    case marker(color: UIColor)
-    case eraser
-
-    public static func == (lhs: DrawingToolSelection, rhs: DrawingToolSelection) -> Bool {
-        switch (lhs, rhs) {
-        case (.eraser, .eraser):
-            return true
-        case (.pen(let c1), .pen(let c2)):
-            return c1 == c2
-        case (.marker(let c1), .marker(let c2)):
-            return c1 == c2
-        default:
-            return false
-        }
-    }
-}
-
-/// SwiftUI Wrapper für PKCanvasView mit Apple Pencil Pro Squeeze-Unterstützung
+/// SwiftUI Wrapper für PKCanvasView mit Apple Pencil Unterstützung
 public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     @Binding public var drawing: PKDrawing
     public let toolSelection: DrawingToolSelection
+    public let penWidth: CGFloat
+    public let colorScheme: ColorScheme
     public let onUndoAvailable: (Bool) -> Void
     public let onRedoAvailable: (Bool) -> Void
     public let onCanvasCreated: (PKCanvasView) -> Void
@@ -33,12 +15,16 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     public init(
         drawing: Binding<PKDrawing>,
         toolSelection: DrawingToolSelection,
+        penWidth: CGFloat = 3.5,
+        colorScheme: ColorScheme = .light,
         onUndoAvailable: @escaping (Bool) -> Void = { _ in },
         onRedoAvailable: @escaping (Bool) -> Void = { _ in },
         onCanvasCreated: @escaping (PKCanvasView) -> Void = { _ in }
     ) {
         self._drawing = drawing
         self.toolSelection = toolSelection
+        self.penWidth = penWidth
+        self.colorScheme = colorScheme
         self.onUndoAvailable = onUndoAvailable
         self.onRedoAvailable = onRedoAvailable
         self.onCanvasCreated = onCanvasCreated
@@ -55,12 +41,10 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         canvasView.drawing = drawing
         canvasView.delegate = context.coordinator
 
-        // Finger und Apple Pencil unterstützen
-        canvasView.drawingPolicy = .anyInput
+        // Nur Apple Pencil zum Zeichnen verwenden – Finger dienen ausschließlich zum Zoomen & Verschieben
+        canvasView.drawingPolicy = .pencilOnly
 
-        // Apple Pencil Pro Squeeze-Interaktion registrieren.
-        // Hinweis: `UIPencilInteraction(delegate:)` gibt es erst ab iOS 17.5 –
-        // der parameterlose Initializer plus `delegate`-Zuweisung funktioniert ab iOS 12.1.
+        // Apple Pencil Interaktion (Squeeze / Double Tap)
         let pencilInteraction = UIPencilInteraction()
         pencilInteraction.delegate = context.coordinator
         canvasView.addInteraction(pencilInteraction)
@@ -76,6 +60,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     }
 
     public func updateUIView(_ uiView: PKCanvasView, context: Context) {
+        context.coordinator.parent = self
         if uiView.drawing != drawing {
             uiView.drawing = drawing
         }
@@ -85,12 +70,32 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     private func applyTool(to canvasView: PKCanvasView) {
         switch toolSelection {
         case .pen(let color):
-            canvasView.tool = PKInkingTool(.pencil, color: color, width: 3.5)
+            let resolvedColor = resolveDynamicColor(color)
+            canvasView.tool = PKInkingTool(.pen, color: resolvedColor, width: penWidth)
         case .marker(let color):
-            canvasView.tool = PKInkingTool(.marker, color: color, width: 22.0)
+            canvasView.tool = PKInkingTool(.marker, color: color, width: max(16.0, penWidth * 4.0))
         case .eraser:
-            canvasView.tool = PKEraserTool(.vector)
+            // Standard-Pixelradierer (Bitmap) anstelle des Objektradierers (Vector)
+            canvasView.tool = PKEraserTool(.bitmap)
         }
+    }
+
+    /// Passt Schwarz & Weiß im Dark Mode automatisch an
+    private func resolveDynamicColor(_ color: UIColor) -> UIColor {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        color.getRed(&r, green: &g, blue: &b, alpha: &a)
+
+        let isBlack = (r < 0.05 && g < 0.05 && b < 0.05)
+        let isWhite = (r > 0.95 && g > 0.95 && b > 0.95)
+
+        if colorScheme == .dark {
+            if isBlack { return .white }
+            if isWhite { return .black }
+        } else {
+            if isWhite { return .white }
+            if isBlack { return .black }
+        }
+        return color
     }
 
     public class Coordinator: NSObject, PKCanvasViewDelegate, UIPencilInteractionDelegate {
@@ -138,7 +143,6 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             return nil
         }
 
-        // 12pt Rand um die Zeichnung herum hinzufügen
         let padding: CGFloat = 12
         let paddedRect = CGRect(
             x: max(0, bounds.origin.x - padding),

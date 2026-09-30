@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Kopfzeile des Stundenplans mit Wochen-Navigation, Untis-Status und Einstellungs-Button
+/// Kopfzeile des Stundenplans mit Wochen-Navigation, Live-Aktualisierungsanzeige und Einstellungs-Button
 public struct TimetableHeaderView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
 
@@ -10,82 +10,69 @@ public struct TimetableHeaderView: View {
         HStack(spacing: 16) {
             // App-Titel & Icon
             HStack(spacing: 8) {
-                Image(systemName: "calendar.badge.clock")
-                    .font(.system(size: 24, weight: .bold))
+                Image(systemName: "calendar")
+                    .font(.system(size: 20, weight: .regular, design: .default))
                     .foregroundColor(.blue)
 
                 Text("PlanApp")
-                    .font(.system(size: 22, weight: .heavy, design: .rounded))
+                    .font(.system(size: 20, weight: .regular, design: .default))
                     .foregroundColor(.primary)
             }
-            .hoverEffect(.lift)
 
             Spacer()
 
-            // WOCHENANZEIGE – Wechseln erfolgt ausschließlich per Wischgeste.
-            HStack(spacing: 8) {
-                VStack(spacing: 2) {
-                    Text(viewModel.selectedWeekStart.calendarWeekString)
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundColor(.primary)
+            // WOCHENANZEIGE
+            VStack(spacing: 2) {
+                Text(viewModel.selectedWeekStart.calendarWeekString)
+                    .font(.system(size: 15, weight: .regular, design: .default))
+                    .foregroundColor(.primary)
 
-                    Text(viewModel.selectedWeekStart.weekRangeString())
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 12)
-
+                Text(viewModel.selectedWeekStart.weekRangeString())
+                    .font(.system(size: 12, weight: .regular, design: .default))
+                    .foregroundColor(.secondary)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 16)
             .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color(UIColor.secondarySystemBackground).opacity(0.75))
-            )
+            .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.25)
 
             Spacer()
 
-            // RECHTE LEISTE (Sync & Einstellungen)
-            HStack(spacing: 10) {
-                // Untis Sync Button
-                if viewModel.untisCredentials.isConfigured {
-                    Button(action: {
-                        Task { await viewModel.syncWithUntis() }
-                    }) {
-                        HStack(spacing: 6) {
-                            if viewModel.isLoading {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .blue))
-                                    .scaleEffect(0.85)
-                            } else {
-                                Image(systemName: "arrow.triangle.2.circlepath")
-                                    .font(.system(size: 15, weight: .bold))
-                                    .foregroundColor(.blue)
-                            }
-                        }
-                        .frame(width: 40, height: 40)
-                        .background(Color(UIColor.secondarySystemFill))
-                        .clipShape(Circle())
+            // RECHTE LEISTE (Letzte Aktualisierung als kleiner grüner Text & Einstellungen)
+            HStack(spacing: 12) {
+                // Dynamischer grüner Aktualisierungstext
+                TimelineView(.periodic(from: .now, by: 1.0)) { timeline in
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(Color(red: 0.15, green: 0.75, blue: 0.35))
+                            .frame(width: 6, height: 6)
+
+                        Text(viewModel.relativeLastSyncString(relativeTo: timeline.date))
+                            .font(.system(size: 12, weight: .regular, design: .default))
+                            .foregroundColor(Color(red: 0.15, green: 0.75, blue: 0.35))
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    .hoverEffect(.lift)
-                    .disabled(viewModel.isLoading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(Color(red: 0.15, green: 0.75, blue: 0.35).opacity(0.12))
+                    )
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(Color(red: 0.15, green: 0.75, blue: 0.35).opacity(0.25), lineWidth: 1)
+                    )
                 }
 
-                // Einstellungs-Button (oben rechts)
+                // Einstellungs-Button
                 Button(action: { viewModel.isSettingsPresented = true }) {
-                    Image(systemName: "gearshape.fill")
-                        .font(.system(size: 18, weight: .semibold))
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 16, weight: .regular, design: .default))
                         .foregroundColor(.primary)
-                        .frame(width: 42, height: 42)
-                        .background(Color(UIColor.secondarySystemFill))
-                        .clipShape(Circle())
+                        .frame(width: 38, height: 38)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .hoverEffect(.lift)
+                .liquidGlassButton(cornerRadius: 19)
             }
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
     }
 }

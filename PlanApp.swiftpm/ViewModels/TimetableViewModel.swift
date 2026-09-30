@@ -15,6 +15,9 @@ public final class TimetableViewModel: ObservableObject {
     @Published public var untisCredentials: UntisCredentials = UntisCredentials()
     @Published public var lessonNotes: [String: LessonNote] = [:]
 
+    // Letzter Synchronisationszeitpunkt für die Statusanzeige
+    @Published public var lastSyncDate: Date? = Date()
+
     // Aktive Notiz-Ansicht (Zeichnen-Overlay)
     @Published public var activeNoteLesson: Lesson? = nil
     @Published public var isDrawingOverlayPresented: Bool = false
@@ -28,6 +31,7 @@ public final class TimetableViewModel: ObservableObject {
     @Published public private(set) var weekNavigationDirection: Int = 1
 
     private var activeSyncCount: Int = 0
+    private var autoRefreshTimer: AnyCancellable? = nil
     private let storage = TimetableStorageService.shared
     private let untis = WebUntisService.shared
     private let demo = DemoDataService.shared
@@ -37,6 +41,7 @@ public final class TimetableViewModel: ObservableObject {
     public init() {
         self.selectedWeekStart = Date().startOfWeek()
         loadInitialData()
+        setupAutoRefresh()
     }
 
     private func loadInitialData() {
@@ -46,12 +51,7 @@ public final class TimetableViewModel: ObservableObject {
         self.periods = storage.loadPeriods()
         self.lessons = storage.loadLessons()
         self.lessonNotes = storage.loadAllLessonNotes()
-
-        // Falls noch keine Fächer-Einstellungen vorhanden sind, Presets laden
-        if subjectCustomizations.isEmpty {
-            self.subjectCustomizations = SubjectCustomization.defaultPresets
-            storage.saveCustomizations(subjectCustomizations)
-        }
+        self.lastSyncDate = untisCredentials.lastSyncDate ?? Date()
 
         // Falls noch keine Perioden definiert sind, Standardraster laden
         if periods.isEmpty {
@@ -63,6 +63,39 @@ public final class TimetableViewModel: ObservableObject {
         if untisCredentials.isConfigured && untisCredentials.autoSyncOnLaunch {
             Task {
                 await syncWithUntis()
+            }
+        }
+    }
+
+    /// Richtet ein automatisches Aktualisierungsintervall alle 5 Minuten (300 Sekunden) ein
+    private func setupAutoRefresh() {
+        autoRefreshTimer = Timer.publish(every: 300, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                Task { @MainActor [weak self] in
+                    guard let self = self else { return }
+                    if self.untisCredentials.isConfigured {
+                        await self.syncWithUntis()
+                    }
+                }
+            }
+    }
+
+    /// Formatiert die Zeit seit der letzten Synchronisation dynamisch (Sekunden / Minuten)
+    public func relativeLastSyncString(relativeTo now: Date = Date()) -> String {
+        let date = lastSyncDate ?? untisCredentials.lastSyncDate ?? Date()
+        let seconds = max(0, Int(now.timeIntervalSince(date)))
+        if seconds < 5 {
+            return "Gerade eben"
+        } else if seconds < 60 {
+            return "Vor \(seconds) Sekunden"
+        } else {
+            let minutes = seconds / 60
+            if minutes == 1 {
+                return "Vor 1 Minute"
+            } else {
+                return "Vor \(minutes) Minuten"
             }
         }
     }
@@ -90,13 +123,11 @@ public final class TimetableViewModel: ObservableObject {
         selectWeek(previous)
     }
 
-    private func selectWeek(_ weekStart: Date) {
+    public func selectWeek(_ weekStart: Date) {
         let normalizedStart = weekStart.startOfWeek()
         guard normalizedStart != selectedWeekStart else { return }
         selectedWeekStart = normalizedStart
 
-        // Bisher wurde ausschließlich die beim manuellen Sync ausgewählte Woche
-        // geladen. Nun wird jede angeswipte Woche automatisch bei Untis angefragt.
         guard untisCredentials.isConfigured else { return }
         Task {
             await syncWeek(startingAt: normalizedStart, showsSuccessMessage: false)
@@ -177,7 +208,7 @@ public final class TimetableViewModel: ObservableObject {
 
     /// Öffnet die Zeichnen-Notiz-Ansicht für eine Stunde
     public func openNote(for lesson: Lesson) {
-        withAnimation(.spring(response: 0.48, dampingFraction: 0.84)) {
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
             self.activeNoteLesson = lesson
             self.isDrawingOverlayPresented = true
         }
@@ -231,6 +262,12 @@ public final class TimetableViewModel: ObservableObject {
         saveSubjectCustomizations()
     }
 
+    public func deleteAllCustomizations() {
+        subjectCustomizations.removeAll()
+        saveSubjectCustomizations()
+        self.successMessage = "Alle manuell eingestellten Fächer wurden gelöscht."
+    }
+
     public func saveDisplaySettings() {
         storage.saveDisplaySettings(displaySettings)
     }
@@ -246,7 +283,7 @@ public final class TimetableViewModel: ObservableObject {
     /// Liest alle Fächer aus dem aktuellen Stundenplan aus und fügt neue Fächer der Liste hinzu
     public func importDiscoveredSubjects() {
         var addedCount = 0
-        let existingOriginals = Set(subjectCustomizations.map { $0.originalSubject.lowercased() })
+        let existingOriginals = Set(subjectCustomizations.map { $0.originalSubject.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
 
         for lesson in lessons {
             let original = lesson.subjectRaw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -268,7 +305,9 @@ public final class TimetableViewModel: ObservableObject {
 
         saveSubjectCustomizations()
         if addedCount > 0 {
-            self.successMessage = "\(addedCount) neue Fächer aus Stundenplan importiert!"
+            self.successMessage = "\(addedCount) Fächer aus Stundenplan importiert!"
+        } else {
+            self.successMessage = "Keine neuen Fächer zum Importieren gefunden."
         }
     }
 
@@ -327,7 +366,9 @@ public final class TimetableViewModel: ObservableObject {
             self.lessons = updatedLessons
             storage.saveLessons(updatedLessons)
 
-            self.untisCredentials.lastSyncDate = Date()
+            let now = Date()
+            self.lastSyncDate = now
+            self.untisCredentials.lastSyncDate = now
             storage.saveCredentials(untisCredentials)
             await untis.logout(credentials: untisCredentials, sessionId: auth.sessionId)
 
@@ -350,6 +391,10 @@ public final class TimetableViewModel: ObservableObject {
 
         self.lessons = updated
         storage.saveLessons(updated)
+        let now = Date()
+        self.lastSyncDate = now
+        self.untisCredentials.lastSyncDate = now
+        storage.saveCredentials(untisCredentials)
         self.successMessage = "Beispiel-Stundenplan für die Woche geladen!"
     }
 

@@ -27,7 +27,7 @@ public struct ColorPickerPresets: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Fach-Farbe wählen:")
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 14, weight: .regular, design: .default))
                 .foregroundColor(.secondary)
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -41,15 +41,15 @@ public struct ColorPickerPresets: View {
                             ZStack {
                                 Circle()
                                     .fill(Color(hex: preset.hex))
-                                    .frame(width: 36, height: 36)
+                                    .frame(width: 34, height: 34)
                                     .shadow(color: Color(hex: preset.hex).opacity(0.35), radius: 4, x: 0, y: 2)
 
                                 if selectedHex.uppercased() == preset.hex.uppercased() {
                                     Circle()
-                                        .strokeBorder(Color.white, lineWidth: 3)
-                                        .frame(width: 36, height: 36)
+                                        .strokeBorder(Color.white, lineWidth: 2.5)
+                                        .frame(width: 34, height: 34)
                                     Image(systemName: "checkmark")
-                                        .font(.system(size: 13, weight: .bold))
+                                        .font(.system(size: 12, weight: .regular, design: .default))
                                         .foregroundColor(.white)
                                 }
                             }
@@ -64,7 +64,7 @@ public struct ColorPickerPresets: View {
                         set: { newColor in selectedHex = newColor.toHex() }
                     ), supportsOpacity: false)
                     .labelsHidden()
-                    .frame(width: 36, height: 36)
+                    .frame(width: 34, height: 34)
                     .hoverEffect(.lift)
                 }
                 .padding(.vertical, 4)

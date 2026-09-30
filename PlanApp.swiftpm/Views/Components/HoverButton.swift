@@ -5,9 +5,6 @@ public struct HoverButton<Content: View>: View {
     public let action: () -> Void
     public let content: () -> Content
 
-    @State private var isHovered: Bool = false
-    @State private var isPressed: Bool = false
-
     public init(action: @escaping () -> Void, @ViewBuilder content: @escaping () -> Content) {
         self.action = action
         self.content = content
@@ -23,7 +20,7 @@ public struct HoverButton<Content: View>: View {
     }
 }
 
-/// Stilvoller Kapsel-Button für Aktionen
+/// Stilvoller Liquid-Glass-Kapsel-Button für Aktionen
 public struct AccentPillButton: View {
     public let title: String
     public let icon: String?
@@ -42,17 +39,14 @@ public struct AccentPillButton: View {
             HStack(spacing: 6) {
                 if let icon = icon {
                     Image(systemName: icon)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 14, weight: .regular, design: .default))
                 }
                 Text(title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 14, weight: .regular, design: .default))
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .background(
-                Capsule()
-                    .fill(isSelected ? Color.blue : Color(UIColor.secondarySystemFill))
-            )
+            .liquidGlassButton(cornerRadius: 20, tint: isSelected ? Color.blue : nil, isFilled: isSelected)
             .foregroundColor(isSelected ? .white : .primary)
         }
         .buttonStyle(PlainButtonStyle())

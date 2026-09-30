@@ -55,7 +55,7 @@ public final class TimetableStorageService {
     public func loadCustomizations() -> [SubjectCustomization] {
         guard let data = defaults.data(forKey: Keys.customizations),
               let list = try? JSONDecoder().decode([SubjectCustomization].self, from: data) else {
-            return SubjectCustomization.defaultPresets
+            return []
         }
         return list
     }

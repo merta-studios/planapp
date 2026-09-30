@@ -39,13 +39,12 @@ public struct LessonBlockView: View {
                         )
                 )
                 .overlay(
-                    // Feiner subtiler Rahmen
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .strokeBorder(
                             lesson.isCancelled
                                 ? Color.red.opacity(0.6)
                                 : (lesson.isSubstitution ? Color.orange.opacity(0.8) : Color.white.opacity(0.2)),
-                            lineWidth: lesson.isCancelled || lesson.isSubstitution ? 2.0 : 1.0
+                            lineWidth: lesson.isCancelled || lesson.isSubstitution ? 1.5 : 1.0
                         )
                 )
                 .shadow(
@@ -59,10 +58,8 @@ public struct LessonBlockView: View {
             VStack(alignment: .leading, spacing: 4) {
                 // Obere Zeile: Fachname + Status-Badges
                 HStack(alignment: .top, spacing: 6) {
-                    // Der fette Fachname. Die Blockhöhe macht eine Doppelstunde
-                    // bereits eindeutig, daher ist kein zusätzlicher Text nötig.
                     Text(displayName)
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .font(.system(size: 15, weight: .regular, design: .default))
                         .foregroundColor(lesson.isCancelled ? .secondary : subjectColor.contrastingTextColor)
                         .strikethrough(lesson.isCancelled, color: .red)
                         .lineLimit(1)
@@ -77,7 +74,6 @@ public struct LessonBlockView: View {
                         } else if lesson.isSubstitution {
                             StatusBadge(.substitution)
                         }
-
                     }
                 }
 
@@ -85,35 +81,33 @@ public struct LessonBlockView: View {
                 HStack(spacing: 8) {
                     if settings.showTeacher && !lesson.teacherRaw.isEmpty {
                         HStack(spacing: 3) {
-                            Image(systemName: "person.fill")
-                                .font(.system(size: 10))
+                            Image(systemName: "person")
+                                .font(.system(size: 10, weight: .regular, design: .default))
                             if let orig = lesson.originalTeacher, lesson.isSubstitution {
                                 Text(orig)
                                     .strikethrough(true, color: .red)
                                 Text("➔ \(lesson.teacherRaw)")
-                                    .fontWeight(.bold)
                             } else {
                                 Text(lesson.teacherRaw)
                             }
                         }
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 12, weight: .regular, design: .default))
                         .foregroundColor(lesson.isCancelled ? .secondary : subjectColor.contrastingSecondaryTextColor)
                     }
 
                     if settings.showRoom && !lesson.roomRaw.isEmpty {
                         HStack(spacing: 3) {
                             Image(systemName: "mappin.and.ellipse")
-                                .font(.system(size: 10))
+                                .font(.system(size: 10, weight: .regular, design: .default))
                             if let orig = lesson.originalRoom, lesson.isSubstitution {
                                 Text(orig)
                                     .strikethrough(true, color: .red)
                                 Text("➔ \(lesson.roomRaw)")
-                                    .fontWeight(.bold)
                             } else {
                                 Text(lesson.roomRaw)
                             }
                         }
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 12, weight: .regular, design: .default))
                         .foregroundColor(lesson.isCancelled ? .secondary : subjectColor.contrastingSecondaryTextColor)
                     }
                 }
@@ -121,7 +115,7 @@ public struct LessonBlockView: View {
                 // Vertretungsnotiz / Grund
                 if settings.showSubstitutionDetails && !lesson.substitutionText.isEmpty {
                     Text(lesson.substitutionText)
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .font(.system(size: 11, weight: .regular, design: .default))
                         .foregroundColor(lesson.isCancelled ? .red.opacity(0.9) : subjectColor.contrastingTextColor)
                         .lineLimit(2)
                         .padding(.top, 1)
@@ -129,7 +123,7 @@ public struct LessonBlockView: View {
 
                 Spacer(minLength: 2)
 
-                // Handschriftliche Notiz-Vorschau (automatisch zugeschnitten)
+                // Handschriftliche Notiz-Vorschau
                 if settings.showNotesPreview, let imgData = note?.croppedImageData, let uiImg = UIImage(data: imgData) {
                     HStack {
                         Spacer()
@@ -137,25 +131,22 @@ public struct LessonBlockView: View {
                             .resizable()
                             .scaledToFit()
                             .frame(maxHeight: max(24, height * 0.42))
-                            // PNG wird transparent über dem Fach angezeigt – ohne
-                            // linierten oder papierfarbenen Notizzettel.
                         Spacer()
                     }
                     .padding(.bottom, 2)
                 }
             }
-            .padding(9)
+            .padding(8)
         }
         .frame(height: height)
         .matchedGeometryEffect(
-            id: "note_\(lesson.noteKey)",
+            id: "lesson_card_\(lesson.noteKey)",
             in: noteNamespace,
             properties: .frame,
             anchor: .center,
             isSource: true
         )
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        // Apple Pencil Hover Unterstützung
         .hoverEffect(.lift)
         // Zoom-Geste mit zwei Fingern öffnet Notiz-Bereich
         .simultaneousGesture(
