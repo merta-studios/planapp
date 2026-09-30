@@ -19,6 +19,12 @@ public struct DrawingToolbarView: View {
     public let onUndo: () -> Void
     public let onRedo: () -> Void
     public let onClear: () -> Void
+    /// Ob gerade ein Textfeld der Notiz ausgewählt ist. In dem Fall wirkt ein
+    /// Tipp auf einen Farbfeld-Button auf die Textfarbe des ausgewählten
+    /// Felds statt auf das Zeichenwerkzeug.
+    public let isTextBoxSelected: Bool
+    /// Übernimmt eine Farbe (Hex-String) als Textfarbe des ausgewählten Textfelds.
+    public let onApplyTextBoxColor: ((String) -> Void)?
 
     @State private var showThicknessSlider = false
     @State private var showClearConfirmation = false
@@ -43,7 +49,9 @@ public struct DrawingToolbarView: View {
         onConvertHandwriting: @escaping () -> Void = {},
         onUndo: @escaping () -> Void,
         onRedo: @escaping () -> Void,
-        onClear: @escaping () -> Void
+        onClear: @escaping () -> Void,
+        isTextBoxSelected: Bool = false,
+        onApplyTextBoxColor: ((String) -> Void)? = nil
     ) {
         _toolSelection = toolSelection
         _penWidth = penWidth
@@ -58,6 +66,8 @@ public struct DrawingToolbarView: View {
         self.onUndo = onUndo
         self.onRedo = onRedo
         self.onClear = onClear
+        self.isTextBoxSelected = isTextBoxSelected
+        self.onApplyTextBoxColor = onApplyTextBoxColor
     }
 
     public var body: some View {
@@ -67,10 +77,13 @@ public struct DrawingToolbarView: View {
                 toolbarDivider
                 markerControls
                 toolbarDivider
+                // Nach dem Textmarker: Text-Werkzeug (Aa), Radierer, Lasso,
+                // Trennlinie, Dicke, Trennlinie, Rückgängig/Wiederholen, Mehr.
                 textToolButton
-                thicknessButton
                 eraserButton
                 lassoButton
+                toolbarDivider
+                thicknessButton
                 toolbarDivider
                 historyControls
                 toolbarDivider
@@ -124,7 +137,12 @@ public struct DrawingToolbarView: View {
                 let swatch = Color(hex: hex)
 
                 Button {
-                    if isSelected {
+                    if isTextBoxSelected, let onApplyTextBoxColor {
+                        // Farbe wirkt direkt auf das ausgewählte Textfeld
+                        // statt das Zeichenwerkzeug zu wechseln.
+                        Haptics.select()
+                        onApplyTextBoxColor(hex)
+                    } else if isSelected {
                         Haptics.tap()
                         editingMarkerSlotIndex = nil
                         editingPenSlotIndex = index
@@ -159,6 +177,7 @@ public struct DrawingToolbarView: View {
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.lift)
+                .pencilHoverFeedback()
                 .accessibilityLabel("Stift Slot \(index + 1)")
                 .accessibilityValue(isSelected ? "Ausgewählt" : "")
                 .popover(
@@ -212,7 +231,12 @@ public struct DrawingToolbarView: View {
                 let swatch = Color(hex: hex)
 
                 Button {
-                    if isSelected {
+                    if isTextBoxSelected, let onApplyTextBoxColor {
+                        // Auch Textmarker-Farben färben das ausgewählte
+                        // Textfeld – als satte, deckende Textfarbe.
+                        Haptics.select()
+                        onApplyTextBoxColor(hex)
+                    } else if isSelected {
                         Haptics.tap()
                         editingPenSlotIndex = nil
                         editingMarkerSlotIndex = index
@@ -239,6 +263,7 @@ public struct DrawingToolbarView: View {
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.lift)
+                .pencilHoverFeedback()
                 .accessibilityLabel("Textmarker Slot \(index + 1)")
                 .accessibilityValue(isSelected ? "Ausgewählt" : "")
                 .popover(
@@ -294,6 +319,8 @@ public struct DrawingToolbarView: View {
 
     // MARK: - Text-Werkzeug
 
+    /// Nur noch ein Icon-Button mit dem klassischen „Aa"-Symbol – ohne
+    /// Text-Label, passend zu Radierer und Lasso daneben.
     private var textToolButton: some View {
         let isSelected: Bool = {
             if case .text = toolSelection { return true }
@@ -304,20 +331,16 @@ public struct DrawingToolbarView: View {
             Haptics.select()
             toolSelection = .text
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "textformat")
-                    .font(.system(size: 15, weight: .semibold))
-                Text("Text")
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .padding(.horizontal, 12)
-            .frame(height: buttonSize)
-            .background(isSelected ? Color.blue : Color(UIColor.tertiarySystemBackground).opacity(0.72))
-            .foregroundColor(isSelected ? .white : .primary)
-            .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
+            Image(systemName: "textformat")
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: buttonSize, height: buttonSize)
+                .background(isSelected ? Color.blue : Color(UIColor.tertiarySystemBackground).opacity(0.72))
+                .foregroundColor(isSelected ? .white : .primary)
+                .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
+        .pencilHoverFeedback()
         .accessibilityLabel("Text-Werkzeug")
         .accessibilityValue(isSelected ? "Ausgewählt" : "")
     }
@@ -348,6 +371,7 @@ public struct DrawingToolbarView: View {
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
+        .pencilHoverFeedback()
         .accessibilityLabel("Strichstärke")
         // Öffnet sich nach UNTEN, weil über der Leiste kein Platz ist.
         .popover(isPresented: $showThicknessSlider, arrowEdge: .top) {
@@ -448,6 +472,7 @@ public struct DrawingToolbarView: View {
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
+        .pencilHoverFeedback()
         .accessibilityLabel("Radierer")
         .accessibilityValue(isSelected ? "Ausgewählt" : "")
     }
@@ -471,6 +496,7 @@ public struct DrawingToolbarView: View {
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
+        .pencilHoverFeedback()
         .accessibilityLabel("Lasso-Werkzeug")
         .accessibilityValue(isSelected ? "Ausgewählt" : "")
     }
@@ -534,6 +560,7 @@ public struct DrawingToolbarView: View {
                 .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
         }
         .hoverEffect(.lift)
+        .pencilHoverFeedback()
         .accessibilityLabel("Mehr Optionen")
         .confirmationDialog(
             "Seite wirklich leeren?",
@@ -571,6 +598,7 @@ public struct DrawingToolbarView: View {
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
+        .pencilHoverFeedback()
         .accessibilityLabel(accessibilityLabel)
     }
 }

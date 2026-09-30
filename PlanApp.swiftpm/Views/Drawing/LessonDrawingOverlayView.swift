@@ -454,7 +454,11 @@ public struct LessonDrawingOverlayView: View {
                 onConvertHandwriting: { convertHandwritingToEditableText() },
                 onUndo: { performUndo() },
                 onRedo: { performRedo() },
-                onClear: { clearPage() }
+                onClear: { clearPage() },
+                isTextBoxSelected: selectedTextBoxID != nil,
+                onApplyTextBoxColor: { hex in
+                    applyColorToSelectedTextBox(hexColor: hex)
+                }
             )
             Spacer(minLength: 0)
         }
@@ -542,6 +546,27 @@ public struct LessonDrawingOverlayView: View {
                 editingTextBoxID = nil
             }
         }
+        // Kombinierte Aktionen („Handschrift in Text umwandeln", „Seite
+        // leeren") ändern Zeichnung UND Textfelder auf einmal – ihr Undo
+        // stellt beides gemeinsam wieder her.
+        textUndo.drawingSetter = { restoredDrawing in
+            replaceCanvasDrawing(restoredDrawing)
+        }
+    }
+
+    /// Ersetzt die Zeichnung programmatisch (Undo/Redo, Handschrift-
+    /// Umwandlung, Seite leeren).
+    ///
+    /// Der Undo-Stack der Canvas-View wird dabei bewusst geleert: Die alten
+    /// Strich-Aktionen gehören zu einer Zeichnung, die so nicht mehr
+    /// existiert, und würden sonst unvorhersehbar auf die neue Zeichnung
+    /// reagieren. Die Undo-Fähigkeit dieser Ersetzungen stellt stattdessen
+    /// der kombinierte Text-Undo-Stack bereit (`TextFieldUndoController`).
+    private func replaceCanvasDrawing(_ newDrawing: PKDrawing) {
+        canvasView?.drawing = newDrawing
+        canvasView?.undoManager?.removeAllActions()
+        drawing = newDrawing
+        lastStrokeMutation = Date()
     }
 
     private func performUndo() {
@@ -580,14 +605,26 @@ public struct LessonDrawingOverlayView: View {
 
     private func clearPage() {
         let beforeBoxes = textBoxes
+        let beforeDrawing = canvasView?.drawing ?? drawing
+        let hasContent = !beforeBoxes.isEmpty || !beforeDrawing.strokes.isEmpty
+
         selectedTextBoxID = nil
         editingTextBoxID = nil
         textBoxes = []
-        textUndo.push(before: beforeBoxes, after: [])
 
         let emptyDrawing = PKDrawing()
-        drawing = emptyDrawing
-        canvasView?.drawing = emptyDrawing
+        replaceCanvasDrawing(emptyDrawing)
+
+        // Auch das Leeren der Seite ist als EIN kombinierter Schritt
+        // rückgängig machbar: Striche und Textfelder kommen zusammen zurück.
+        if hasContent {
+            textUndo.push(
+                before: beforeBoxes,
+                after: [],
+                drawingBefore: beforeDrawing,
+                drawingAfter: emptyDrawing
+            )
+        }
     }
 
     // MARK: - Handschrift in Text
@@ -643,6 +680,11 @@ public struct LessonDrawingOverlayView: View {
     }
 
     /// Ersetzt die erkannten Striche durch bearbeitbare Textfelder.
+    ///
+    /// Die komplette Aktion – Striche entfernen UND Textfelder einfügen –
+    /// wird als EIN kombinierter Undo-Schritt registriert: Einmal
+    /// Rückgängig stellt die Handschrift wieder her und entfernt die
+    /// erkannten Textfelder; Wiederholen führt die Umwandlung erneut aus.
     private func applyRecognizedTextBoxes(_ recognizedBoxes: [NoteTextBox]) {
         // Erst die Auswahl auflösen: So hängt kein Textfeld-Zustand mehr an
         // Elementen, die gleich ersetzt werden.
@@ -650,16 +692,40 @@ public struct LessonDrawingOverlayView: View {
         editingTextBoxID = nil
 
         let beforeBoxes = textBoxes
+        let beforeDrawing = canvasView?.drawing ?? drawing
+
         textBoxes.append(contentsOf: recognizedBoxes)
-        textUndo.push(before: beforeBoxes, after: textBoxes)
 
         let emptyDrawing = PKDrawing()
-        drawing = emptyDrawing
-        canvasView?.drawing = emptyDrawing
-        lastStrokeMutation = Date()
+        replaceCanvasDrawing(emptyDrawing)
+
+        textUndo.push(
+            before: beforeBoxes,
+            after: textBoxes,
+            drawingBefore: beforeDrawing,
+            drawingAfter: emptyDrawing
+        )
 
         toolSelection = .text
         Haptics.success()
+    }
+
+    /// Übernimmt eine aus der Werkzeugleiste gewählte Farbe als Textfarbe des
+    /// aktuell ausgewählten Textfelds. Der Wechsel ist rückgängig machbar.
+    private func applyColorToSelectedTextBox(hexColor: String) {
+        guard let selectedID = selectedTextBoxID,
+              let index = textBoxes.firstIndex(where: { $0.id == selectedID }) else {
+            return
+        }
+
+        let normalized = UIColor(hex: hexColor).toHex()
+        var updated = textBoxes[index]
+        guard updated.color != normalized else { return }
+        updated.color = normalized
+
+        let before = textBoxes
+        textBoxes[index] = updated
+        textUndo.push(before: before, after: textBoxes)
     }
 
     /// Größe der Zeichenfläche in Punkten – Basis für die Rückrechnung der
@@ -726,6 +792,8 @@ public struct LessonDrawingOverlayView: View {
 
     private func saveAndDismiss() {
         guard viewModel.isDrawingOverlayPresented else { return }
+
+        Haptics.tap()
 
         selectedTextBoxID = nil
         editingTextBoxID = nil

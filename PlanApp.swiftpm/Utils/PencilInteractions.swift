@@ -51,4 +51,34 @@ extension View {
     public func pencilInteractive(effect: HoverEffect = .lift) -> some View {
         self.modifier(PencilHoverModifier(effect: effect))
     }
+
+    /// Apple-Pencil-Pro-Haptik beim Hovern: löst einen leichten „Tick" im
+    /// Stift aus, sobald dieser über dem Element zu schweben beginnt –
+    /// genau einmal pro Hover-Bewegung, nicht während der gesamten Bewegung.
+    public func pencilHoverFeedback() -> some View {
+        modifier(PencilHoverFeedbackModifier())
+    }
+}
+
+/// ViewModifier für Apple-Pencil-Pro-Hover-Haptik. `onContinuousHover`
+/// meldet sowohl Stift- als auch Zeiger-Hover; das ausgelöste Canvas-
+/// Feedback entscheidet das System passend zum Eingabegerät.
+public struct PencilHoverFeedbackModifier: ViewModifier {
+    @State private var didFireFeedback = false
+
+    public init() {}
+
+    public func body(content: Content) -> some View {
+        content
+            .onContinuousHover { phase in
+                switch phase {
+                case .active:
+                    guard !didFireFeedback else { return }
+                    didFireFeedback = true
+                    Haptics.hover()
+                case .ended:
+                    didFireFeedback = false
+                }
+            }
+    }
 }
