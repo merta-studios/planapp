@@ -65,8 +65,8 @@ public struct TimetableHeaderView: View {
     }
 
     private var appLogoImage: UIImage? {
-        UIImage(named: "AppLogo", in: .module, compatibleWith: nil)
-            ?? UIImage(named: "AppLogo.png", in: .module, compatibleWith: nil)
+        UIImage(named: "AppLogo", in: Bundle.module, compatibleWith: nil)
+            ?? UIImage(named: "AppLogo.png", in: Bundle.module, compatibleWith: nil)
             ?? UIImage(named: "AppLogo")
             ?? UIImage(named: "AppLogo.png")
     }
