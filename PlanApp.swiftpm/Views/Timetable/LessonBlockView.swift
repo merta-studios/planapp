@@ -43,6 +43,8 @@ public struct LessonBlockView: View {
         let note = viewModel.noteFor(lesson: lesson)
         let hasVisibleNote = viewModel.hasVisibleNote(for: lesson)
         let settings = viewModel.displaySettings
+        let teacherDisplayName = viewModel.resolveTeacherName(lesson.teacherRaw)
+        let originalTeacherDisplayName = lesson.originalTeacher.map { viewModel.resolveTeacherName($0) }
         let isActive = viewModel.isDrawingOverlayPresented
             && viewModel.activeNoteLesson?.noteKey == lesson.noteKey
         let hasGradient = display.gradientEndColor != nil
@@ -125,13 +127,13 @@ public struct LessonBlockView: View {
                             HStack(spacing: 3) {
                                 Image(systemName: "person")
                                     .font(.system(size: 10, weight: .regular, design: .default))
-                                if let orig = lesson.originalTeacher, lesson.isSubstitution {
+                                if let orig = originalTeacherDisplayName, lesson.isSubstitution {
                                     Text(orig)
                                         .strikethrough(true, color: .red)
-                                    Text("➔ \(lesson.teacherRaw)")
+                                    Text("➔ \(teacherDisplayName)")
                                         .strikethrough(lesson.isCancelled, color: .red)
                                 } else {
-                                    Text(lesson.teacherRaw)
+                                    Text(teacherDisplayName)
                                         .strikethrough(lesson.isCancelled, color: .red)
                                 }
                             }

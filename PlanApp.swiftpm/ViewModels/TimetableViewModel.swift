@@ -27,6 +27,7 @@ public final class TimetableViewModel: ObservableObject {
     @Published public var periods: [Period] = []
     @Published public var lessons: [Lesson] = []
     @Published public var subjectCustomizations: [SubjectCustomization] = []
+    @Published public var teacherNameCustomizations: [TeacherNameCustomization] = []
     @Published public var displaySettings: BlockDisplaySettings = .default
     @Published public var drawingSettings: DrawingSettings = .default
     @Published public var untisCredentials: UntisCredentials = UntisCredentials()
@@ -77,6 +78,7 @@ public final class TimetableViewModel: ObservableObject {
     private func loadInitialData() {
         self.untisCredentials = storage.loadCredentials()
         self.subjectCustomizations = storage.loadCustomizations()
+        self.teacherNameCustomizations = storage.loadTeacherNameCustomizations()
         self.displaySettings = storage.loadDisplaySettings()
         self.drawingSettings = storage.loadDrawingSettings()
         self.periods = storage.loadPeriods()
@@ -277,6 +279,31 @@ public final class TimetableViewModel: ObservableObject {
             color: Color(hex: colorHex).pastel,
             gradientEndColor: nil
         )
+    }
+
+    /// Ersetzt ein Lehrer-Kürzel durch den manuell hinterlegten Anzeigenamen.
+    /// Die Liste wird absichtlich nie automatisch gefüllt: Nur Einträge aus den
+    /// Einstellungen werden hier berücksichtigt.
+    public func resolveTeacherName(_ rawTeacher: String) -> String {
+        let trimmed = rawTeacher.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return trimmed }
+
+        let normalizedRaw = normalizedTeacherKey(trimmed)
+        guard let custom = teacherNameCustomizations.first(where: {
+            normalizedTeacherKey($0.systemAbbreviation) == normalizedRaw
+        }) else {
+            return trimmed
+        }
+
+        let displayName = custom.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return displayName.isEmpty ? trimmed : displayName
+    }
+
+    private func normalizedTeacherKey(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
     }
 
     // MARK: - Ansichts-Modus
@@ -508,6 +535,39 @@ public final class TimetableViewModel: ObservableObject {
         subjectCustomizations.removeAll()
         saveSubjectCustomizations()
         self.successMessage = "Alle manuell eingestellten Fächer wurden gelöscht."
+    }
+
+    public func saveTeacherNameCustomizations() {
+        storage.saveTeacherNameCustomizations(teacherNameCustomizations)
+    }
+
+    public func addOrUpdateTeacherNameCustomization(_ item: TeacherNameCustomization) {
+        let normalizedNew = normalizedTeacherKey(item.systemAbbreviation)
+        if let idx = teacherNameCustomizations.firstIndex(where: { $0.id == item.id }) {
+            teacherNameCustomizations[idx] = item
+        } else if let existingIndex = teacherNameCustomizations.firstIndex(where: {
+            normalizedTeacherKey($0.systemAbbreviation) == normalizedNew
+        }) {
+            teacherNameCustomizations[existingIndex] = TeacherNameCustomization(
+                id: teacherNameCustomizations[existingIndex].id,
+                systemAbbreviation: item.systemAbbreviation,
+                displayName: item.displayName
+            )
+        } else {
+            teacherNameCustomizations.append(item)
+        }
+        saveTeacherNameCustomizations()
+    }
+
+    public func deleteTeacherNameCustomization(id: UUID) {
+        teacherNameCustomizations.removeAll(where: { $0.id == id })
+        saveTeacherNameCustomizations()
+    }
+
+    public func deleteAllTeacherNameCustomizations() {
+        teacherNameCustomizations.removeAll()
+        saveTeacherNameCustomizations()
+        self.successMessage = "Alle manuell eingestellten Lehrer-Namen wurden gelöscht."
     }
 
     public func saveDisplaySettings() {

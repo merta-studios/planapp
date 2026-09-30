@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Persistent timetable header. Week, last refresh and settings always remain
 /// visible; only the decorative app title is removed on compact widths.
@@ -32,9 +33,7 @@ public struct TimetableHeaderView: View {
         let neonBlue = Color(red: 0.10, green: 0.75, blue: 1.0)
 
         return HStack(spacing: 8) {
-            Image(systemName: "calendar")
-                .font(.system(size: 19, weight: .medium))
-                .foregroundColor(.blue)
+            appLogo
             Text("Untis Planner")
                 .font(.system(size: 19, weight: .semibold))
                 .foregroundColor(.primary)
@@ -45,6 +44,31 @@ public struct TimetableHeaderView: View {
                 .shadow(color: neonBlue.opacity(0.55), radius: 12, x: 0, y: 0)
         }
         .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var appLogo: some View {
+        Group {
+            if let image = appLogoImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Image(systemName: "calendar")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundColor(.blue)
+            }
+        }
+        .frame(width: 26, height: 26)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .accessibilityLabel("App-Logo")
+    }
+
+    private var appLogoImage: UIImage? {
+        UIImage(named: "AppLogo", in: .module, compatibleWith: nil)
+            ?? UIImage(named: "AppLogo.png", in: .module, compatibleWith: nil)
+            ?? UIImage(named: "AppLogo")
+            ?? UIImage(named: "AppLogo.png")
     }
 
     /// Button direkt neben dem Titel: zeigt den aktuellen Ansichts-Modus und
@@ -147,6 +171,7 @@ public struct TimetableHeaderView: View {
         let showsJumpButton = !viewModel.isViewingRelevantCurrentWeek(relativeTo: date)
 
         return HStack(spacing: 8) {
+            appLogo
             compactViewModeMenu
 
             weekCard

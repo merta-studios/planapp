@@ -545,10 +545,14 @@ public struct DrawingToolbarView: View {
                     Haptics.tap()
                     onCopyTextToClipboard()
                 } label: {
-                    Label("Als Text in die Zwischenablage kopieren", systemImage: "doc.on.clipboard")
+                    Label(
+                        isConvertingHandwriting ? "Text wird erkannt …" : "Als Text kopieren",
+                        systemImage: "doc.on.clipboard"
+                    )
                 }
+                .disabled(isConvertingHandwriting)
             } label: {
-                Label("Teilen", systemImage: "square.and.arrow.up")
+                Label("Export", systemImage: "square.and.arrow.up")
             }
 
             Menu {

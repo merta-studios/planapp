@@ -21,16 +21,19 @@ public struct SettingsView: View {
                         // 2. Fächer, Farben & Namen
                         SubjectCustomizationSection()
 
-                        // 3. Block-Inhalte anpassen
+                        // 3. Lehrer-Namen
+                        TeacherCustomizationSection()
+
+                        // 4. Block-Inhalte anpassen
                         BlockDisplaySettingsSection()
 
-                        // 4. Zeichenfläche & Notizen
+                        // 5. Zeichenfläche & Notizen
                         DrawingSettingsSection()
 
-                        // 5. Stundenraster & Zeiten
+                        // 6. Stundenraster & Zeiten
                         PeriodConfigSection()
 
-                        // 6. Apple Pencil Pro & Bedienungshinweise
+                        // 7. Apple Pencil Pro & Bedienungshinweise
                         VStack(alignment: .leading, spacing: 14) {
                             HStack(spacing: 8) {
                                 Image(systemName: "pencil.and.scribble")
@@ -88,7 +91,7 @@ public struct SettingsView: View {
                         .padding(16)
                         .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
 
-                        // 7. Stundenplan leeren (Zurücksetzen)
+                        // 8. Stundenplan leeren (Zurücksetzen)
                         Button(action: {
                             Haptics.warning()
                             viewModel.clearTimetable()
@@ -109,6 +112,7 @@ public struct SettingsView: View {
                     .padding(.horizontal, 20)
                     .padding(.vertical, 16)
                 }
+                .scrollDismissesKeyboard(.never)
             }
             .navigationTitle("Einstellungen")
             .navigationBarTitleDisplayMode(.inline)
