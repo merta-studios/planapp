@@ -64,11 +64,17 @@ public struct TimetableHeaderView: View {
         .accessibilityLabel("App-Logo")
     }
 
+    /// Das Logo wird genau einmal geladen und danach zwischengespeichert.
+    /// Der Header rendert sich durch seine `TimelineView` jede Sekunde neu –
+    /// eine Bildsuche pro Render wäre unnötige Arbeit.
+    ///
+    /// Die Auflösung übernimmt `AppResources`, weil `Bundle.module` in einer
+    /// Swift-Playgrounds-App nicht existiert (dort wird der SwiftPM-Accessor
+    /// `resource_bundle_accessor.swift` nicht generiert).
+    private static let cachedAppLogoImage: UIImage? = AppResources.image(named: "AppLogo")
+
     private var appLogoImage: UIImage? {
-        UIImage(named: "AppLogo", in: Bundle.module, compatibleWith: nil)
-            ?? UIImage(named: "AppLogo.png", in: Bundle.module, compatibleWith: nil)
-            ?? UIImage(named: "AppLogo")
-            ?? UIImage(named: "AppLogo.png")
+        Self.cachedAppLogoImage
     }
 
     /// Button direkt neben dem Titel: zeigt den aktuellen Ansichts-Modus und
