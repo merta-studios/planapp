@@ -15,6 +15,7 @@ public final class TimetableStorageService {
         static let lessons = "planapp_lessons"
         static let notesMetadata = "planapp_notes_metadata"
         static let drawingSettings = "planapp_drawing_settings"
+        static let viewMode = "planapp_timetable_view_mode"
     }
 
     private var documentsDirectory: URL {
@@ -91,6 +92,20 @@ public final class TimetableStorageService {
             return DrawingSettings.default
         }
         return settings
+    }
+
+    // MARK: - Ansichts-Modus
+
+    public func saveViewMode(_ mode: TimetableViewMode) {
+        defaults.set(mode.rawValue, forKey: Keys.viewMode)
+    }
+
+    public func loadViewMode() -> TimetableViewMode {
+        guard let raw = defaults.string(forKey: Keys.viewMode),
+              let mode = TimetableViewMode(rawValue: raw) else {
+            return .fallback
+        }
+        return mode
     }
 
     // MARK: - Periods

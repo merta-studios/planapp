@@ -44,6 +44,16 @@ public struct LessonDrawingOverlayView: View {
     // Textfelder (Text-Werkzeug)
     @State private var textBoxes: [NoteTextBox] = []
     @State private var selectedTextBoxID: UUID? = nil
+    /// Feld, das gerade wirklich bearbeitet wird (Tastatur offen). Im Gegensatz
+    /// zur reinen Auswahl (Verschiebe-Modus) sind hier Lösch-Kreuz und
+    /// Seiten-Griffe ausgeblendet.
+    @State private var editingTextBoxID: UUID? = nil
+
+    // Undo/Redo für Textfelder (kombiniert mit dem Canvas-Undo der Zeichnung).
+    @StateObject private var textUndo = TextFieldUndoController()
+    /// Zeitstempel der letzten Strich-Mutation im Canvas – entscheidet bei
+    /// kombiniertem Undo, welcher der beiden Stacks zuerst dran ist.
+    @State private var lastStrokeMutation: Date = .distantPast
 
     // Live transform state. Updates come incrementally from the UIKit canvas so
     // there is no jump when the fingers are released.
@@ -120,6 +130,7 @@ public struct LessonDrawingOverlayView: View {
                     .zIndex(20)
             }
             .onAppear {
+                configureTextUndo()
                 applyDrawingDefaults()
                 loadExistingNote()
                 heroSourceFrame = viewModel.activeNoteSourceFrame
@@ -151,7 +162,13 @@ public struct LessonDrawingOverlayView: View {
             }
             .onChange(of: isTextToolActive) { _, nowActive in
                 if !nowActive {
+                    // Werkzeugwechsel: Auswahl und Bearbeitung beenden; leere
+                    // Felder verschwinden dabei sofort.
                     selectedTextBoxID = nil
+                    editingTextBoxID = nil
+                    textBoxes = textBoxes.filter {
+                        !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    }
                 }
             }
         }
@@ -205,6 +222,12 @@ public struct LessonDrawingOverlayView: View {
                     },
                     onFingerPan: { delta in
                         applyFingerPan(delta, in: viewport)
+                    },
+                    onStrokeMutation: {
+                        lastStrokeMutation = Date()
+                    },
+                    onRequestUndo: {
+                        performUndo()
                     }
                 )
                 .frame(
@@ -216,15 +239,24 @@ public struct LessonDrawingOverlayView: View {
                 .allowsHitTesting(showsEditor)
 
                 // Frei bewegliche Textfelder über der Zeichenfläche.
-                NoteTextBoxesLayer(
-                    textBoxes: $textBoxes,
-                    selectedID: $selectedTextBoxID,
-                    isTextToolActive: isTextToolActive,
-                    areaSize: CGSize(
-                        width: paperWidth,
-                        height: max(180, canvasHeight - headerHeight)
+                // Der PencilFilteredHost lässt Apple-Pencil-Touches nur bei
+                // aktivem Text-Werkzeug durch – sonst zeichnet der Pencil
+                // einfach "über" die Textfelder. Finger dürfen immer.
+                PencilFilteredHost(pencilInteractionAllowed: isTextToolActive) {
+                    NoteTextBoxesLayer(
+                        textBoxes: $textBoxes,
+                        selectedID: $selectedTextBoxID,
+                        editingID: $editingTextBoxID,
+                        isTextToolActive: isTextToolActive,
+                        areaSize: CGSize(
+                            width: paperWidth,
+                            height: max(180, canvasHeight - headerHeight)
+                        ),
+                        registerUndo: { before, after in
+                            textUndo.push(before: before, after: after)
+                        }
                     )
-                )
+                }
                 .frame(
                     width: paperWidth,
                     height: max(180, canvasHeight - headerHeight),
@@ -291,44 +323,14 @@ public struct LessonDrawingOverlayView: View {
         display: SubjectDisplay,
         viewport: DrawingViewport
     ) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            // Farbiger Kreis mit der Fach-Farbe vor dem Fachnamen.
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [display.color, display.gradientEndColor ?? display.color],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .overlay(
-                    Circle().strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
-                )
-                .frame(width: 16, height: 16)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(display.name)
-                    .font(.system(size: 18, weight: .semibold, design: .default))
-                    .lineLimit(1)
-
-                if hasHeaderDetails {
-                    headerDetails
-                }
-            }
-
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("\(lesson.periodNumber). Stunde")
-                    .font(.system(size: 13, weight: .semibold, design: .default))
-                Text(headerDateText)
-                    .font(.system(size: 12, weight: .regular, design: .default))
-                    .opacity(0.78)
-            }
-            .lineLimit(1)
-        }
-        .foregroundColor(
-            isExpanded ? .primary : display.color.contrastingTextColor
+        // Dieselbe Kopfzeilen-Komponente wie in der "Nur Notizen"-Übersicht,
+        // damit die Titel dort exakt so aussehen wie über der Zeichenfläche.
+        NoteHeaderContent(
+            lesson: lesson,
+            display: display,
+            displaySettings: viewModel.displaySettings,
+            periods: viewModel.periods,
+            primaryColor: isExpanded ? .primary : display.color.contrastingTextColor
         )
         .padding(.horizontal, 20)
         .frame(width: paperWidth, height: headerHeight)
@@ -352,79 +354,6 @@ public struct LessonDrawingOverlayView: View {
                     headerDragStartOffset = offset
                 }
         )
-    }
-
-    /// Zusatz-Infos unter dem Fachnamen – exakt die Elemente, die auch im
-    /// Stundenplan-Block aktiviert sind (Lehrer, Raum, Klasse, Uhrzeiten).
-    private var hasHeaderDetails: Bool {
-        let settings = viewModel.displaySettings
-        return (settings.showTeacher && !lesson.teacherRaw.isEmpty)
-            || (settings.showRoom && !lesson.roomRaw.isEmpty)
-            || (settings.showKlasse && !lesson.klasseRaw.isEmpty)
-            || settings.showTimes
-    }
-
-    private var headerDetails: some View {
-        let settings = viewModel.displaySettings
-
-        return HStack(spacing: 10) {
-            if settings.showTeacher && !lesson.teacherRaw.isEmpty {
-                HStack(spacing: 3) {
-                    Image(systemName: "person")
-                        .font(.system(size: 10, weight: .regular, design: .default))
-                    if let orig = lesson.originalTeacher, lesson.isSubstitution {
-                        Text(orig)
-                            .strikethrough(true, color: .red)
-                        Text("➔ \(lesson.teacherRaw)")
-                    } else {
-                        Text(lesson.teacherRaw)
-                    }
-                }
-            }
-
-            if settings.showRoom && !lesson.roomRaw.isEmpty {
-                HStack(spacing: 3) {
-                    Image(systemName: "mappin.and.ellipse")
-                        .font(.system(size: 10, weight: .regular, design: .default))
-                    if let orig = lesson.originalRoom, lesson.isSubstitution {
-                        Text(orig)
-                            .strikethrough(true, color: .red)
-                        Text("➔ \(lesson.roomRaw)")
-                    } else {
-                        Text(lesson.roomRaw)
-                    }
-                }
-            }
-
-            if settings.showKlasse && !lesson.klasseRaw.isEmpty {
-                HStack(spacing: 3) {
-                    Image(systemName: "person.3")
-                        .font(.system(size: 10, weight: .regular, design: .default))
-                    Text(lesson.klasseRaw)
-                }
-            }
-
-            if settings.showTimes,
-               let period = viewModel.periods.first(where: { $0.periodNumber == lesson.periodNumber }) {
-                HStack(spacing: 3) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 10, weight: .regular, design: .default))
-                    Text("\(period.startTime) – \(period.endTime)")
-                }
-            }
-        }
-        .font(.system(size: 12, weight: .regular, design: .default))
-        .opacity(0.75)
-        .lineLimit(1)
-    }
-
-    /// Rechte Kopfzeile: relative Angabe wie "Morgen" oder "Nächste Woche
-    /// Montag" plus deutsches Datumsformat (z.B. "01.10.2026").
-    private var headerDateText: String {
-        guard let date = Date.fromYyyyMMdd(lesson.dateString) else {
-            return lesson.dateString
-        }
-        return "\(date.relativeDayDescription()) • \(date.germanDateString)"
     }
 
     private func resizeHandle(viewport: DrawingViewport) -> some View {
@@ -503,15 +432,9 @@ public struct LessonDrawingOverlayView: View {
                 penWidth: $penWidth,
                 markerWidth: $markerWidth,
                 eraserWidth: $eraserWidth,
-                onUndo: { canvasView?.undoManager?.undo() },
-                onRedo: { canvasView?.undoManager?.redo() },
-                onClear: {
-                    let emptyDrawing = PKDrawing()
-                    drawing = emptyDrawing
-                    canvasView?.drawing = emptyDrawing
-                    textBoxes = []
-                    selectedTextBoxID = nil
-                }
+                onUndo: { performUndo() },
+                onRedo: { performRedo() },
+                onClear: { clearPage() }
             )
             Spacer(minLength: 0)
         }
@@ -587,6 +510,75 @@ public struct LessonDrawingOverlayView: View {
         offset = clampedOffset(candidate, scale: scale, height: canvasHeight, in: viewport)
     }
 
+    // MARK: - Kombiniertes Undo/Redo (Zeichnung + Textfelder)
+
+    /// Verdrahtet den Textfeld-Undo-Controller einmalig mit dem echten
+    /// SwiftUI-State (Snapshot lesen/schreiben inkl. Auswahl-Korrektur).
+    private func configureTextUndo() {
+        textUndo.getter = { textBoxes }
+        textUndo.setter = { restored in
+            textBoxes = restored
+            if let sel = selectedTextBoxID, !restored.contains(where: { $0.id == sel }) {
+                selectedTextBoxID = nil
+            }
+            if let edit = editingTextBoxID, !restored.contains(where: { $0.id == edit }) {
+                editingTextBoxID = nil
+            }
+        }
+    }
+
+    /// Rückgängig: jeweils die jüngste der beiden Aktionen (letzter Strich im
+    /// Canvas vs. letzte Textfeld-Änderung) wird zuerst zurückgenommen.
+    private func performUndo() {
+        let canvasUndoManager = canvasView?.undoManager
+        let canvasCanUndo = canvasUndoManager?.canUndo ?? false
+        let textCanUndo = textUndo.canUndo
+
+        if textCanUndo && (!canvasCanUndo || textUndo.lastChangeDate > lastStrokeMutation) {
+            Haptics.tap()
+            textUndo.undo()
+        } else if canvasCanUndo {
+            Haptics.tap()
+            canvasUndoManager?.undo()
+        } else if textCanUndo {
+            Haptics.tap()
+            textUndo.undo()
+        }
+    }
+
+    /// Wiederholen: spiegelbildlich zu `performUndo`.
+    private func performRedo() {
+        let canvasUndoManager = canvasView?.undoManager
+        let canvasCanRedo = canvasUndoManager?.canRedo ?? false
+        let textCanRedo = textUndo.canRedo
+
+        if textCanRedo && (!canvasCanRedo || textUndo.lastChangeDate > lastStrokeMutation) {
+            Haptics.tap()
+            textUndo.redo()
+        } else if canvasCanRedo {
+            Haptics.tap()
+            canvasUndoManager?.redo()
+        } else if textCanRedo {
+            Haptics.tap()
+            textUndo.redo()
+        }
+    }
+
+    /// "Seite leeren": Zeichnung UND Textfelder entfernen. Die Textfelder
+    /// bekommen einen eigenen Undo-Eintrag, der Canvas registriert den
+    /// Zeichnungs-Reset in seinem Stack.
+    private func clearPage() {
+        let beforeBoxes = textBoxes
+        selectedTextBoxID = nil
+        editingTextBoxID = nil
+        textBoxes = []
+        textUndo.push(before: beforeBoxes, after: [])
+
+        let emptyDrawing = PKDrawing()
+        drawing = emptyDrawing
+        canvasView?.drawing = emptyDrawing
+    }
+
     // MARK: - Persistence and transition
 
     /// Übernimmt Standard-Werkzeug, Standard-Farbe, Standard-Dicken und die
@@ -633,16 +625,29 @@ public struct LessonDrawingOverlayView: View {
         guard viewModel.isDrawingOverlayPresented else { return }
 
         selectedTextBoxID = nil
+        editingTextBoxID = nil
 
+        // Über den Rand hinaus gezeichnete Strich-Anteile werden hier wirklich
+        // aus dem gespeicherten Datenmodell entfernt – nicht nur optisch.
         let currentDrawing = canvasView?.drawing ?? drawing
+        let canvasRect = CGRect(
+            origin: .zero,
+            size: canvasView?.bounds.size ?? CGSize(
+                width: paperWidth,
+                height: max(180, canvasHeight - headerHeight)
+            )
+        )
+        let croppedDrawing = currentDrawing.cropped(to: canvasRect)
+
         let cleanedTextBoxes = textBoxes.filter {
             !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         let croppedImage = PencilKitCanvasRepresentable.renderNotePreview(
-            drawing: currentDrawing,
-            textBoxes: cleanedTextBoxes
+            drawing: croppedDrawing,
+            textBoxes: cleanedTextBoxes,
+            clipRect: canvasRect
         )
-        let drawingData = currentDrawing.dataRepresentation()
+        let drawingData = croppedDrawing.dataRepresentation()
         let calculatedLines = max(3, min(10, Int((canvasHeight - headerHeight) / 56)))
 
         withAnimation(.easeOut(duration: 0.12)) {

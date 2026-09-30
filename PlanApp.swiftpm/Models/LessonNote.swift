@@ -30,4 +30,13 @@ public struct LessonNote: Identifiable, Codable, Equatable {
     public var hasDrawing: Bool {
         return (croppedImageData != nil && !drawingData.isEmpty) || !textBoxes.isEmpty
     }
+
+    /// Prüft, ob die Notiz sichtbaren Inhalt hat (Striche, Textfelder oder ein
+    /// bereits gerendertes Vorschaubild). Wird für die Ansichtsmodi
+    /// "Notizen hervorgehoben" und "Nur Notizen" sowie die Vorschau genutzt.
+    public var hasVisibleContent: Bool {
+        if croppedImageData != nil { return true }
+        if textBoxes.contains(where: { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) { return true }
+        return !drawingData.isEmpty
+    }
 }

@@ -14,11 +14,24 @@ public struct LessonBlockView: View {
     /// live nachgeführt, damit die Zoom-Animation der Zeichenfläche exakt aus
     /// der Position und Größe dieser Karte heraus starten kann.
     @State private var globalFrame: CGRect = .zero
+    /// Gemessene Höhe des Text-Bereichs (Titelzeile + Zusatzinfos). Die
+    /// Notiz-Vorschau darf sich bis knapp an diesen Text heran vergrößern.
+    @State private var textContentHeight: CGFloat = 26
 
     public init(lesson: Lesson, height: CGFloat, noteNamespace: Namespace.ID) {
         self.lesson = lesson
         self.height = height
         self.noteNamespace = noteNamespace
+    }
+
+    /// Modus "Notizen hervorgehoben": Blöcke ohne sichtbare Notiz werden stark
+    /// aufgehellt. Während eine Notiz geöffnet ist, nie aufhellen.
+    private var dimmedForNotesHighlight: Bool {
+        guard viewModel.viewMode == .notesHighlighted else { return false }
+        let isActive = viewModel.isDrawingOverlayPresented
+            && viewModel.activeNoteLesson?.noteKey == lesson.noteKey
+        guard !isActive else { return false }
+        return !(viewModel.noteFor(lesson: lesson)?.hasVisibleContent ?? false)
     }
 
     public var body: some View {
@@ -76,93 +89,124 @@ public struct LessonBlockView: View {
                 )
 
             // Block-Inhalte
-            VStack(alignment: .leading, spacing: 4) {
-                // Obere Zeile: Fachname + Status-Badges
-                HStack(alignment: .top, spacing: 6) {
-                    Text(displayName)
-                        .font(.system(size: 15, weight: .regular, design: .default))
-                        .foregroundColor(
-                            isActive
-                                ? .primary
-                                : (lesson.isCancelled ? .secondary : subjectColor.contrastingTextColor)
-                        )
-                        .strikethrough(lesson.isCancelled, color: .red)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+            VStack(alignment: .leading, spacing: 0) {
+                // Messbarer Text-Bereich: Die Notiz-Vorschau darf sich bis
+                // knapp an diesen Text heran vergrößern (nach oben links).
+                VStack(alignment: .leading, spacing: 4) {
+                    // Obere Zeile: Fachname + Status-Badges
+                    HStack(alignment: .top, spacing: 6) {
+                        Text(displayName)
+                            .font(.system(size: 15, weight: .regular, design: .default))
+                            .foregroundColor(
+                                isActive
+                                    ? .primary
+                                    : (lesson.isCancelled ? .secondary : subjectColor.contrastingTextColor)
+                            )
+                            .strikethrough(lesson.isCancelled, color: .red)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
 
-                    Spacer(minLength: 0)
+                        Spacer(minLength: 0)
 
-                    // Badges
-                    VStack(alignment: .trailing, spacing: 3) {
-                        if lesson.isCancelled {
-                            StatusBadge(.cancelled)
-                        } else if lesson.isSubstitution {
-                            StatusBadge(.substitution)
-                        }
-                    }
-                }
-
-                // Anpassbare Zusatz-Informationen (Lehrer, Raum, Details)
-                HStack(spacing: 8) {
-                    if settings.showTeacher && !lesson.teacherRaw.isEmpty {
-                        HStack(spacing: 3) {
-                            Image(systemName: "person")
-                                .font(.system(size: 10, weight: .regular, design: .default))
-                            if let orig = lesson.originalTeacher, lesson.isSubstitution {
-                                Text(orig)
-                                    .strikethrough(true, color: .red)
-                                Text("➔ \(lesson.teacherRaw)")
-                            } else {
-                                Text(lesson.teacherRaw)
+                        // Badges
+                        VStack(alignment: .trailing, spacing: 3) {
+                            if lesson.isCancelled {
+                                StatusBadge(.cancelled)
+                            } else if lesson.isSubstitution {
+                                StatusBadge(.substitution)
                             }
                         }
-                        .font(.system(size: 12, weight: .regular, design: .default))
-                        .foregroundColor(lesson.isCancelled ? .secondary : subjectColor.contrastingSecondaryTextColor)
                     }
 
-                    if settings.showRoom && !lesson.roomRaw.isEmpty {
-                        HStack(spacing: 3) {
-                            Image(systemName: "mappin.and.ellipse")
-                                .font(.system(size: 10, weight: .regular, design: .default))
-                            if let orig = lesson.originalRoom, lesson.isSubstitution {
-                                Text(orig)
-                                    .strikethrough(true, color: .red)
-                                Text("➔ \(lesson.roomRaw)")
-                            } else {
-                                Text(lesson.roomRaw)
+                    // Anpassbare Zusatz-Informationen (Lehrer, Raum, Details)
+                    HStack(spacing: 8) {
+                        if settings.showTeacher && !lesson.teacherRaw.isEmpty {
+                            HStack(spacing: 3) {
+                                Image(systemName: "person")
+                                    .font(.system(size: 10, weight: .regular, design: .default))
+                                if let orig = lesson.originalTeacher, lesson.isSubstitution {
+                                    Text(orig)
+                                        .strikethrough(true, color: .red)
+                                    Text("➔ \(lesson.teacherRaw)")
+                                } else {
+                                    Text(lesson.teacherRaw)
+                                }
                             }
+                            .font(.system(size: 12, weight: .regular, design: .default))
+                            .foregroundColor(lesson.isCancelled ? .secondary : subjectColor.contrastingSecondaryTextColor)
                         }
-                        .font(.system(size: 12, weight: .regular, design: .default))
-                        .foregroundColor(lesson.isCancelled ? .secondary : subjectColor.contrastingSecondaryTextColor)
+
+                        if settings.showRoom && !lesson.roomRaw.isEmpty {
+                            HStack(spacing: 3) {
+                                Image(systemName: "mappin.and.ellipse")
+                                    .font(.system(size: 10, weight: .regular, design: .default))
+                                if let orig = lesson.originalRoom, lesson.isSubstitution {
+                                    Text(orig)
+                                        .strikethrough(true, color: .red)
+                                    Text("➔ \(lesson.roomRaw)")
+                                } else {
+                                    Text(lesson.roomRaw)
+                                }
+                            }
+                            .font(.system(size: 12, weight: .regular, design: .default))
+                            .foregroundColor(lesson.isCancelled ? .secondary : subjectColor.contrastingSecondaryTextColor)
+                        }
+                    }
+
+                    // Vertretungsnotiz / Grund
+                    if settings.showSubstitutionDetails && !lesson.substitutionText.isEmpty {
+                        Text(lesson.substitutionText)
+                            .font(.system(size: 11, weight: .regular, design: .default))
+                            .foregroundColor(lesson.isCancelled ? .red.opacity(0.9) : subjectColor.contrastingTextColor)
+                            .lineLimit(2)
+                            .padding(.top, 1)
                     }
                 }
-
-                // Vertretungsnotiz / Grund
-                if settings.showSubstitutionDetails && !lesson.substitutionText.isEmpty {
-                    Text(lesson.substitutionText)
-                        .font(.system(size: 11, weight: .regular, design: .default))
-                        .foregroundColor(lesson.isCancelled ? .red.opacity(0.9) : subjectColor.contrastingTextColor)
-                        .lineLimit(2)
-                        .padding(.top, 1)
-                }
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear
+                            .onAppear { textContentHeight = proxy.size.height }
+                            .onChange(of: proxy.size.height) { _, newValue in
+                                textContentHeight = newValue
+                            }
+                    }
+                )
 
                 Spacer(minLength: 0)
             }
             .padding(8)
+            .opacity(dimmedForNotesHighlight ? 0.28 : 1)
         }
         .frame(height: height)
-        // Handschriftliche Notiz-Vorschau: Als Overlay unten rechts, damit sie
-        // auch in kleinen Blöcken sichtbar bleibt statt zu verschwinden.
+        // Modus "Notizen hervorgehoben": Blöcke ohne Notiz stark aufhellen,
+        // damit die Stunden mit Notizen sofort ins Auge springen.
+        .overlay {
+            if dimmedForNotesHighlight {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(UIColor.systemBackground).opacity(0.78))
+                    .allowsHitTesting(false)
+            }
+        }
+        // Handschriftliche Notiz-Vorschau: Als Overlay unten rechts. Sie wächst
+        // von unten rechts nach oben links, bis sie das Padding des Blocks oder
+        // den Text erreicht.
         .overlay(alignment: .bottomTrailing) {
             if settings.showNotesPreview,
                let imgData = note?.croppedImageData,
                let uiImg = UIImage(data: imgData) {
+                // Verfügbare Breite: komplette Blockbreite abzüglich der
+                // Paddings (Vorschau-Kasten + Blockrand).
+                let maxW = max(24, globalFrame.width - 16)
+                // Verfügbare Höhe: Blockhöhe abzüglich oberem Padding,
+                // gemessenem Text und etwas Abstand nach unten.
+                let maxH = max(18, height - 8 - textContentHeight - 8 - 11)
+
                 Image(uiImage: uiImg)
                     .resizable()
                     .scaledToFit()
                     .frame(
-                        maxWidth: 110,
-                        maxHeight: max(18, min(height * 0.45, height - 10))
+                        maxWidth: maxW,
+                        maxHeight: maxH
                     )
                     .padding(3)
                     .background(

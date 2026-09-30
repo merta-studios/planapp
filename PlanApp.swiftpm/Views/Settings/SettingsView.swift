@@ -78,7 +78,7 @@ public struct SettingsView: View {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text("Verschieben & Größe ändern")
                                             .font(.system(size: 14, weight: .regular, design: .default))
-                                        Text("Die Zeichenfläche lässt sich mit Fingern flüssig verschieben und über den runden Griff unten vergrößern oder verkleinern. Mit dem Text-Werkzeug erstellst du frei bewegliche Textfelder.")
+                                        Text("Die Zeichenfläche lässt sich mit Fingern flüssig verschieben und über den runden Griff unten vergrößern oder verkleinern. Textfelder: 1× tippen = auswählen & verschieben, 2× tippen = Text bearbeiten. Rückgängig/Wiederholen gilt auch für Textfelder.")
                                             .font(.system(size: 12, weight: .regular, design: .default))
                                             .foregroundColor(.secondary)
                                     }

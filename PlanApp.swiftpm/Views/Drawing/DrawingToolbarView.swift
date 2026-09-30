@@ -228,11 +228,13 @@ public struct DrawingToolbarView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous)
                     .fill(Color(UIColor.tertiarySystemBackground).opacity(0.72))
+                // Punkt 1:1 in pt – der Kreis zeigt exakt die Strichstärke,
+                // nur durch die Button-Größe nach oben begrenzt.
                 Circle()
                     .fill(Color.primary)
                     .frame(
-                        width: max(3, min(20, currentToolWidth * 0.9)),
-                        height: max(3, min(20, currentToolWidth * 0.9))
+                        width: max(3, min(24, currentToolWidth)),
+                        height: max(3, min(24, currentToolWidth))
                     )
             }
             .frame(width: buttonSize, height: buttonSize)
@@ -408,16 +410,19 @@ public struct DrawingToolbarView: View {
 }
 
 /// Großer, gut greifbarer Dicken-Regler, der sich UNTER dem Dicken-Knopf
-/// öffnet. Eine live aktualisierte Kreis-Vorschau zeigt exakt, wie dick der
-/// Strich des aktuellen Werkzeugs bei der gewählten Breite wäre.
+/// öffnet. Die Kreis-Vorschau hat exakt denselben Durchmesser in Punkten wie
+/// der später gezeichnete Strich (1 pt auf dem Schieberegler = 1 pt auf dem
+/// Display), nur gegen die Rahmengröße der Vorschaufläche geklemmt.
 private struct ThicknessSliderPanel: View {
     @Binding var width: CGFloat
     let range: ClosedRange<CGFloat>
     let previewColor: Color
     let title: String
 
+    /// Exakte Vorschau: 1:1 Punkte, lediglich nach oben durch die 76pt-Fläche
+    /// und nach unten durch die Lesbarkeit begrenzt.
     private var previewDiameter: CGFloat {
-        max(6, min(64, width * 1.4))
+        max(3, min(72, width))
     }
 
     var body: some View {

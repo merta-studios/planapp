@@ -110,8 +110,39 @@ public struct DayColumnView: View {
                             height: blockH,
                             noteNamespace: noteNamespace
                         )
-                            .padding(.horizontal, 3)
-                            .offset(y: yOffset)
+                        .padding(.horizontal, 3)
+                        .offset(y: yOffset)
+                    }
+                }
+
+                // Rote "Jetzt"-Markierung beim heutigen Tag: ein seitlicher
+                // Strich an der linken Kante von oben bis zur aktuellen
+                // Uhrzeit plus eine horizontale Linie quer durch die Spalte.
+                if isToday {
+                    TimelineView(.periodic(from: .now, by: 30)) { timeline in
+                        if let nowY = nowIndicatorOffsetY(at: timeline.date) {
+                            ZStack(alignment: .topLeading) {
+                                // Seitlicher Strich links vom Rand bis zur Uhrzeit.
+                                Rectangle()
+                                    .fill(Color.red.opacity(0.85))
+                                    .frame(width: 3, height: max(0, nowY))
+
+                                // Horizontale Linie quer durch die Spalte auf
+                                // Höhe der aktuellen Uhrzeit.
+                                Rectangle()
+                                    .fill(Color.red.opacity(0.9))
+                                    .frame(maxWidth: .infinity, height: 2)
+                                    .offset(y: max(0, nowY - 1))
+
+                                // Kleiner Punkt an der linken Ecke als Anker.
+                                Circle()
+                                    .fill(Color.red)
+                                    .frame(width: 7, height: 7)
+                                    .offset(x: -2, y: max(0, nowY - 3.5))
+                            }
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .allowsHitTesting(false)
+                        }
                     }
                 }
             }
@@ -129,6 +160,25 @@ public struct DayColumnView: View {
                 )
         )
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// Y-Position der aktuellen Uhrzeit im Stundenraster (nil außerhalb der
+    /// unterrichteten Zeit). Linear zwischen dem Beginn der ersten und dem
+    /// Ende der letzten Stunde gemappt.
+    private func nowIndicatorOffsetY(at date: Date) -> CGFloat? {
+        let sortedPeriods = viewModel.periods.sorted { $0.periodNumber < $1.periodNumber }
+        guard let first = sortedPeriods.first, let last = sortedPeriods.last else { return nil }
+
+        let components = Calendar.current.dateComponents([.hour, .minute, .second], from: date)
+        let minutes = (components.hour ?? 0) * 60 + (components.minute ?? 0)
+
+        let start = first.startMinutes
+        let end = last.endMinutes
+        guard end > start, minutes >= start, minutes <= end else { return nil }
+
+        let totalHeight = CGFloat(viewModel.periods.count) * rowHeight
+        let fraction = CGFloat(minutes - start) / CGFloat(end - start)
+        return max(0, min(totalHeight, fraction * totalHeight))
     }
 
     /// Berechnet die Graustufe für das linienlose Tabellenraster
