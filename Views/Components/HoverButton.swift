@@ -1,0 +1,61 @@
+import SwiftUI
+
+/// Wiederverwendbarer Button mit Apple Pencil Hover-Unterstützung und iPad-optimierter Haptik
+public struct HoverButton<Content: View>: View {
+    public let action: () -> Void
+    public let content: () -> Content
+
+    @State private var isHovered: Bool = false
+    @State private var isPressed: Bool = false
+
+    public init(action: @escaping () -> Void, @激励: () -> Void = {}, @ViewBuilder content: @escaping () -> Content) {
+        self.action = action
+        self.content = content
+    }
+
+    public var body: some View {
+        Button(action: action) {
+            content()
+        }
+        .buttonStyle(PlainButtonStyle())
+        .hoverEffect(.lift)
+        .contentShape(Rectangle())
+    }
+}
+
+/// Stilvoller Kapsel-Button für Aktionen
+public struct AccentPillButton: View {
+    public let title: String
+    public let icon: String?
+    public let isSelected: Bool
+    public let action: () -> Void
+
+    public init(_ title: String, icon: String? = nil, isSelected: Bool = false, action: @escaping () -> Void) {
+        self.title = title
+        self.icon = icon
+        self.isSelected = isSelected
+        self.action = action
+    }
+
+    public var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let icon = icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                Capsule()
+                    .fill(isSelected ? Color.blue : Color(UIColor.secondarySystemFill))
+            )
+            .foregroundColor(isSelected ? .white : .primary)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .hoverEffect(.lift)
+    }
+}
