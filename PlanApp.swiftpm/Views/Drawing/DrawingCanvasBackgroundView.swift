@@ -3,6 +3,7 @@ import UIKit
 
 /// Sichtbarer Papier-Hintergrund der Zeichenfläche.
 /// Die Linien/Punkte bleiben bewusst dezent grau, damit Stiftfarben darüber klar lesbar sind.
+/// Alle Maße stammen aus `NoteBackgroundMetrics`, damit die Notiz-Vorschau exakt gleich aussieht.
 public struct DrawingCanvasBackgroundView: View {
     public let style: NoteBackgroundStyle
 
@@ -32,13 +33,19 @@ private struct DrawingCanvasPattern: View {
     }
 
     private func drawPattern(_ style: NoteBackgroundStyle, in rect: CGRect, context: GraphicsContext) {
+        guard style != .blank else { return }
+
+        let spacing = NoteBackgroundMetrics.spacing(for: style)
+        guard spacing > 0 else { return }
+
+        let color = Color.gray.opacity(NoteBackgroundMetrics.opacity(for: style))
+
         switch style {
         case .blank:
             return
+
         case .dotted:
-            let spacing: CGFloat = 22
-            let dotRadius: CGFloat = 1.2
-            let color = Color.gray.opacity(0.30)
+            let dotRadius = NoteBackgroundMetrics.dotRadius
             var y = spacing
             while y < rect.height {
                 var x = spacing
@@ -54,8 +61,8 @@ private struct DrawingCanvasPattern: View {
                 }
                 y += spacing
             }
+
         case .lined:
-            let spacing: CGFloat = 28
             var path = Path()
             var y = spacing
             while y < rect.height {
@@ -63,9 +70,9 @@ private struct DrawingCanvasPattern: View {
                 path.addLine(to: CGPoint(x: rect.width, y: y))
                 y += spacing
             }
-            context.stroke(path, with: .color(Color.gray.opacity(0.26)), lineWidth: 1)
+            context.stroke(path, with: .color(color), lineWidth: NoteBackgroundMetrics.lineWidth)
+
         case .grid:
-            let spacing: CGFloat = 28
             var path = Path()
             var x = spacing
             while x < rect.width {
@@ -79,7 +86,7 @@ private struct DrawingCanvasPattern: View {
                 path.addLine(to: CGPoint(x: rect.width, y: y))
                 y += spacing
             }
-            context.stroke(path, with: .color(Color.gray.opacity(0.22)), lineWidth: 1)
+            context.stroke(path, with: .color(color), lineWidth: NoteBackgroundMetrics.lineWidth)
         }
     }
 }

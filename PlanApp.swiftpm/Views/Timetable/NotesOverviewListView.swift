@@ -312,16 +312,57 @@ public struct NotesOverviewListView: View {
 
     /// Eine Zeile: Titel exakt wie über der Zeichenfläche, darunter die Notiz.
     private func noteRow(entry: NotedLesson, compact: Bool) -> some View {
-        let display = viewModel.resolveSubjectDisplay(for: entry.lesson)
+        NoteOverviewCard(lesson: entry.lesson, note: entry.note, compact: compact)
+    }
+
+    /// Leerer Zustand, wenn es noch keine Notizen gibt.
+    private var emptyState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "note.text")
+                .font(.system(size: 44, weight: .regular, design: .default))
+                .foregroundColor(.blue.opacity(0.7))
+            Text("Keine Notizen vorhanden")
+                .font(.system(size: 19, weight: .semibold, design: .default))
+                .foregroundColor(.primary)
+            Text("Sobald du im Stundenplan Notizen zu Stunden hinzufügst, findest du sie hier chronologisch sortiert – vergangene oberhalb, kommende unterhalb der grünen Linie.")
+                .font(.system(size: 14, weight: .regular, design: .default))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 440)
+        }
+        .padding(28)
+    }
+}
+
+/// Eine Notiz-Karte in der Übersicht „Nur Notizen“.
+///
+/// Sie bietet exakt dieselben Optionen wie ein Stunden-Block im Stundenplan:
+/// - **Gedrückt halten** (Finger oder Apple Pencil) öffnet das Kontextmenü.
+/// - **Apple Pencil Pro**: beim Hovern über der Karte einmal *squeezen*
+///   (oder beim Pencil 2 doppeltippen) öffnet dieselben Optionen.
+/// - Antippen öffnet die Notiz direkt zum Bearbeiten.
+private struct NoteOverviewCard: View {
+    @EnvironmentObject private var viewModel: TimetableViewModel
+
+    let lesson: Lesson
+    let note: LessonNote
+    let compact: Bool
+
+    @State private var isHovered = false
+    @State private var showActions = false
+    @State private var showDeleteNoteConfirmation = false
+
+    var body: some View {
+        let display = viewModel.resolveSubjectDisplay(for: lesson)
         let hasGradient = display.gradientEndColor != nil
-        let backgroundColors = entry.lesson.isCancelled
+        let backgroundColors = lesson.isCancelled
             ? [Color.gray.opacity(0.35), Color.gray.opacity(0.45)]
             : [display.color, display.gradientEndColor ?? display.color.opacity(0.88)]
-        let textColor = entry.lesson.isCancelled ? Color.secondary : display.color.contrastingTextColor
+        let textColor = lesson.isCancelled ? Color.secondary : display.color.contrastingTextColor
 
         return VStack(alignment: .leading, spacing: compact ? 8 : 10) {
             NoteHeaderContent(
-                lesson: entry.lesson,
+                lesson: lesson,
                 display: display,
                 displaySettings: viewModel.displaySettings,
                 periods: viewModel.periods,
@@ -329,7 +370,7 @@ public struct NotesOverviewListView: View {
                 showsColorCircle: false
             )
 
-            noteContent(for: entry.note, compact: compact, textColor: textColor)
+            noteContent(textColor: textColor)
         }
         .padding(.horizontal, compact ? 11 : 14)
         .padding(.vertical, compact ? 8 : 10)
@@ -346,21 +387,112 @@ public struct NotesOverviewListView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.24), lineWidth: 1)
+                .strokeBorder(Color.white.opacity(isHovered ? 0.45 : 0.24), lineWidth: 1)
         )
-        .shadow(color: display.color.opacity(entry.lesson.isCancelled ? 0 : 0.18), radius: 6, x: 0, y: 2)
+        .shadow(
+            color: display.color.opacity(lesson.isCancelled ? 0 : (isHovered ? 0.30 : 0.18)),
+            radius: isHovered ? 10 : 6,
+            x: 0,
+            y: isHovered ? 4 : 2
+        )
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .hoverEffect(.lift)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(_):
+                isHovered = true
+            case .ended:
+                isHovered = false
+            }
+        }
+        // Apple Pencil Pro: Squeeze beim Hovern öffnet dieselben Optionen
+        // wie langes Drücken.
+        .background(
+            PencilSqueezeActionAttachment {
+                guard isHovered else { return }
+                Haptics.tap()
+                showActions = true
+            }
+        )
+        // Gedrückt halten (Finger oder Apple Pencil) → Kontextmenü.
+        .contextMenu {
+            noteActionButtons
+        }
+        .confirmationDialog(
+            "Optionen",
+            isPresented: $showActions,
+            titleVisibility: .visible
+        ) {
+            noteActionButtons
+            Button("Abbrechen", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "Notiz löschen?",
+            isPresented: $showDeleteNoteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Notiz löschen", role: .destructive) {
+                Haptics.warning()
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    viewModel.deleteNote(for: lesson)
+                }
+            }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text("Diese Notiz wird dauerhaft entfernt.")
+        }
         .onTapGesture {
-            Haptics.tap()
-            viewModel.openNote(for: entry.lesson, sourceFrame: .zero)
+            openNote()
         }
     }
+
+    // MARK: - Optionen
+
+    @ViewBuilder
+    private var noteActionButtons: some View {
+        Button {
+            openNote()
+        } label: {
+            Label("Notiz bearbeiten", systemImage: "square.and.pencil")
+        }
+
+        Button {
+            Haptics.tap()
+            Task {
+                await viewModel.openNoteForNextOccurrence(after: lesson)
+            }
+        } label: {
+            Label("Notiz für die nächste Stunde erstellen", systemImage: "calendar.badge.plus")
+        }
+
+        Button(role: .destructive) {
+            requestDeleteConfirmation()
+        } label: {
+            Label("Notiz löschen", systemImage: "trash")
+        }
+    }
+
+    private func openNote() {
+        Haptics.tap()
+        viewModel.openNote(for: lesson, sourceFrame: .zero)
+    }
+
+    private func requestDeleteConfirmation() {
+        Haptics.warning()
+        DispatchQueue.main.async {
+            showDeleteNoteConfirmation = true
+        }
+    }
+
+    // MARK: - Inhalt
 
     /// Die eigentliche Notiz: gerenderte Vorschau (Handschrift + Textfelder),
     /// mit Text-Fallback, falls kein Vorschaubild existiert.
     @ViewBuilder
-    private func noteContent(for note: LessonNote, compact: Bool, textColor: Color) -> some View {
+    private func noteContent(textColor: Color) -> some View {
         if let imageData = note.croppedImageData, let image = UIImage(data: imageData) {
             Image(uiImage: image)
                 .resizable()
@@ -390,23 +522,5 @@ public struct NotesOverviewListView: View {
                 }
             }
         }
-    }
-
-    /// Leerer Zustand, wenn es noch keine Notizen gibt.
-    private var emptyState: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "note.text")
-                .font(.system(size: 44, weight: .regular, design: .default))
-                .foregroundColor(.blue.opacity(0.7))
-            Text("Keine Notizen vorhanden")
-                .font(.system(size: 19, weight: .semibold, design: .default))
-                .foregroundColor(.primary)
-            Text("Sobald du im Stundenplan Notizen zu Stunden hinzufügst, findest du sie hier chronologisch sortiert – vergangene oberhalb, kommende unterhalb der grünen Linie.")
-                .font(.system(size: 14, weight: .regular, design: .default))
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 440)
-        }
-        .padding(28)
     }
 }
