@@ -72,17 +72,26 @@ public struct DayColumnView: View {
                 // Hintergrund-Zebra-Muster
                 VStack(spacing: 0) {
                     ForEach(0..<viewModel.periods.count, id: \.self) { rowIndex in
-                        Rectangle()
-                            .fill(cellBackgroundColor(column: columnIndex, row: rowIndex))
-                            .frame(height: rowHeight)
+                        ZStack {
+                            Rectangle()
+                                .fill(cellBackgroundColor(column: columnIndex, row: rowIndex))
+
+                            // The complete current-day column receives the blue
+                            // tint, while the zebra structure remains visible.
+                            if isToday {
+                                Rectangle()
+                                    .fill(Color.blue.opacity(rowIndex % 2 == 0 ? 0.10 : 0.14))
+                            }
+                        }
+                        .frame(height: rowHeight)
                     }
                 }
 
-                // Heutiger Tag: feiner vertikaler Akzentstreifen links
+                // Continuous accent from the header to the last period.
                 if isToday {
                     HStack {
                         Rectangle()
-                            .fill(Color.blue.opacity(0.35))
+                            .fill(Color.blue.opacity(0.48))
                             .frame(width: 3)
                         Spacer()
                     }
@@ -108,7 +117,18 @@ public struct DayColumnView: View {
             }
             .frame(height: CGFloat(viewModel.periods.count) * rowHeight)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(isToday ? Color.blue.opacity(0.08) : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(
+                    isToday ? Color.blue.opacity(0.38) : Color.clear,
+                    lineWidth: isToday ? 1.25 : 0
+                )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     /// Berechnet die Graustufe für das linienlose Tabellenraster

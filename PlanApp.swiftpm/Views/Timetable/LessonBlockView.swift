@@ -21,22 +21,31 @@ public struct LessonBlockView: View {
         let (displayName, _, subjectColor) = viewModel.resolveSubjectDisplay(for: lesson)
         let note = viewModel.noteFor(lesson: lesson)
         let settings = viewModel.displaySettings
+        let isActive = viewModel.isDrawingOverlayPresented
+            && viewModel.activeNoteLesson?.noteKey == lesson.noteKey
+        let cardColors: [Color] = {
+            if isActive {
+                return [
+                    Color(UIColor.systemGray4),
+                    Color(UIColor.systemGray3)
+                ]
+            }
+            if lesson.isCancelled {
+                return [Color.gray.opacity(0.35), Color.gray.opacity(0.45)]
+            }
+            return [subjectColor, subjectColor.opacity(0.88)]
+        }()
 
         ZStack(alignment: .topLeading) {
-            // Hintergrund mit Farbverlauf & Schattierung
+            // The active card turns grey before matched geometry grows and moves
+            // it into the center of the drawing overlay.
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(
-                    lesson.isCancelled
-                        ? LinearGradient(
-                            colors: [Color.gray.opacity(0.35), Color.gray.opacity(0.45)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                        : LinearGradient(
-                            colors: [subjectColor, subjectColor.opacity(0.88)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
+                    LinearGradient(
+                        colors: cardColors,
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -60,7 +69,11 @@ public struct LessonBlockView: View {
                 HStack(alignment: .top, spacing: 6) {
                     Text(displayName)
                         .font(.system(size: 15, weight: .regular, design: .default))
-                        .foregroundColor(lesson.isCancelled ? .secondary : subjectColor.contrastingTextColor)
+                        .foregroundColor(
+                            isActive
+                                ? .primary
+                                : (lesson.isCancelled ? .secondary : subjectColor.contrastingTextColor)
+                        )
                         .strikethrough(lesson.isCancelled, color: .red)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
