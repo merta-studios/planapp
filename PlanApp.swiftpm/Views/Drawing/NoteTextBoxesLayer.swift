@@ -17,8 +17,7 @@ func estimatedTextBoxHeight(_ box: NoteTextBox) -> CGFloat {
 /// Ebene über der PencilKit-Zeichenfläche, die frei bewegliche Textfelder
 /// verwaltet.
 ///
-/// Bedienung (Finger immer, Apple Pencil nur bei aktivem Text-Werkzeug –
-/// das stellt der umschließende `PencilFilteredHost` sicher):
+/// Bedienung:
 /// - Einmal tippen auf ein Feld: auswählen (verschiebbar, Breite ändern, löschen).
 /// - Doppeltippen auf ein Feld: Text wirklich bearbeiten (Tastatur erscheint,
 ///   Lösch-Kreuz und Seiten-Griffe verschwinden).
@@ -47,12 +46,9 @@ struct NoteTextBoxesLayer: View {
             if isTextToolActive || selectedID != nil || editingID != nil {
                 Color.clear
                     .contentShape(Rectangle())
-                    .gesture(
-                        SpatialTapGesture(coordinateSpace: .named("noteTextBoxesLayer"))
-                            .onEnded { value in
-                                handleBackgroundTap(at: value.location)
-                            }
-                    )
+                    .onTapGesture(coordinateSpace: .local) { location in
+                        handleBackgroundTap(at: location)
+                    }
             }
 
             ForEach($textBoxes) { $box in
@@ -91,7 +87,6 @@ struct NoteTextBoxesLayer: View {
             }
         }
         .frame(width: areaSize.width, height: areaSize.height, alignment: .topLeading)
-        .ignoresSafeArea()
         .coordinateSpace(name: "noteTextBoxesLayer")
         .clipped()
         .onChange(of: selectedID) { oldValue, newValue in

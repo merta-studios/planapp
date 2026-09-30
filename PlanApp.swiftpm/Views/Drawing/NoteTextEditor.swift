@@ -60,12 +60,9 @@ struct NoteTextEditor: UIViewRepresentable {
         }
 
         if isEditing, !uiView.isFirstResponder {
-            // Ein Runloop-Tick warten, damit die View sicher im Fenster hängt –
-            // dann erscheint die Tastatur garantiert.
             DispatchQueue.main.async {
-                if isEditing, !uiView.isFirstResponder {
-                    uiView.becomeFirstResponder()
-                }
+                guard isEditing, !uiView.isFirstResponder, uiView.window != nil else { return }
+                uiView.becomeFirstResponder()
             }
         } else if !isEditing, uiView.isFirstResponder {
             uiView.resignFirstResponder()

@@ -9,6 +9,8 @@ public struct DrawingToolbarView: View {
     @Binding public var penWidth: CGFloat
     @Binding public var markerWidth: CGFloat
     @Binding public var eraserWidth: CGFloat
+    @Binding public var penColorSlots: [String]
+    @Binding public var markerColorSlots: [String]
 
     public let onUndo: () -> Void
     public let onRedo: () -> Void
@@ -17,6 +19,8 @@ public struct DrawingToolbarView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var showThicknessSlider = false
     @State private var showClearConfirmation = false
+    @State private var editingPenSlotIndex: Int? = nil
+    @State private var editingMarkerSlotIndex: Int? = nil
 
     private let buttonSize: CGFloat = 40
     private let buttonCornerRadius: CGFloat = 10
@@ -26,6 +30,8 @@ public struct DrawingToolbarView: View {
         penWidth: Binding<CGFloat>,
         markerWidth: Binding<CGFloat>,
         eraserWidth: Binding<CGFloat>,
+        penColorSlots: Binding<[String]>,
+        markerColorSlots: Binding<[String]>,
         onUndo: @escaping () -> Void,
         onRedo: @escaping () -> Void,
         onClear: @escaping () -> Void
@@ -34,6 +40,8 @@ public struct DrawingToolbarView: View {
         _penWidth = penWidth
         _markerWidth = markerWidth
         _eraserWidth = eraserWidth
+        _penColorSlots = penColorSlots
+        _markerColorSlots = markerColorSlots
         self.onUndo = onUndo
         self.onRedo = onRedo
         self.onClear = onClear
@@ -89,23 +97,29 @@ public struct DrawingToolbarView: View {
                 .foregroundColor(.primary)
                 .accessibilityHidden(true)
 
-            ForEach(DrawingPalette.penColors, id: \.hex) { item in
+            ForEach(Array(penColorSlots.enumerated()), id: \.offset) { index, hex in
+                let slotColor = UIColor(hex: hex)
                 let isSelected: Bool = {
                     if case .pen(let selectedColor) = toolSelection {
-                        return selectedColor == item.uiColor
+                        return selectedColor.toHex().caseInsensitiveCompare(hex) == .orderedSame
                     }
                     return false
                 }()
                 let swatch: Color = {
-                    if item.hex == "#000000" {
-                        return colorScheme == .dark ? .white : .black
+                    if hex.caseInsensitiveCompare("#000000") == .orderedSame || hex.caseInsensitiveCompare("#1E1E1E") == .orderedSame {
+                        return colorScheme == .dark ? .white : Color(hex: hex)
                     }
-                    return Color(uiColor: item.uiColor)
+                    return Color(hex: hex)
                 }()
 
                 Button {
-                    Haptics.select()
-                    toolSelection = .pen(color: item.uiColor)
+                    if isSelected {
+                        Haptics.tap()
+                        editingPenSlotIndex = index
+                    } else {
+                        Haptics.select()
+                        toolSelection = .pen(color: slotColor)
+                    }
                 } label: {
                     ZStack {
                         RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous)
@@ -115,7 +129,12 @@ public struct DrawingToolbarView: View {
                             .fill(swatch)
                             .frame(width: 22, height: 22)
                             .overlay(
-                                Circle().strokeBorder(Color.white.opacity(0.4), lineWidth: 1)
+                                Circle().strokeBorder(
+                                    hex.caseInsensitiveCompare("#FFFFFF") == .orderedSame
+                                        ? Color.gray.opacity(0.4)
+                                        : Color.white.opacity(0.4),
+                                    lineWidth: 1
+                                )
                             )
 
                         if isSelected {
@@ -127,8 +146,31 @@ public struct DrawingToolbarView: View {
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.lift)
-                .accessibilityLabel("Stift \(item.name)")
+                .accessibilityLabel("Stift Slot \(index + 1)")
                 .accessibilityValue(isSelected ? "Ausgewählt" : "")
+                .popover(
+                    isPresented: Binding(
+                        get: { editingPenSlotIndex == index },
+                        set: { isPresented in
+                            if !isPresented && editingPenSlotIndex == index {
+                                editingPenSlotIndex = nil
+                            }
+                        }
+                    ),
+                    arrowEdge: .top
+                ) {
+                    DrawingColorPalettePopover(
+                        selectedHex: hex,
+                        onSelectColor: { newHex in
+                            if index < penColorSlots.count {
+                                penColorSlots[index] = newHex
+                            }
+                            toolSelection = .pen(color: UIColor(hex: newHex))
+                            editingPenSlotIndex = nil
+                        }
+                    )
+                    .presentationCompactAdaptation(.popover)
+                }
             }
         }
         .padding(.horizontal, 8)
@@ -146,18 +188,24 @@ public struct DrawingToolbarView: View {
                 .foregroundColor(.primary)
                 .accessibilityHidden(true)
 
-            ForEach(DrawingPalette.markerColors, id: \.hex) { item in
+            ForEach(Array(markerColorSlots.enumerated()), id: \.offset) { index, hex in
+                let slotColor = UIColor(hex: hex).withAlphaComponent(0.60)
                 let isSelected: Bool = {
                     if case .marker(let selectedColor) = toolSelection {
-                        return selectedColor == item.uiColor
+                        return selectedColor.toHex().caseInsensitiveCompare(hex) == .orderedSame
                     }
                     return false
                 }()
-                let swatch = Color(uiColor: item.uiColor.withAlphaComponent(1))
+                let swatch = Color(hex: hex)
 
                 Button {
-                    Haptics.select()
-                    toolSelection = .marker(color: item.uiColor)
+                    if isSelected {
+                        Haptics.tap()
+                        editingMarkerSlotIndex = index
+                    } else {
+                        Haptics.select()
+                        toolSelection = .marker(color: slotColor)
+                    }
                 } label: {
                     ZStack {
                         RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous)
@@ -176,8 +224,31 @@ public struct DrawingToolbarView: View {
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.lift)
-                .accessibilityLabel("Textmarker \(item.name)")
+                .accessibilityLabel("Textmarker Slot \(index + 1)")
                 .accessibilityValue(isSelected ? "Ausgewählt" : "")
+                .popover(
+                    isPresented: Binding(
+                        get: { editingMarkerSlotIndex == index },
+                        set: { isPresented in
+                            if !isPresented && editingMarkerSlotIndex == index {
+                                editingMarkerSlotIndex = nil
+                            }
+                        }
+                    ),
+                    arrowEdge: .top
+                ) {
+                    DrawingColorPalettePopover(
+                        selectedHex: hex,
+                        onSelectColor: { newHex in
+                            if index < markerColorSlots.count {
+                                markerColorSlots[index] = newHex
+                            }
+                            toolSelection = .marker(color: UIColor(hex: newHex).withAlphaComponent(0.60))
+                            editingMarkerSlotIndex = nil
+                        }
+                    )
+                    .presentationCompactAdaptation(.popover)
+                }
             }
         }
         .padding(.horizontal, 8)
@@ -449,8 +520,11 @@ private struct ThicknessSliderPanel: View {
                 .font(.system(size: 13, design: .monospaced))
                 .foregroundColor(.secondary)
         }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 22)
-        .frame(width: 320)
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(UIColor.secondarySystemBackground))
+        )
+        .fixedSize()
     }
 }

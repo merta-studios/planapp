@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Einstellungsbereich für die Zeichenfläche: Standard-Dicken, Standard-Größe,
-/// Standard-Werkzeug samt Farbe sowie das Verwalten aller Notizen.
+/// Einstellungsbereich für die Zeichenfläche: Standard-Dicken, Standard-Größe
+/// sowie das Verwalten aller Notizen.
 public struct DrawingSettingsSection: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
 
@@ -70,42 +70,7 @@ public struct DrawingSettingsSection: View {
             .padding(14)
             .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
 
-            // 3. STANDARD-WERKZEUG & FARBE
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    Image(systemName: "wrench.and.screwdriver")
-                        .font(.system(size: 14, weight: .regular, design: .default))
-                        .foregroundColor(.blue)
-                    Text("Standard-Werkzeug beim Öffnen")
-                        .font(.system(size: 14, weight: .regular, design: .default))
-                }
-
-                Picker("Standard-Werkzeug", selection: binding(\.defaultTool)) {
-                    ForEach(DefaultDrawingTool.allCases) { tool in
-                        Label(tool.displayName, systemImage: tool.systemImage)
-                            .tag(tool)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                if viewModel.drawingSettings.defaultTool == .pen {
-                    defaultColorRow(
-                        title: "Standard-Farbe Stift:",
-                        palette: DrawingPalette.penColors,
-                        selectedHex: binding(\.defaultPenColorHex)
-                    )
-                } else if viewModel.drawingSettings.defaultTool == .marker {
-                    defaultColorRow(
-                        title: "Standard-Farbe Textmarker:",
-                        palette: DrawingPalette.markerColors,
-                        selectedHex: binding(\.defaultMarkerColorHex)
-                    )
-                }
-            }
-            .padding(14)
-            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
-
-            // 4. AUTOMATISCHES AUFRÄUMEN & ALLES LÖSCHEN
+            // 3. AUTOMATISCHES AUFRÄUMEN & ALLES LÖSCHEN
             VStack(alignment: .leading, spacing: 12) {
                 Toggle(isOn: Binding(
                     get: { viewModel.drawingSettings.autoDeletePastNotes },
@@ -200,51 +165,6 @@ public struct DrawingSettingsSection: View {
             }
 
             Slider(value: value, in: range, step: 0.5)
-        }
-    }
-
-    private func defaultColorRow(
-        title: String,
-        palette: [DrawingPalette.PaletteColor],
-        selectedHex: Binding<String>
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.system(size: 13, weight: .regular, design: .default))
-                .foregroundColor(.secondary)
-
-            HStack(spacing: 12) {
-                ForEach(palette, id: \.hex) { item in
-                    let isSelected = selectedHex.wrappedValue.caseInsensitiveCompare(item.hex) == .orderedSame
-
-                    Button {
-                        Haptics.select()
-                        selectedHex.wrappedValue = item.hex
-                    } label: {
-                        ZStack {
-                            Circle()
-                                .fill(Color(uiColor: item.uiColor.withAlphaComponent(1)))
-                                .frame(width: 30, height: 30)
-                                .overlay(
-                                    Circle().strokeBorder(Color.primary.opacity(0.2), lineWidth: 1)
-                                )
-
-                            if isSelected {
-                                Circle()
-                                    .strokeBorder(Color.blue, lineWidth: 2.5)
-                                    .frame(width: 38, height: 38)
-                            }
-                        }
-                        .frame(width: 40, height: 40)
-                    }
-                    .buttonStyle(.plain)
-                    .hoverEffect(.lift)
-                    .accessibilityLabel(item.name)
-                    .accessibilityValue(isSelected ? "Ausgewählt" : "")
-                }
-
-                Spacer()
-            }
         }
     }
 }
