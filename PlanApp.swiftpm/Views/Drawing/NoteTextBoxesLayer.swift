@@ -352,6 +352,9 @@ private struct NoteTextBoxView: View {
 
     private let minWidth: CGFloat = 90
     private let margin: CGFloat = 6
+    /// Durchmesser der runden Schriftgrößen-Knöpfe (bewusst groß genug,
+    /// um sie auch mit dem Finger sicher zu treffen).
+    private let fontSizeButtonDiameter: CGFloat = 46
 
     private enum ResizeEdge {
         case leading
@@ -373,6 +376,11 @@ private struct NoteTextBoxView: View {
             x: CGFloat(box.x).isFinite ? CGFloat(box.x) : margin,
             y: CGFloat(box.y).isFinite ? CGFloat(box.y) : margin
         )
+    }
+
+    /// Textfarbe des Feldes (über die Farb-Slots der Werkzeugleiste änderbar).
+    private var boxTextUIColor: UIColor {
+        UIColor(hex: box.colorHex.isEmpty ? NoteTextBox.defaultColorHex : box.colorHex)
     }
 
     var body: some View {
@@ -422,7 +430,7 @@ private struct NoteTextBoxView: View {
             // Schriftgröße bleibt in beiden Modi verfügbar.
             if isSelected || isEditing {
                 fontSizeControls
-                    .offset(y: 34)
+                    .offset(y: fontSizeButtonDiameter + 8)
             }
         }
         .offset(x: boxOrigin.x, y: boxOrigin.y)
@@ -440,7 +448,7 @@ private struct NoteTextBoxView: View {
             .font(.system(size: boxFontSize))
             // Die Zeichenfläche ist immer weiß, auch wenn die App im Dark
             // Mode läuft. Deshalb kein dynamisches `.primary` verwenden.
-            .foregroundColor(trimmed.isEmpty ? .gray : .black)
+            .foregroundColor(trimmed.isEmpty ? .gray : Color(uiColor: boxTextUIColor))
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
             .frame(width: max(20, boxWidth - 16), alignment: .topLeading)
@@ -466,6 +474,7 @@ private struct NoteTextBoxView: View {
         NoteTextEditor(
             text: box.text,
             fontSize: boxFontSize,
+            textColor: boxTextUIColor,
             isEditing: isEditing,
             onChangeText: onChangeText,
             onEndEditing: onEndEditing
@@ -575,38 +584,75 @@ private struct NoteTextBoxView: View {
         .accessibilityLabel("Textfeld löschen")
     }
 
+    /// Große, runde Liquid-Glass-Knöpfe zum Ändern der Schriftgröße.
     private var fontSizeControls: some View {
-        HStack(spacing: 0) {
-            Button {
-                onChangeFontSize(-2)
-            } label: {
-                Image(systemName: "textformat.size.smaller")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 34, height: 30)
-            }
-            .buttonStyle(.plain)
-
-            Divider()
-                .frame(height: 18)
-
-            Button {
-                onChangeFontSize(2)
-            } label: {
-                Image(systemName: "textformat.size.larger")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 34, height: 30)
-            }
-            .buttonStyle(.plain)
+        HStack(spacing: 10) {
+            fontSizeButton(
+                systemName: "textformat.size.smaller",
+                accessibilityLabel: "Schrift kleiner",
+                delta: -2
+            )
+            fontSizeButton(
+                systemName: "textformat.size.larger",
+                accessibilityLabel: "Schrift größer",
+                delta: 2
+            )
         }
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.15), radius: 3, x: 0, y: 1)
-        .accessibilityLabel("Schriftgröße ändern")
+    }
+
+    private func fontSizeButton(
+        systemName: String,
+        accessibilityLabel: String,
+        delta: Double
+    ) -> some View {
+        Button {
+            onChangeFontSize(delta)
+        } label: {
+            Image(systemName: systemName)
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundColor(.primary)
+                .frame(width: fontSizeButtonDiameter, height: fontSizeButtonDiameter)
+                .background(
+                    ZStack {
+                        Circle()
+                            .fill(.ultraThinMaterial)
+                        // Leichte Glanzkante oben – der typische
+                        // „Flüssigglas“-Eindruck.
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.45),
+                                        Color.white.opacity(0.05)
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                            .blendMode(.plusLighter)
+                            .opacity(0.5)
+                    }
+                )
+                .overlay(
+                    Circle()
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.75),
+                                    Color.white.opacity(0.2)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1
+                        )
+                )
+                .clipShape(Circle())
+                .shadow(color: Color.black.opacity(0.2), radius: 6, x: 0, y: 3)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+        .accessibilityLabel(accessibilityLabel)
     }
 }

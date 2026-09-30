@@ -13,6 +13,8 @@ import UIKit
 struct NoteTextEditor: UIViewRepresentable {
     let text: String
     let fontSize: CGFloat
+    /// Farbe des Textes (über die Farb-Slots der Werkzeugleiste änderbar).
+    let textColor: UIColor
     /// Ob das Feld gerade bearbeitet wird (Fokus halten/aufheben).
     let isEditing: Bool
     /// Wird bei jeder Texteingabe aufgerufen.
@@ -33,7 +35,7 @@ struct NoteTextEditor: UIViewRepresentable {
         textView.font = .systemFont(ofSize: max(1, fontSize))
         // Text liegt auf dem festen weißen Papier und darf nicht mit dem
         // globalen Dark-Mode-Farbschema weiß werden.
-        textView.textColor = .black
+        textView.textColor = textColor
         textView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
         textView.textContainer.lineFragmentPadding = 0
         textView.textContainer.widthTracksTextView = true
@@ -80,8 +82,8 @@ struct NoteTextEditor: UIViewRepresentable {
         if uiView.font?.pointSize != resolvedFontSize {
             uiView.font = .systemFont(ofSize: resolvedFontSize)
         }
-        if uiView.textColor != .black {
-            uiView.textColor = .black
+        if uiView.textColor != textColor {
+            uiView.textColor = textColor
         }
 
         // Externe Änderungen (Undo/Redo) auch während der Bearbeitung anzeigen,
