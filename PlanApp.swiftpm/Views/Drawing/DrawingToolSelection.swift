@@ -1,3 +1,4 @@
+import SwiftUI
 import UIKit
 
 /// The drawing tool currently selected in the custom PencilKit toolbar.
@@ -13,44 +14,201 @@ public enum DrawingToolSelection: Equatable {
     case text
 }
 
-/// Gemeinsame Farb-Paletten für Stift und Textmarker. Sie werden sowohl von
-/// der Zeichen-Werkzeugleiste als auch von den Einstellungen (Standard-Farbe)
-/// verwendet, damit beide immer exakt dieselben Farben anbieten.
-public enum DrawingPalette {
-    public struct PaletteColor {
-        public let name: String
-        public let hex: String
-        public let uiColor: UIColor
+/// Farb-Definition für die Farb-Palette
+public struct DrawingPalettePreset: Identifiable, Equatable {
+    public let id: String
+    public let hex: String
+    public let name: String
 
-        public init(name: String, hex: String, uiColor: UIColor) {
-            self.name = name
-            self.hex = hex
-            self.uiColor = uiColor
+    public init(hex: String, name: String) {
+        self.id = hex
+        self.hex = hex
+        self.name = name
+    }
+}
+
+/// Die exakte Farb-Palette mit 3 Zeilen und 8 Spalten
+public enum DrawingPaletteGrid {
+    /// 1. Reihe (Helle / Leuchtende Töne)
+    public static let row1: [DrawingPalettePreset] = [
+        DrawingPalettePreset(hex: "#FF4D4D", name: "Hellrot / Koralle"),
+        DrawingPalettePreset(hex: "#FF8C24", name: "Helles Orange"),
+        DrawingPalettePreset(hex: "#FFD000", name: "Sattes Gelb"),
+        DrawingPalettePreset(hex: "#4CD948", name: "Leuchtendes Hellgrün"),
+        DrawingPalettePreset(hex: "#4CA6FF", name: "Himmelsblau"),
+        DrawingPalettePreset(hex: "#3CBCE1", name: "Türkisblau"),
+        DrawingPalettePreset(hex: "#B388FF", name: "Flieder / Hellviolett"),
+        DrawingPalettePreset(hex: "#F062B2", name: "Pink / Rosarot")
+    ]
+
+    /// 2. Reihe (Dunkle / Gesättigte Töne)
+    public static let row2: [DrawingPalettePreset] = [
+        DrawingPalettePreset(hex: "#A32020", name: "Weinrot / Dunkelrot"),
+        DrawingPalettePreset(hex: "#A3411A", name: "Rostbraun"),
+        DrawingPalettePreset(hex: "#996900", name: "Senfgelb / Ockerbraun"),
+        DrawingPalettePreset(hex: "#0B7A1C", name: "Waldgrün"),
+        DrawingPalettePreset(hex: "#00627C", name: "Teal / Petroleumblau"),
+        DrawingPalettePreset(hex: "#2B58BA", name: "Königsblau / Marine"),
+        DrawingPalettePreset(hex: "#6531A3", name: "Lila"),
+        DrawingPalettePreset(hex: "#8C2763", name: "Bordeaux / Purpur")
+    ]
+
+    /// 3. Reihe (Achromatische Töne)
+    public static let row3: [DrawingPalettePreset] = [
+        DrawingPalettePreset(hex: "#FFFFFF", name: "Reinweiß"),
+        DrawingPalettePreset(hex: "#E5E5E5", name: "Sehr helles Grau"),
+        DrawingPalettePreset(hex: "#9E9E9E", name: "Neutrales Grau"),
+        DrawingPalettePreset(hex: "#545454", name: "Anthrazit / Dunkelgrau"),
+        DrawingPalettePreset(hex: "#1E1E1E", name: "Schwarz")
+    ]
+}
+
+/// Farbpalette in einem hellgrauen, abgerundeten Bedienfeld (3 Zeilen × 8 Spalten)
+public struct DrawingColorPalettePopover: View {
+    public let selectedHex: String
+    public let onSelectColor: (String) -> Void
+
+    private let buttonDiameter: CGFloat = 32
+    private let spacing: CGFloat = 8
+
+    public init(selectedHex: String, onSelectColor: @escaping (String) -> Void) {
+        self.selectedHex = selectedHex
+        self.onSelectColor = onSelectColor
+    }
+
+    public var body: some View {
+        VStack(spacing: spacing) {
+            // 1. Reihe
+            HStack(spacing: spacing) {
+                ForEach(DrawingPaletteGrid.row1) { item in
+                    colorButton(item)
+                }
+            }
+
+            // 2. Reihe
+            HStack(spacing: spacing) {
+                ForEach(DrawingPaletteGrid.row2) { item in
+                    colorButton(item)
+                }
+            }
+
+            // 3. Reihe (5 achromatische Farben + Plus/Regenbogen + 2 Platzhalter für 8 Spalten)
+            HStack(spacing: spacing) {
+                ForEach(DrawingPaletteGrid.row3) { item in
+                    colorButton(item)
+                }
+
+                plusRainbowButton
+
+                // 2 leere Platzhalter für exakte 8-Spalten-Ausrichtung
+                Color.clear
+                    .frame(width: buttonDiameter, height: buttonDiameter)
+                Color.clear
+                    .frame(width: buttonDiameter, height: buttonDiameter)
+            }
         }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(UIColor.secondarySystemBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 4)
+        .fixedSize()
     }
 
-    public static let penColors: [PaletteColor] = [
-        PaletteColor(name: "Schwarz", hex: "#000000", uiColor: .black),
-        PaletteColor(name: "Rot", hex: "#E12626", uiColor: UIColor(red: 0.88, green: 0.15, blue: 0.15, alpha: 1)),
-        PaletteColor(name: "Blau", hex: "#1A73E6", uiColor: UIColor(red: 0.10, green: 0.45, blue: 0.90, alpha: 1)),
-        PaletteColor(name: "Grün", hex: "#1FA640", uiColor: UIColor(red: 0.12, green: 0.65, blue: 0.25, alpha: 1))
-    ]
+    private func colorButton(_ item: DrawingPalettePreset) -> some View {
+        let isSelected = selectedHex.caseInsensitiveCompare(item.hex) == .orderedSame
+        let color = Color(hex: item.hex)
+        let isWhite = item.hex.caseInsensitiveCompare("#FFFFFF") == .orderedSame
 
-    /// Textmarker-Farben. Statt des früheren bräunlichen Orange-Tons gibt es
-    /// hier bewusst ein kräftiges Rot.
-    public static let markerColors: [PaletteColor] = [
-        PaletteColor(name: "Gelb", hex: "#FFE633", uiColor: UIColor(red: 1, green: 0.90, blue: 0.20, alpha: 0.60)),
-        PaletteColor(name: "Rot", hex: "#F23333", uiColor: UIColor(red: 0.95, green: 0.20, blue: 0.20, alpha: 0.60)),
-        PaletteColor(name: "Grün", hex: "#40D959", uiColor: UIColor(red: 0.25, green: 0.85, blue: 0.35, alpha: 0.60)),
-        PaletteColor(name: "Blau", hex: "#33A6FF", uiColor: UIColor(red: 0.20, green: 0.65, blue: 1, alpha: 0.60)),
-        PaletteColor(name: "Lila", hex: "#BF59F2", uiColor: UIColor(red: 0.75, green: 0.35, blue: 0.95, alpha: 0.60))
-    ]
+        return Button {
+            Haptics.select()
+            onSelectColor(item.hex)
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(color)
+                    .frame(width: buttonDiameter, height: buttonDiameter)
 
-    public static func penColor(forHex hex: String) -> PaletteColor {
-        penColors.first { $0.hex.caseInsensitiveCompare(hex) == .orderedSame } ?? penColors[0]
+                if isWhite {
+                    Circle()
+                        .strokeBorder(Color.gray.opacity(0.35), lineWidth: 1)
+                        .frame(width: buttonDiameter, height: buttonDiameter)
+                        .shadow(color: Color.black.opacity(0.08), radius: 1.5, x: 0, y: 1)
+                }
+
+                if isSelected {
+                    // Häkchen-Icon als Auswahlanzeige
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(color.contrastingTextColor)
+                        .shadow(
+                            color: color.contrastingTextColor == .white ? Color.black.opacity(0.5) : Color.clear,
+                            radius: 1,
+                            x: 0,
+                            y: 0.5
+                        )
+
+                    Circle()
+                        .strokeBorder(Color.blue, lineWidth: 2.5)
+                        .frame(width: buttonDiameter + 6, height: buttonDiameter + 6)
+                }
+            }
+            .frame(width: buttonDiameter + 6, height: buttonDiameter + 6)
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+        .accessibilityLabel(item.name)
+        .accessibilityValue(isSelected ? "Ausgewählt" : "")
     }
 
-    public static func markerColor(forHex hex: String) -> PaletteColor {
-        markerColors.first { $0.hex.caseInsensitiveCompare(hex) == .orderedSame } ?? markerColors[0]
+    private var plusRainbowButton: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    AngularGradient(
+                        gradient: Gradient(colors: [
+                            Color(red: 1.0, green: 0.2, blue: 0.2),
+                            Color(red: 1.0, green: 0.6, blue: 0.1),
+                            Color(red: 1.0, green: 0.9, blue: 0.0),
+                            Color(red: 0.2, green: 0.85, blue: 0.3),
+                            Color(red: 0.2, green: 0.65, blue: 1.0),
+                            Color(red: 0.6, green: 0.35, blue: 1.0),
+                            Color(red: 0.95, green: 0.3, blue: 0.7),
+                            Color(red: 1.0, green: 0.2, blue: 0.2)
+                        ]),
+                        center: .center
+                    )
+                )
+                .frame(width: buttonDiameter, height: buttonDiameter)
+                .overlay(
+                    Image(systemName: "plus")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                        .shadow(color: Color.black.opacity(0.55), radius: 1.5, x: 0, y: 1)
+                )
+                .overlay(
+                    Circle().strokeBorder(Color.white.opacity(0.35), lineWidth: 1)
+                )
+
+            // Apples Standard Farbwähler (System ColorPicker)
+            ColorPicker("", selection: Binding(
+                get: { Color(hex: selectedHex) },
+                set: { newColor in
+                    Haptics.select()
+                    onSelectColor(newColor.toHex())
+                }
+            ), supportsOpacity: false)
+            .labelsHidden()
+            .opacity(0.015)
+            .frame(width: buttonDiameter + 6, height: buttonDiameter + 6)
+        }
+        .frame(width: buttonDiameter + 6, height: buttonDiameter + 6)
+        .hoverEffect(.lift)
+        .accessibilityLabel("Eigene Farbe wählen")
     }
 }

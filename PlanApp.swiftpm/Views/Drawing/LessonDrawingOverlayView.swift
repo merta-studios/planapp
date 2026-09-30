@@ -24,7 +24,7 @@ private struct DrawingViewport {
 }
 
 /// Full-screen editor which expands the selected lesson card into a centered,
-/// grey note. Apple Pencil draws; fingers move the note, the round handle
+/// grey note. Apple Pencil & Touch draw; two fingers move the note, the round handle
 /// below resizes it. Zooming is intentionally not supported.
 public struct LessonDrawingOverlayView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
@@ -35,7 +35,7 @@ public struct LessonDrawingOverlayView: View {
 
     @State private var drawing = PKDrawing()
     @State private var canvasHeight: CGFloat = 460
-    @State private var toolSelection: DrawingToolSelection = .pen(color: .black)
+    @State private var toolSelection: DrawingToolSelection = .pen(color: UIColor(hex: "#1E1E1E"))
     @State private var penWidth: CGFloat = 3.5
     @State private var markerWidth: CGFloat = 16
     @State private var eraserWidth: CGFloat = 24
@@ -239,24 +239,19 @@ public struct LessonDrawingOverlayView: View {
                 .allowsHitTesting(showsEditor)
 
                 // Frei bewegliche Textfelder über der Zeichenfläche.
-                // Der PencilFilteredHost lässt Apple-Pencil-Touches nur bei
-                // aktivem Text-Werkzeug durch – sonst zeichnet der Pencil
-                // einfach "über" die Textfelder. Finger dürfen immer.
-                PencilFilteredHost(pencilInteractionAllowed: isTextToolActive) {
-                    NoteTextBoxesLayer(
-                        textBoxes: $textBoxes,
-                        selectedID: $selectedTextBoxID,
-                        editingID: $editingTextBoxID,
-                        isTextToolActive: isTextToolActive,
-                        areaSize: CGSize(
-                            width: paperWidth,
-                            height: max(180, canvasHeight - headerHeight)
-                        ),
-                        registerUndo: { before, after in
-                            textUndo.push(before: before, after: after)
-                        }
-                    )
-                }
+                NoteTextBoxesLayer(
+                    textBoxes: $textBoxes,
+                    selectedID: $selectedTextBoxID,
+                    editingID: $editingTextBoxID,
+                    isTextToolActive: isTextToolActive,
+                    areaSize: CGSize(
+                        width: paperWidth,
+                        height: max(180, canvasHeight - headerHeight)
+                    ),
+                    registerUndo: { before, after in
+                        textUndo.push(before: before, after: after)
+                    }
+                )
                 .frame(
                     width: paperWidth,
                     height: max(180, canvasHeight - headerHeight),
@@ -264,7 +259,7 @@ public struct LessonDrawingOverlayView: View {
                 )
                 .offset(y: headerHeight)
                 .opacity(showsEditor ? 1 : 0)
-                .allowsHitTesting(showsEditor)
+                .allowsHitTesting(showsEditor && (isTextToolActive || selectedTextBoxID != nil || editingTextBoxID != nil))
 
                 noteHeader(
                     display: display,
@@ -323,8 +318,6 @@ public struct LessonDrawingOverlayView: View {
         display: SubjectDisplay,
         viewport: DrawingViewport
     ) -> some View {
-        // Dieselbe Kopfzeilen-Komponente wie in der "Nur Notizen"-Übersicht,
-        // damit die Titel dort exakt so aussehen wie über der Zeichenfläche.
         NoteHeaderContent(
             lesson: lesson,
             display: display,
@@ -399,9 +392,6 @@ public struct LessonDrawingOverlayView: View {
 
                         canvasHeight = newHeight
 
-                        // The center moves down by half of the added height, so
-                        // the top edge remains at resizeTopY and the handle stays
-                        // directly under the dragging finger.
                         var candidate = offset
                         candidate.height = resizeTopY
                             + (panelHeight(for: newHeight) * scale / 2)
@@ -423,8 +413,6 @@ public struct LessonDrawingOverlayView: View {
     // MARK: - Floating controls
 
     private func editorToolbar(viewport: DrawingViewport) -> some View {
-        // Closing happens by tapping the dimmed edge around the note, so the
-        // toolbar only needs to hold the drawing tools.
         HStack {
             Spacer(minLength: 0)
             DrawingToolbarView(
@@ -432,6 +420,20 @@ public struct LessonDrawingOverlayView: View {
                 penWidth: $penWidth,
                 markerWidth: $markerWidth,
                 eraserWidth: $eraserWidth,
+                penColorSlots: Binding(
+                    get: { viewModel.drawingSettings.penColorSlots },
+                    set: { newSlots in
+                        viewModel.drawingSettings.penColorSlots = newSlots
+                        viewModel.saveDrawingSettings()
+                    }
+                ),
+                markerColorSlots: Binding(
+                    get: { viewModel.drawingSettings.markerColorSlots },
+                    set: { newSlots in
+                        viewModel.drawingSettings.markerColorSlots = newSlots
+                        viewModel.saveDrawingSettings()
+                    }
+                ),
                 onUndo: { performUndo() },
                 onRedo: { performRedo() },
                 onClear: { clearPage() }
@@ -468,7 +470,6 @@ public struct LessonDrawingOverlayView: View {
         offset = clampedOffset(.zero, scale: scale, height: canvasHeight, in: viewport)
     }
 
-    /// Ohne Zoom entspricht die Skalierung immer der Einpass-Skalierung.
     private func normalizeTransform(in viewport: DrawingViewport) {
         let normalizedScale = min(1, maximumScale(for: canvasHeight, in: viewport))
         scale = normalizedScale
@@ -512,8 +513,6 @@ public struct LessonDrawingOverlayView: View {
 
     // MARK: - Kombiniertes Undo/Redo (Zeichnung + Textfelder)
 
-    /// Verdrahtet den Textfeld-Undo-Controller einmalig mit dem echten
-    /// SwiftUI-State (Snapshot lesen/schreiben inkl. Auswahl-Korrektur).
     private func configureTextUndo() {
         textUndo.getter = { textBoxes }
         textUndo.setter = { restored in
@@ -527,8 +526,6 @@ public struct LessonDrawingOverlayView: View {
         }
     }
 
-    /// Rückgängig: jeweils die jüngste der beiden Aktionen (letzter Strich im
-    /// Canvas vs. letzte Textfeld-Änderung) wird zuerst zurückgenommen.
     private func performUndo() {
         let canvasUndoManager = canvasView?.undoManager
         let canvasCanUndo = canvasUndoManager?.canUndo ?? false
@@ -546,7 +543,6 @@ public struct LessonDrawingOverlayView: View {
         }
     }
 
-    /// Wiederholen: spiegelbildlich zu `performUndo`.
     private func performRedo() {
         let canvasUndoManager = canvasView?.undoManager
         let canvasCanRedo = canvasUndoManager?.canRedo ?? false
@@ -564,9 +560,6 @@ public struct LessonDrawingOverlayView: View {
         }
     }
 
-    /// "Seite leeren": Zeichnung UND Textfelder entfernen. Die Textfelder
-    /// bekommen einen eigenen Undo-Eintrag, der Canvas registriert den
-    /// Zeichnungs-Reset in seinem Stack.
     private func clearPage() {
         let beforeBoxes = textBoxes
         selectedTextBoxID = nil
@@ -581,8 +574,8 @@ public struct LessonDrawingOverlayView: View {
 
     // MARK: - Persistence and transition
 
-    /// Übernimmt Standard-Werkzeug, Standard-Farbe, Standard-Dicken und die
-    /// Standard-Größe der Zeichenfläche aus den Einstellungen.
+    /// Übernimmt Standard-Dicken, Standard-Größe und startet immer mit dem
+    /// Stift und der ersten Farbe aus den Stift-Farb-Slots.
     private func applyDrawingDefaults() {
         let settings = viewModel.drawingSettings
 
@@ -590,14 +583,9 @@ public struct LessonDrawingOverlayView: View {
         markerWidth = CGFloat(settings.markerWidth)
         eraserWidth = CGFloat(settings.eraserWidth)
 
-        switch settings.defaultTool {
-        case .pen:
-            toolSelection = .pen(color: DrawingPalette.penColor(forHex: settings.defaultPenColorHex).uiColor)
-        case .marker:
-            toolSelection = .marker(color: DrawingPalette.markerColor(forHex: settings.defaultMarkerColorHex).uiColor)
-        case .eraser:
-            toolSelection = .eraser
-        }
+        // Immer standardmäßig Stift mit der ersten Farbe aus dem Slot
+        let initialHex = settings.penColorSlots.first ?? "#1E1E1E"
+        toolSelection = .pen(color: UIColor(hex: initialHex))
 
         canvasHeight = min(
             maximumCanvasHeight,
@@ -627,8 +615,6 @@ public struct LessonDrawingOverlayView: View {
         selectedTextBoxID = nil
         editingTextBoxID = nil
 
-        // Über den Rand hinaus gezeichnete Strich-Anteile werden hier wirklich
-        // aus dem gespeicherten Datenmodell entfernt – nicht nur optisch.
         let currentDrawing = canvasView?.drawing ?? drawing
         let canvasRect = CGRect(
             origin: .zero,
@@ -653,9 +639,6 @@ public struct LessonDrawingOverlayView: View {
         withAnimation(.easeOut(duration: 0.12)) {
             showsEditor = false
         }
-        // heroBlend shrinks the note back onto the lesson card at the same
-        // time as the grey-to-color cross-fade, mirroring the opening
-        // animation instead of just fading out in place.
         withAnimation(.spring(response: 0.40, dampingFraction: 0.88)) {
             isExpanded = false
             heroBlend = 0
@@ -669,6 +652,7 @@ public struct LessonDrawingOverlayView: View {
                 lineCount: calculatedLines,
                 textBoxes: cleanedTextBoxes
             )
+            viewModel.closeDrawingOverlay()
         }
     }
 }
