@@ -90,6 +90,7 @@ public struct SettingsView: View {
 
                         // 7. Stundenplan leeren (Zurücksetzen)
                         Button(action: {
+                            Haptics.warning()
                             viewModel.clearTimetable()
                         }) {
                             HStack(spacing: 8) {
@@ -113,7 +114,10 @@ public struct SettingsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { dismiss() }) {
+                    Button(action: {
+                        Haptics.tap()
+                        dismiss()
+                    }) {
                         Text("Fertig")
                             .font(.system(size: 15, weight: .regular, design: .default))
                             .padding(.horizontal, 14)

@@ -24,8 +24,8 @@ struct NoteTextEditor: UIViewRepresentable {
         Coordinator(self)
     }
 
-    func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+    func makeUIView(context: Context) -> CustomNoteTextView {
+        let textView = CustomNoteTextView()
         textView.delegate = context.coordinator
         textView.backgroundColor = .clear
         textView.isOpaque = false
@@ -44,6 +44,19 @@ struct NoteTextEditor: UIViewRepresentable {
         textView.setContentHuggingPriority(.required, for: .vertical)
         textView.text = text
 
+        textView.onWindowAttached = { [weak textView, weak coordinator = context.coordinator] in
+            guard let textView,
+                  let coordinator,
+                  !coordinator.isDismantled,
+                  coordinator.parent.isEditing,
+                  !textView.isFirstResponder else { return }
+            DispatchQueue.main.async {
+                if coordinator.parent.isEditing && !coordinator.isDismantled && !textView.isFirstResponder {
+                    textView.becomeFirstResponder()
+                }
+            }
+        }
+
         if isEditing {
             let coordinator = context.coordinator
             DispatchQueue.main.async { [weak textView, weak coordinator] in
@@ -60,7 +73,7 @@ struct NoteTextEditor: UIViewRepresentable {
         return textView
     }
 
-    func updateUIView(_ uiView: UITextView, context: Context) {
+    func updateUIView(_ uiView: CustomNoteTextView, context: Context) {
         context.coordinator.parent = self
 
         let resolvedFontSize = max(1, fontSize)
@@ -109,8 +122,9 @@ struct NoteTextEditor: UIViewRepresentable {
     /// Aufräumen, bevor die View entfernt wird: Ein noch aktiver First
     /// Responder würde sonst nach dem Entfernen weiter Delegate-Aufrufe
     /// auslösen.
-    static func dismantleUIView(_ uiView: UITextView, coordinator: Coordinator) {
+    static func dismantleUIView(_ uiView: CustomNoteTextView, coordinator: Coordinator) {
         coordinator.isDismantled = true
+        uiView.onWindowAttached = nil
         uiView.delegate = nil
         if uiView.isFirstResponder {
             uiView.resignFirstResponder()
@@ -139,6 +153,17 @@ struct NoteTextEditor: UIViewRepresentable {
             DispatchQueue.main.async {
                 callback()
             }
+        }
+    }
+}
+
+final class CustomNoteTextView: UITextView {
+    var onWindowAttached: (() -> Void)?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            onWindowAttached?()
         }
     }
 }

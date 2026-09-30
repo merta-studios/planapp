@@ -337,7 +337,7 @@ public struct LessonDrawingOverlayView: View {
             display: display,
             displaySettings: viewModel.displaySettings,
             periods: viewModel.periods,
-            primaryColor: isExpanded ? .primary : display.color.contrastingTextColor
+            primaryColor: Color.black
         )
         .padding(.horizontal, 20)
         .frame(width: paperWidth, height: headerHeight)

@@ -144,6 +144,7 @@ public struct DrawingSettingsSection: View {
                 Divider()
 
                 Button(action: {
+                    Haptics.warning()
                     showDeleteAllNotesAlert = true
                 }) {
                     HStack(spacing: 8) {

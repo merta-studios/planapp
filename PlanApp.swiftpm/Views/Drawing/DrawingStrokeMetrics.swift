@@ -19,7 +19,7 @@ public enum DrawingStrokeMetrics {
     /// Faktor für das aktuell gewählte Werkzeug.
     public static func renderFactor(for selection: DrawingToolSelection) -> CGFloat {
         switch selection {
-        case .pen, .text:
+        case .pen, .text, .lasso:
             return penRenderFactor
         case .marker:
             return markerRenderFactor

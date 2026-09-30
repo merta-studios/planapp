@@ -70,6 +70,7 @@ public struct DrawingToolbarView: View {
                 textToolButton
                 thicknessButton
                 eraserButton
+                lassoButton
                 toolbarDivider
                 historyControls
                 toolbarDivider
@@ -364,7 +365,7 @@ public struct DrawingToolbarView: View {
 
     private var currentWidthBinding: Binding<CGFloat> {
         switch toolSelection {
-        case .pen, .text:
+        case .pen, .text, .lasso:
             return $penWidth
         case .marker:
             return $markerWidth
@@ -391,7 +392,7 @@ public struct DrawingToolbarView: View {
 
     private var currentWidthRange: ClosedRange<CGFloat> {
         switch toolSelection {
-        case .pen, .text:
+        case .pen, .text, .lasso:
             return 1...20
         case .marker:
             return 4...40
@@ -402,7 +403,7 @@ public struct DrawingToolbarView: View {
 
     private var currentThicknessTitle: String {
         switch toolSelection {
-        case .pen, .text:
+        case .pen, .text, .lasso:
             return "Stift-Dicke"
         case .marker:
             return "Textmarker-Dicke"
@@ -421,12 +422,12 @@ public struct DrawingToolbarView: View {
             return Color(uiColor: color.withAlphaComponent(1))
         case .eraser:
             return Color(UIColor.systemGray2)
-        case .text:
+        case .text, .lasso:
             return .primary
         }
     }
 
-    // MARK: - Radierer
+    // MARK: - Radierer & Lasso
 
     private var eraserButton: some View {
         let isSelected: Bool = {
@@ -438,20 +439,39 @@ public struct DrawingToolbarView: View {
             Haptics.select()
             toolSelection = .eraser
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "eraser")
-                    .font(.system(size: 15))
-                Text("Radierer")
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .padding(.horizontal, 12)
-            .frame(height: buttonSize)
-            .background(isSelected ? Color.blue : Color(UIColor.tertiarySystemBackground).opacity(0.72))
-            .foregroundColor(isSelected ? .white : .primary)
-            .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
+            Image(systemName: "eraser")
+                .font(.system(size: 16, weight: .medium))
+                .frame(width: buttonSize, height: buttonSize)
+                .background(isSelected ? Color.blue : Color(UIColor.tertiarySystemBackground).opacity(0.72))
+                .foregroundColor(isSelected ? .white : .primary)
+                .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
+        .accessibilityLabel("Radierer")
+        .accessibilityValue(isSelected ? "Ausgewählt" : "")
+    }
+
+    private var lassoButton: some View {
+        let isSelected: Bool = {
+            if case .lasso = toolSelection { return true }
+            return false
+        }()
+
+        return Button {
+            Haptics.select()
+            toolSelection = .lasso
+        } label: {
+            Image(systemName: "lasso")
+                .font(.system(size: 16, weight: .medium))
+                .frame(width: buttonSize, height: buttonSize)
+                .background(isSelected ? Color.blue : Color(UIColor.tertiarySystemBackground).opacity(0.72))
+                .foregroundColor(isSelected ? .white : .primary)
+                .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+        .accessibilityLabel("Lasso-Werkzeug")
         .accessibilityValue(isSelected ? "Ausgewählt" : "")
     }
 

@@ -249,6 +249,7 @@ public struct TimetableHeaderView: View {
 
     private var settingsButton: some View {
         Button {
+            Haptics.tap()
             viewModel.isSettingsPresented = true
         } label: {
             Image(systemName: "gearshape")
