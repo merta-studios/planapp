@@ -44,6 +44,8 @@ public struct LessonDrawingOverlayView: View {
     @State private var noteBackgroundStyle: NoteBackgroundStyle = .blank
     @State private var isConvertingHandwriting = false
     @State private var recognitionAlertMessage: String? = nil
+    @State private var exportAlertTitle: String = "Export"
+    @State private var exportAlertMessage: String? = nil
 
     // Teilen (Menü „Mehr Optionen")
     @State private var shareImageItem: ShareImageItem? = nil
@@ -210,6 +212,18 @@ public struct LessonDrawingOverlayView: View {
             } message: {
                 Text(recognitionAlertMessage ?? "")
             }
+            .alert(exportAlertTitle, isPresented: Binding(
+                get: { exportAlertMessage != nil },
+                set: { isPresented in
+                    if !isPresented { exportAlertMessage = nil }
+                }
+            )) {
+                Button("OK", role: .cancel) {
+                    exportAlertMessage = nil
+                }
+            } message: {
+                Text(exportAlertMessage ?? "")
+            }
         }
     }
 
@@ -361,7 +375,9 @@ public struct LessonDrawingOverlayView: View {
             display: display,
             displaySettings: viewModel.displaySettings,
             periods: viewModel.periods,
-            primaryColor: Color.black
+            primaryColor: Color.black,
+            teacherDisplayName: viewModel.resolveTeacherName(lesson.teacherRaw),
+            originalTeacherDisplayName: lesson.originalTeacher.map { viewModel.resolveTeacherName($0) }
         )
         .padding(.horizontal, 20)
         .frame(width: paperWidth, height: headerHeight)
@@ -698,30 +714,148 @@ public struct LessonDrawingOverlayView: View {
         shareImageItem = ShareImageItem(image: image)
     }
 
-    /// Kopiert den Inhalt aller Textfelder (von oben nach unten gelesen) in
-    /// die Zwischenablage.
+    /// Kopiert den gesamten ermittelbaren Text in die Zwischenablage.
+    ///
+    /// Dabei werden zuerst alle vorhandenen editierbaren Textfelder gesammelt.
+    /// Wenn noch Pencil-Striche vorhanden sind, läuft zusätzlich eine
+    /// Texterkennung über die Zeichnung. Nach Erfolg zeigt ein Dialog den
+    /// tatsächlich kopierten Text an.
     private func copyNoteTextToClipboard() {
-        let sorted = textBoxes
-            .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .sorted { lhs, rhs in
-                // Zeilenweise lesen: erst grob nach Höhe, dann von links nach rechts.
-                if abs(lhs.y - rhs.y) > 12 { return lhs.y < rhs.y }
-                return lhs.x < rhs.x
-            }
+        guard !isConvertingHandwriting else { return }
 
-        let joined = sorted
+        selectedTextBoxID = nil
+        editingTextBoxID = nil
+
+        let existingBoxes = copyableTextBoxes(from: textBoxes)
+        let currentDrawing = canvasView?.drawing ?? drawing
+
+        guard !currentDrawing.strokes.isEmpty else {
+            finishTextExport(
+                existingBoxes: existingBoxes,
+                recognizedBoxes: [],
+                handwritingAttempted: false,
+                recognitionFailed: false
+            )
+            return
+        }
+
+        let canvasSize = recognitionCanvasSize
+        guard canvasSize.width > 0, canvasSize.height > 0,
+              let renderedImage = PencilKitCanvasRepresentable.renderDrawingForRecognition(
+                drawing: currentDrawing,
+                canvasSize: canvasSize
+              ),
+              let cgImage = renderedImage.cgImage else {
+            finishTextExport(
+                existingBoxes: existingBoxes,
+                recognizedBoxes: [],
+                handwritingAttempted: true,
+                recognitionFailed: true
+            )
+            return
+        }
+
+        isConvertingHandwriting = true
+        showToast("Text wird erkannt …")
+
+        HandwritingRecognizer.recognizeTextBoxes(
+            in: cgImage,
+            canvasSize: canvasSize
+        ) { result in
+            isConvertingHandwriting = false
+
+            switch result {
+            case .failure:
+                finishTextExport(
+                    existingBoxes: existingBoxes,
+                    recognizedBoxes: [],
+                    handwritingAttempted: true,
+                    recognitionFailed: true
+                )
+
+            case .success(let recognizedBoxes):
+                finishTextExport(
+                    existingBoxes: existingBoxes,
+                    recognizedBoxes: copyableTextBoxes(from: recognizedBoxes),
+                    handwritingAttempted: true,
+                    recognitionFailed: false
+                )
+            }
+        }
+    }
+
+    private func copyableTextBoxes(from boxes: [NoteTextBox]) -> [NoteTextBox] {
+        boxes.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    private func sortedTextBoxesForReading(_ boxes: [NoteTextBox]) -> [NoteTextBox] {
+        boxes.sorted { lhs, rhs in
+            // Zeilenweise lesen: erst grob nach Höhe, dann von links nach rechts.
+            if abs(lhs.y - rhs.y) > 12 { return lhs.y < rhs.y }
+            return lhs.x < rhs.x
+        }
+    }
+
+    private func finishTextExport(
+        existingBoxes: [NoteTextBox],
+        recognizedBoxes: [NoteTextBox],
+        handwritingAttempted: Bool,
+        recognitionFailed: Bool
+    ) {
+        let allBoxes = sortedTextBoxesForReading(existingBoxes + recognizedBoxes)
+        let joined = allBoxes
             .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
             .joined(separator: "\n")
 
         guard !joined.isEmpty else {
             Haptics.warning()
-            showToast("Es gibt keinen Text zum Kopieren.")
+            if recognitionFailed {
+                showExportAlert(
+                    title: "Text-Export fehlgeschlagen",
+                    message: "Die Handschrift konnte nicht erkannt werden und es gibt keine Textfelder zum Kopieren."
+                )
+            } else if handwritingAttempted {
+                showExportAlert(
+                    title: "Kein Text erkannt",
+                    message: "Die Texterkennung ist durchgelaufen, konnte aber keine gut lesbare Handschrift finden."
+                )
+            } else {
+                showExportAlert(
+                    title: "Kein Text vorhanden",
+                    message: "Es gibt keine Textfelder oder erkannte Handschrift zum Kopieren."
+                )
+            }
+            showToast("Kein Text zum Kopieren.")
             return
         }
 
         UIPasteboard.general.string = joined
         Haptics.success()
-        showToast("Text in die Zwischenablage kopiert.")
+        showToast("Text kopiert.")
+
+        let status: String
+        if recognitionFailed {
+            status = "Texterkennung fehlgeschlagen. Die vorhandenen Textfelder wurden trotzdem kopiert."
+        } else if handwritingAttempted {
+            if recognizedBoxes.isEmpty {
+                status = "Texterkennung abgeschlossen: Es wurde keine zusätzliche Handschrift erkannt. Vorhandene Textfelder wurden kopiert."
+            } else {
+                status = "Texterkennung erfolgreich: \(recognizedBoxes.count) erkannte Textzeile(n) wurden zusammen mit vorhandenen Textfeldern kopiert."
+            }
+        } else {
+            status = "Alle vorhandenen Textfelder wurden kopiert."
+        }
+
+        showExportAlert(
+            title: "Text kopiert",
+            message: "\(status)\n\nKopierter Text:\n\n\(joined)"
+        )
+    }
+
+    private func showExportAlert(title: String, message: String) {
+        exportAlertTitle = title
+        exportAlertMessage = message
     }
 
     /// Blendet eine kurze Bestätigung ein, die von selbst wieder verschwindet.
@@ -819,6 +953,7 @@ public struct LessonDrawingOverlayView: View {
 
         toolSelection = .text
         Haptics.success()
+        showToast("Handschrift umgewandelt: \(recognizedBoxes.count) Textfeld(er).")
     }
 
     /// Größe der Zeichenfläche in Punkten – Basis für die Rückrechnung der

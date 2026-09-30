@@ -16,6 +16,8 @@ public struct NoteHeaderContent: View {
     /// Grundfarbe der Texte (im Overlay z. B. abhängig vom Ausklapp-Zustand).
     public let primaryColor: Color
     public let showsColorCircle: Bool
+    private let teacherDisplayName: String
+    private let originalTeacherDisplayName: String?
 
     public init(
         lesson: Lesson,
@@ -23,7 +25,9 @@ public struct NoteHeaderContent: View {
         displaySettings: BlockDisplaySettings,
         periods: [Period],
         primaryColor: Color = .primary,
-        showsColorCircle: Bool = true
+        showsColorCircle: Bool = true,
+        teacherDisplayName: String? = nil,
+        originalTeacherDisplayName: String? = nil
     ) {
         self.lesson = lesson
         self.display = display
@@ -31,6 +35,8 @@ public struct NoteHeaderContent: View {
         self.periods = periods
         self.primaryColor = primaryColor
         self.showsColorCircle = showsColorCircle
+        self.teacherDisplayName = teacherDisplayName ?? lesson.teacherRaw
+        self.originalTeacherDisplayName = originalTeacherDisplayName ?? lesson.originalTeacher
     }
 
     public var body: some View {
@@ -98,13 +104,13 @@ public struct NoteHeaderContent: View {
                 HStack(spacing: 3) {
                     Image(systemName: "person")
                         .font(.system(size: 10, weight: .regular, design: .default))
-                    if let orig = lesson.originalTeacher, lesson.isSubstitution {
+                    if let orig = originalTeacherDisplayName, lesson.isSubstitution {
                         Text(orig)
                             .strikethrough(true, color: .red)
-                        Text("➔ \(lesson.teacherRaw)")
+                        Text("➔ \(teacherDisplayName)")
                             .strikethrough(lesson.isCancelled, color: .red)
                     } else {
-                        Text(lesson.teacherRaw)
+                        Text(teacherDisplayName)
                             .strikethrough(lesson.isCancelled, color: .red)
                     }
                 }

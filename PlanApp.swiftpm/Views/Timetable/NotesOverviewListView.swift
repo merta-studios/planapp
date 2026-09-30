@@ -367,7 +367,9 @@ private struct NoteOverviewCard: View {
                 displaySettings: viewModel.displaySettings,
                 periods: viewModel.periods,
                 primaryColor: textColor,
-                showsColorCircle: false
+                showsColorCircle: false,
+                teacherDisplayName: viewModel.resolveTeacherName(lesson.teacherRaw),
+                originalTeacherDisplayName: lesson.originalTeacher.map { viewModel.resolveTeacherName($0) }
             )
 
             noteContent(textColor: textColor)

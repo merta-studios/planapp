@@ -141,6 +141,11 @@ struct NoteTextEditor: UIViewRepresentable {
             self.parent = parent
         }
 
+        func textViewShouldBeginEditing(_ textView: UITextView) -> Bool {
+            (textView as? CustomNoteTextView)?.prepareForSystemKeyboard()
+            return true
+        }
+
         func textViewDidBeginEditing(_ textView: UITextView) {
             guard !isDismantled else { return }
             // Wie bei den einzeiligen Einstellungsfeldern die native
@@ -168,6 +173,8 @@ struct NoteTextEditor: UIViewRepresentable {
 final class CustomNoteTextView: UITextView {
     var onWindowAttached: (() -> Void)?
 
+    override var canBecomeFirstResponder: Bool { true }
+
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window != nil {
@@ -175,9 +182,18 @@ final class CustomNoteTextView: UITextView {
         }
     }
 
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        prepareForSystemKeyboard()
+        super.touchesBegan(touches, with: event)
+    }
+
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesEnded(touches, with: event)
         requestSystemKeyboard()
+    }
+
+    func prepareForSystemKeyboard() {
+        inputView = nil
     }
 
     /// Fordert neben dem First-Responder-Status ausdrücklich die native
@@ -186,16 +202,18 @@ final class CustomNoteTextView: UITextView {
     func requestSystemKeyboard() {
         guard isEditable, isUserInteractionEnabled, window != nil else { return }
 
-        inputView = nil
+        prepareForSystemKeyboard()
         if !isFirstResponder {
             _ = becomeFirstResponder()
         }
         guard isFirstResponder else { return }
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.isFirstResponder, self.window != nil else { return }
-            self.inputView = nil
-            self.reloadInputViews()
+        for delay in [0.0, 0.05, 0.18] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, self.isFirstResponder, self.window != nil else { return }
+                self.inputView = nil
+                self.reloadInputViews()
+            }
         }
     }
 }

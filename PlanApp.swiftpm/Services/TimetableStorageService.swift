@@ -10,6 +10,7 @@ public final class TimetableStorageService {
     private enum Keys {
         static let credentials = "planapp_untis_credentials"
         static let customizations = "planapp_subject_customizations"
+        static let teacherNameCustomizations = "planapp_teacher_name_customizations"
         static let displaySettings = "planapp_block_display_settings"
         static let periods = "planapp_periods"
         static let lessons = "planapp_lessons"
@@ -57,6 +58,22 @@ public final class TimetableStorageService {
     public func loadCustomizations() -> [SubjectCustomization] {
         guard let data = defaults.data(forKey: Keys.customizations),
               let list = try? JSONDecoder().decode([SubjectCustomization].self, from: data) else {
+            return []
+        }
+        return list
+    }
+
+    // MARK: - Teacher Name Customizations
+
+    public func saveTeacherNameCustomizations(_ list: [TeacherNameCustomization]) {
+        if let data = try? JSONEncoder().encode(list) {
+            defaults.set(data, forKey: Keys.teacherNameCustomizations)
+        }
+    }
+
+    public func loadTeacherNameCustomizations() -> [TeacherNameCustomization] {
+        guard let data = defaults.data(forKey: Keys.teacherNameCustomizations),
+              let list = try? JSONDecoder().decode([TeacherNameCustomization].self, from: data) else {
             return []
         }
         return list
