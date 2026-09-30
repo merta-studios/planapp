@@ -28,138 +28,185 @@ public struct DayColumnView: View {
         day.isToday
     }
 
+    private var timetableHeight: CGFloat {
+        CGFloat(viewModel.periods.count) * rowHeight
+    }
+
+    private var inactiveHeaderBackgroundColor: Color {
+        columnIndex % 2 == 1
+            ? Color(UIColor.secondarySystemBackground).opacity(0.6)
+            : Color(UIColor.tertiarySystemBackground).opacity(0.4)
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
-            // SPALTENKOPF (Wochentag und Datum)
-            ZStack {
-                if isToday {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.blue.opacity(0.15))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(Color.blue.opacity(0.4), lineWidth: 1.0)
-                        )
-                } else {
-                    Rectangle()
-                        .fill(
-                            columnIndex % 2 == 1
-                                ? Color(UIColor.secondarySystemBackground).opacity(0.6)
-                                : Color(UIColor.tertiarySystemBackground).opacity(0.4)
-                        )
-                }
-
-                VStack(spacing: 3) {
-                    HStack(spacing: 4) {
-                        Text(day.weekdayLongString)
-                            .font(.system(size: 14, weight: .regular, design: .default))
-                            .foregroundColor(isToday ? .blue : .primary)
-
-                        if isToday {
-                            StatusBadge(.today)
-                        }
-                    }
-
-                    Text(day.headerDateString)
-                        .font(.system(size: 12, weight: .regular, design: .default))
-                        .foregroundColor(isToday ? .blue.opacity(0.85) : .secondary)
-                }
-                .padding(.vertical, 6)
-            }
-            .frame(height: headerHeight)
-
-            // SPALTENINHALT (Perioden-Zellen ohne Linien mit alternierender Grauschattierung)
-            ZStack(alignment: .topLeading) {
-                // Hintergrund-Zebra-Muster
-                VStack(spacing: 0) {
-                    ForEach(0..<viewModel.periods.count, id: \.self) { rowIndex in
-                        ZStack {
-                            Rectangle()
-                                .fill(cellBackgroundColor(column: columnIndex, row: rowIndex))
-
-                            // The complete current-day column receives the blue
-                            // tint, while the zebra structure remains visible.
-                            if isToday {
-                                Rectangle()
-                                    .fill(Color.blue.opacity(rowIndex % 2 == 0 ? 0.10 : 0.14))
-                            }
-                        }
-                        .frame(height: rowHeight)
-                    }
-                }
-
-                // Continuous accent from the header to the last period.
-                if isToday {
-                    HStack {
-                        Rectangle()
-                            .fill(Color.blue.opacity(0.48))
-                            .frame(width: 3)
-                        Spacer()
-                    }
-                }
-
-                // Unterrichtsstunden / Blöcke
-                let dayLessons = viewModel.lessonsFor(day: day)
-                ForEach(dayLessons) { lesson in
-                    let periodIndex = viewModel.periods.firstIndex(where: { $0.periodNumber == lesson.periodNumber }) ?? (lesson.periodNumber - 1)
-                    if periodIndex >= 0 && periodIndex < viewModel.periods.count {
-                        let yOffset = CGFloat(periodIndex) * rowHeight + 3
-                        let blockH = CGFloat(lesson.durationPeriods) * rowHeight - 6
-
-                        LessonBlockView(
-                            lesson: lesson,
-                            height: blockH,
-                            noteNamespace: noteNamespace
-                        )
-                        .padding(.horizontal, 3)
-                        .offset(y: yOffset)
-                    }
-                }
-
-                // Rote "Jetzt"-Markierung beim heutigen Tag: ein seitlicher
-                // Strich an der linken Kante von oben bis zur aktuellen
-                // Uhrzeit plus eine horizontale Linie quer durch die Spalte.
-                if isToday {
-                    TimelineView(.periodic(from: .now, by: 30)) { timeline in
-                        if let nowY = nowIndicatorOffsetY(at: timeline.date) {
-                            ZStack(alignment: .topLeading) {
-                                // Seitlicher Strich links vom Rand bis zur Uhrzeit.
-                                Rectangle()
-                                    .fill(Color.red.opacity(0.85))
-                                    .frame(width: 3, height: max(0, nowY))
-
-                                // Horizontale Linie quer durch die Spalte auf
-                                // Höhe der aktuellen Uhrzeit.
-                                Rectangle()
-                                    .fill(Color.red.opacity(0.9))
-                                    .frame(maxWidth: .infinity, height: 2)
-                                    .offset(y: max(0, nowY - 1))
-
-                                // Kleiner Punkt an der linken Ecke als Anker.
-                                Circle()
-                                    .fill(Color.red)
-                                    .frame(width: 7, height: 7)
-                                    .offset(x: -2, y: max(0, nowY - 3.5))
-                            }
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
-                            .allowsHitTesting(false)
-                        }
-                    }
-                }
-            }
-            .frame(height: CGFloat(viewModel.periods.count) * rowHeight)
+            dayHeader
+            timetableContent
+                .frame(height: timetableHeight)
         }
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(isToday ? Color.blue.opacity(0.08) : Color.clear)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(
-                    isToday ? Color.blue.opacity(0.38) : Color.clear,
-                    lineWidth: isToday ? 1.25 : 0
-                )
-        )
+        .background(columnBackground)
+        .overlay(columnBorder)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    // MARK: - Header
+
+    private var dayHeader: some View {
+        ZStack {
+            headerBackground
+            headerLabels
+        }
+        .frame(height: headerHeight)
+    }
+
+    @ViewBuilder
+    private var headerBackground: some View {
+        if isToday {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.blue.opacity(0.15))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.blue.opacity(0.4), lineWidth: 1)
+                )
+        } else {
+            Rectangle()
+                .fill(inactiveHeaderBackgroundColor)
+        }
+    }
+
+    private var headerLabels: some View {
+        VStack(spacing: 3) {
+            HStack(spacing: 4) {
+                Text(day.weekdayLongString)
+                    .font(.system(size: 14, weight: .regular, design: .default))
+                    .foregroundColor(isToday ? .blue : .primary)
+
+                if isToday {
+                    StatusBadge(.today)
+                }
+            }
+
+            Text(day.headerDateString)
+                .font(.system(size: 12, weight: .regular, design: .default))
+                .foregroundColor(isToday ? .blue.opacity(0.85) : .secondary)
+        }
+        .padding(.vertical, 6)
+    }
+
+    // MARK: - Timetable content
+
+    private var timetableContent: some View {
+        ZStack(alignment: .topLeading) {
+            periodBackground
+            todayColumnAccent
+            lessonBlocks
+            currentTimeIndicator
+        }
+    }
+
+    private var periodBackground: some View {
+        VStack(spacing: 0) {
+            ForEach(viewModel.periods.indices, id: \.self) { rowIndex in
+                periodBackgroundCell(for: rowIndex)
+                    .frame(height: rowHeight)
+            }
+        }
+    }
+
+    private func periodBackgroundCell(for rowIndex: Int) -> some View {
+        ZStack {
+            Rectangle()
+                .fill(cellBackgroundColor(column: columnIndex, row: rowIndex))
+
+            if isToday {
+                Rectangle()
+                    .fill(Color.blue.opacity(rowIndex.isMultiple(of: 2) ? 0.10 : 0.14))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var todayColumnAccent: some View {
+        if isToday {
+            HStack {
+                Rectangle()
+                    .fill(Color.blue.opacity(0.48))
+                    .frame(width: 3)
+                Spacer()
+            }
+        }
+    }
+
+    private var lessonBlocks: some View {
+        ForEach(viewModel.lessonsFor(day: day)) { lesson in
+            lessonBlock(for: lesson)
+        }
+    }
+
+    @ViewBuilder
+    private func lessonBlock(for lesson: Lesson) -> some View {
+        if let periodIndex = periodIndex(for: lesson) {
+            let yOffset = CGFloat(periodIndex) * rowHeight + 3
+            let blockHeight = CGFloat(lesson.durationPeriods) * rowHeight - 6
+
+            LessonBlockView(
+                lesson: lesson,
+                height: blockHeight,
+                noteNamespace: noteNamespace
+            )
+            .padding(.horizontal, 3)
+            .offset(y: yOffset)
+        }
+    }
+
+    private func periodIndex(for lesson: Lesson) -> Int? {
+        let index = viewModel.periods.firstIndex {
+            $0.periodNumber == lesson.periodNumber
+        } ?? lesson.periodNumber - 1
+
+        return viewModel.periods.indices.contains(index) ? index : nil
+    }
+
+    // MARK: - Current-time indicator
+
+    @ViewBuilder
+    private var currentTimeIndicator: some View {
+        if isToday {
+            TimelineView(.periodic(from: .now, by: 30)) { timeline in
+                currentTimeIndicator(at: timeline.date)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func currentTimeIndicator(at date: Date) -> some View {
+        if let offsetY = nowIndicatorOffsetY(at: date) {
+            currentTimeIndicatorLine(at: offsetY)
+        }
+    }
+
+    private func currentTimeIndicatorLine(at offsetY: CGFloat) -> some View {
+        let verticalLineHeight = max(CGFloat.zero, offsetY)
+        let horizontalLineOffset = max(CGFloat.zero, offsetY - 1)
+        let dotOffset = max(CGFloat.zero, offsetY - 3.5)
+
+        return ZStack(alignment: .topLeading) {
+            Rectangle()
+                .fill(Color.red.opacity(0.85))
+                .frame(width: 3, height: verticalLineHeight)
+
+            Rectangle()
+                .fill(Color.red.opacity(0.9))
+                .frame(maxWidth: .infinity, height: 2)
+                .offset(y: horizontalLineOffset)
+
+            Circle()
+                .fill(Color.red)
+                .frame(width: 7, height: 7)
+                .offset(x: -2, y: dotOffset)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .allowsHitTesting(false)
     }
 
     /// Y-Position der aktuellen Uhrzeit im Stundenraster (nil außerhalb der
@@ -176,22 +223,35 @@ public struct DayColumnView: View {
         let end = last.endMinutes
         guard end > start, minutes >= start, minutes <= end else { return nil }
 
-        let totalHeight = CGFloat(viewModel.periods.count) * rowHeight
         let fraction = CGFloat(minutes - start) / CGFloat(end - start)
-        return max(0, min(totalHeight, fraction * totalHeight))
+        return max(.zero, min(timetableHeight, fraction * timetableHeight))
     }
 
-    /// Berechnet die Graustufe für das linienlose Tabellenraster
+    /// Berechnet die Graustufe für das linienlose Tabellenraster.
     private func cellBackgroundColor(column: Int, row: Int) -> Color {
-        let isColShaded = (column % 2 == 1)
-        let isRowShaded = (row % 2 == 1)
+        let isColumnShaded = column.isMultiple(of: 2) == false
+        let isRowShaded = row.isMultiple(of: 2) == false
 
-        if isColShaded && isRowShaded {
+        switch (isColumnShaded, isRowShaded) {
+        case (true, true):
             return Color(UIColor.systemGray5).opacity(0.40)
-        } else if isColShaded || isRowShaded {
+        case (true, false), (false, true):
             return Color(UIColor.systemGray6).opacity(0.30)
-        } else {
+        case (false, false):
             return Color(UIColor.systemBackground).opacity(0.15)
         }
+    }
+
+    private var columnBackground: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(isToday ? Color.blue.opacity(0.08) : .clear)
+    }
+
+    private var columnBorder: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(
+                isToday ? Color.blue.opacity(0.38) : .clear,
+                lineWidth: isToday ? 1.25 : 0
+            )
     }
 }
