@@ -21,6 +21,10 @@ public struct DrawingToolbarView: View {
     public let onApplyColorToSelectedText: (String) -> Void
     public let isConvertingHandwriting: Bool
     public let onConvertHandwriting: () -> Void
+    /// Teilt die aktuelle Notiz als Bild (System-Teilen-Dialog).
+    public let onShareAsImage: () -> Void
+    /// Kopiert den Text aller Textfelder in die Zwischenablage.
+    public let onCopyTextToClipboard: () -> Void
     public let onUndo: () -> Void
     public let onRedo: () -> Void
     public let onClear: () -> Void
@@ -48,6 +52,8 @@ public struct DrawingToolbarView: View {
         onApplyColorToSelectedText: @escaping (String) -> Void = { _ in },
         isConvertingHandwriting: Bool = false,
         onConvertHandwriting: @escaping () -> Void = {},
+        onShareAsImage: @escaping () -> Void = {},
+        onCopyTextToClipboard: @escaping () -> Void = {},
         onUndo: @escaping () -> Void,
         onRedo: @escaping () -> Void,
         onClear: @escaping () -> Void
@@ -64,6 +70,8 @@ public struct DrawingToolbarView: View {
         self.onApplyColorToSelectedText = onApplyColorToSelectedText
         self.isConvertingHandwriting = isConvertingHandwriting
         self.onConvertHandwriting = onConvertHandwriting
+        self.onShareAsImage = onShareAsImage
+        self.onCopyTextToClipboard = onCopyTextToClipboard
         self.onUndo = onUndo
         self.onRedo = onRedo
         self.onClear = onClear
@@ -524,6 +532,24 @@ public struct DrawingToolbarView: View {
                 )
             }
             .disabled(isConvertingHandwriting)
+
+            Menu {
+                Button {
+                    Haptics.tap()
+                    onShareAsImage()
+                } label: {
+                    Label("Als Bild teilen", systemImage: "photo")
+                }
+
+                Button {
+                    Haptics.tap()
+                    onCopyTextToClipboard()
+                } label: {
+                    Label("Als Text in die Zwischenablage kopieren", systemImage: "doc.on.clipboard")
+                }
+            } label: {
+                Label("Teilen", systemImage: "square.and.arrow.up")
+            }
 
             Menu {
                 ForEach(NoteBackgroundStyle.allCases) { style in

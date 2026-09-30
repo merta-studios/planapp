@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import PencilKit
 
 private struct DrawingViewport {
@@ -43,6 +44,11 @@ public struct LessonDrawingOverlayView: View {
     @State private var noteBackgroundStyle: NoteBackgroundStyle = .blank
     @State private var isConvertingHandwriting = false
     @State private var recognitionAlertMessage: String? = nil
+
+    // Teilen (Menü „Mehr Optionen")
+    @State private var shareImageItem: ShareImageItem? = nil
+    /// Kurze Bestätigung, z. B. nach dem Kopieren in die Zwischenablage.
+    @State private var toastMessage: String? = nil
 
     // Textfelder (Text-Werkzeug)
     @State private var textBoxes: [NoteTextBox] = []
@@ -173,6 +179,24 @@ public struct LessonDrawingOverlayView: View {
                         !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     }
                 }
+            }
+            .overlay(alignment: .bottom) {
+                if let toastMessage {
+                    Text(toastMessage)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 12)
+                        .background(
+                            Capsule().fill(Color.black.opacity(0.78))
+                        )
+                        .padding(.bottom, 40)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        .allowsHitTesting(false)
+                }
+            }
+            .sheet(item: $shareImageItem) { item in
+                ShareSheet(activityItems: [item.image])
             }
             .alert("Handschrift umwandeln", isPresented: Binding(
                 get: { recognitionAlertMessage != nil },
@@ -456,6 +480,8 @@ public struct LessonDrawingOverlayView: View {
                 },
                 isConvertingHandwriting: isConvertingHandwriting,
                 onConvertHandwriting: { convertHandwritingToEditableText() },
+                onShareAsImage: { shareNoteAsImage() },
+                onCopyTextToClipboard: { copyNoteTextToClipboard() },
                 onUndo: { performUndo() },
                 onRedo: { performRedo() },
                 onClear: { clearPage() }
@@ -640,6 +666,74 @@ public struct LessonDrawingOverlayView: View {
         textBoxes[index].colorHex = normalized
         Haptics.select()
         textUndo.push(before: before, after: textBoxes)
+    }
+
+    // MARK: - Teilen
+
+    /// Rendert die Notiz (Hintergrund, Striche und Textfelder) und öffnet den
+    /// System-Teilen-Dialog.
+    private func shareNoteAsImage() {
+        selectedTextBoxID = nil
+        editingTextBoxID = nil
+
+        let currentDrawing = canvasView?.drawing ?? drawing
+        let canvasRect = CGRect(origin: .zero, size: recognitionCanvasSize)
+        let visibleBoxes = textBoxes.filter {
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        guard !currentDrawing.strokes.isEmpty || !visibleBoxes.isEmpty,
+              let image = PencilKitCanvasRepresentable.renderNotePreview(
+                drawing: currentDrawing.cropped(to: canvasRect),
+                textBoxes: visibleBoxes,
+                backgroundStyle: noteBackgroundStyle,
+                clipRect: canvasRect
+              ) else {
+            Haptics.warning()
+            showToast("Diese Notiz ist noch leer.")
+            return
+        }
+
+        Haptics.tap()
+        shareImageItem = ShareImageItem(image: image)
+    }
+
+    /// Kopiert den Inhalt aller Textfelder (von oben nach unten gelesen) in
+    /// die Zwischenablage.
+    private func copyNoteTextToClipboard() {
+        let sorted = textBoxes
+            .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { lhs, rhs in
+                // Zeilenweise lesen: erst grob nach Höhe, dann von links nach rechts.
+                if abs(lhs.y - rhs.y) > 12 { return lhs.y < rhs.y }
+                return lhs.x < rhs.x
+            }
+
+        let joined = sorted
+            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .joined(separator: "\n")
+
+        guard !joined.isEmpty else {
+            Haptics.warning()
+            showToast("Es gibt keinen Text zum Kopieren.")
+            return
+        }
+
+        UIPasteboard.general.string = joined
+        Haptics.success()
+        showToast("Text in die Zwischenablage kopiert.")
+    }
+
+    /// Blendet eine kurze Bestätigung ein, die von selbst wieder verschwindet.
+    private func showToast(_ message: String) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            toastMessage = message
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            withAnimation(.easeIn(duration: 0.25)) {
+                if toastMessage == message { toastMessage = nil }
+            }
+        }
     }
 
     // MARK: - Handschrift in Text
