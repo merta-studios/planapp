@@ -21,11 +21,10 @@ public struct StatusBadge: View {
     public var body: some View {
         HStack(spacing: 3) {
             Image(systemName: iconName)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 9, weight: .regular, design: .default))
 
             Text(title)
-                .font(.system(size: 10, weight: .bold))
-                .textCase(.uppercase)
+                .font(.system(size: 10, weight: .regular, design: .default))
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
@@ -51,7 +50,7 @@ public struct StatusBadge: View {
         case .today:
             return "Heute"
         case .doublePeriod:
-            return "Doppelstd."
+            return "Doppelstunde"
         }
     }
 
@@ -73,7 +72,7 @@ public struct StatusBadge: View {
     private var backgroundColor: Color {
         switch type {
         case .cancelled:
-            return Color.red
+            return Color.red.opacity(0.85)
         case .substitution:
             return Color(red: 0.95, green: 0.55, blue: 0.1)
         case .hasNote:

@@ -1,211 +1,237 @@
 import SwiftUI
 import PencilKit
 
-/// Vollbild-Overlay mit vergrößerter transparenter Zeichenfläche über abgedunkeltem Stundenplan
+/// Vollbild-Overlay mit zentrierter transparenter Zeichenfläche über abgedunkeltem Stundenplan
 public struct LessonDrawingOverlayView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
+    @Environment(\.colorScheme) private var colorScheme
 
     public let lesson: Lesson
     public let noteNamespace: Namespace.ID
 
     @State private var drawing: PKDrawing = PKDrawing()
-    @State private var lineCount: Int = 6
-    @State private var toolSelection: DrawingToolSelection = .pen(color: .black) // Schwarz als Standard
+    @State private var canvasHeight: CGFloat = 460
+    @State private var dragStartHeight: CGFloat = 460
+    @State private var toolSelection: DrawingToolSelection = .pen(color: .black)
+    @State private var penWidth: CGFloat = 3.5
     @State private var canvasView: PKCanvasView? = nil
 
-    // Zoom & Pan Transformationen
+    // Butterweiche Zoom- & Pan-Transformationen in Echtzeit
     @State private var scale: CGFloat = 1.0
-    @State private var lastScale: CGFloat = 1.0
+    @State private var baseScale: CGFloat = 1.0
     @State private var offset: CGSize = .zero
-    @State private var lastOffset: CGSize = .zero
+    @State private var baseOffset: CGSize = .zero
 
-    private let paperWidth: CGFloat = 620
-    private let lineHeight: CGFloat = 52
-    private let headerHeight: CGFloat = 68
+    // Status für nahtlose Farbübergangs-Animation
+    @State private var isFullyAppeared: Bool = false
+
+    private let paperWidth: CGFloat = 640
+    private let headerHeight: CGFloat = 56
 
     public init(lesson: Lesson, noteNamespace: Namespace.ID) {
         self.lesson = lesson
         self.noteNamespace = noteNamespace
     }
 
-    private var paperHeight: CGFloat {
-        headerHeight + CGFloat(lineCount) * lineHeight + 60
-    }
-
     public var body: some View {
-        let (displayName, _, _) = viewModel.resolveSubjectDisplay(for: lesson)
+        let (displayName, _, subjectColor) = viewModel.resolveSubjectDisplay(for: lesson)
 
-        ZStack {
-            // 1. ABGEDUNKELTER HINTERGRUND
-            Color.black.opacity(0.60)
-                .background(.ultraThinMaterial)
-                .ignoresSafeArea()
-                .onTapGesture {
-                    saveAndDismiss()
-                }
-
-            // 2. INTERAKTIVER NOTIZZETTEL (Zoombar & Verschiebbar)
-            VStack(spacing: 0) {
-                ZStack(alignment: .topLeading) {
-                    // Transparenter, linienloser Hintergrund
-                    LinedPaperBackground(
-                        lineCount: lineCount,
-                        lineHeight: lineHeight,
-                        headerHeight: headerHeight,
-                        subjectName: displayName,
-                        dateText: "\(lesson.dateString) • \(lesson.periodNumber). Stunde"
-                    )
-
-                    // PencilKit Zeichenebene
-                    PencilKitCanvasRepresentable(
-                        drawing: $drawing,
-                        toolSelection: toolSelection,
-                        onCanvasCreated: { cv in
-                            self.canvasView = cv
-                        }
-                    )
-                    .frame(width: paperWidth, height: paperHeight - 50)
-                    .padding(.top, 10)
-                }
-                .frame(width: paperWidth, height: paperHeight - 50)
-
-                // UNTERER BEREICH: "Erweitern" (+ Zeile hinzufügen)
-                HStack {
-                    Button(action: {
-                        if lineCount < 10 {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                lineCount += 1
-                            }
-                        }
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: lineCount < 10 ? "plus.circle.fill" : "checkmark.circle.fill")
-                                .font(.system(size: 15, weight: .bold))
-                            Text(lineCount < 10 ? "＋ Zeile hinzufügen (Erweitern)" : "Maximal 10 Zeilen erreicht")
-                                .font(.system(size: 14, weight: .bold, design: .rounded))
-                            Text("(\(lineCount)/10)")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 10)
-                        .background(
-                            Capsule()
-                                .fill(Color(UIColor.secondarySystemBackground))
-                                .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
-                        )
-                        .foregroundColor(lineCount < 10 ? .blue : .secondary)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .hoverEffect(.lift)
-                    .disabled(lineCount >= 10)
-                }
-                .frame(width: paperWidth, height: 50)
-                .background(Color.white.opacity(0.12))
-                .clipShape(
-                    CustomCornersShape(corners: [.bottomLeft, .bottomRight], radius: 16)
-                )
-            }
-            .frame(width: paperWidth, height: paperHeight)
-            // Öffnet aus dem angetippten Fachblock und gleitet beim Schließen
-            // exakt dorthin zurück.
-            .matchedGeometryEffect(
-                id: "note_\(lesson.noteKey)",
-                in: noteNamespace,
-                properties: .frame,
-                anchor: .center,
-                isSource: false
-            )
-            .scaleEffect(scale)
-            .offset(offset)
-            // Zoom & Verschiebegesten
-            .gesture(
-                SimultaneousGesture(
-                    // 2-Finger Zoom & Pinch
-                    MagnificationGesture()
-                        .onChanged { value in
-                            let delta = value / lastScale
-                            lastScale = value
-                            scale = min(max(scale * delta, 0.7), 2.8)
-                        }
-                        .onEnded { _ in
-                            lastScale = 1.0
-                        },
-                    // 1-Finger oder 2-Finger Verschiebung
-                    DragGesture()
-                        .onChanged { value in
-                            offset = CGSize(
-                                width: lastOffset.width + value.translation.width,
-                                height: lastOffset.height + value.translation.height
-                            )
-                        }
-                        .onEnded { _ in
-                            lastOffset = offset
-                        }
-                )
-            )
-
-            // 3. TOP FLOATING WERKZEUGLEISTE & SCHLIESSEN-BUTTON
-            VStack {
-                HStack {
-                    // Schließen & Speichern Button
-                    Button(action: {
+        GeometryReader { geometry in
+            ZStack(alignment: .center) {
+                // 1. ABGEDUNKELTER LIQUID-HINTERGRUND
+                Color.black.opacity(isFullyAppeared ? 0.60 : 0.0)
+                    .background(.ultraThinMaterial.opacity(isFullyAppeared ? 1.0 : 0.0))
+                    .ignoresSafeArea()
+                    .onTapGesture {
                         saveAndDismiss()
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 14, weight: .bold))
-                            Text("Fertig & Speichern")
-                                .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .clipShape(Capsule())
-                        .shadow(color: Color.blue.opacity(0.3), radius: 6, x: 0, y: 3)
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    .hoverEffect(.lift)
 
-                    Spacer()
+                // 2. ZENTRIERTER INTERAKTIVER NOTIZZETTEL
+                VStack(spacing: 8) {
+                    ZStack(alignment: .topLeading) {
+                        // Nahtloser Farb- und Formübergang vom Stundenplan-Block zur Zeichenfläche
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(
+                                isFullyAppeared
+                                    ? AnyShapeStyle(.ultraThinMaterial)
+                                    : AnyShapeStyle(subjectColor)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .strokeBorder(
+                                        LinearGradient(
+                                            colors: [
+                                                (isFullyAppeared ? Color.white : subjectColor).opacity(0.35),
+                                                Color.white.opacity(0.10)
+                                            ],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        ),
+                                        lineWidth: 1
+                                    )
+                            )
+                            .shadow(color: Color.black.opacity(0.22), radius: 20, x: 0, y: 10)
 
-                    // Werkzeugleiste
-                    DrawingToolbarView(
-                        toolSelection: $toolSelection,
-                        onUndo: { canvasView?.undoManager?.undo() },
-                        onRedo: { canvasView?.undoManager?.redo() },
-                        onClear: {
-                            drawing = PKDrawing()
-                            canvasView?.drawing = PKDrawing()
+                        // Kopfzeile mit Fachname und Datum
+                        HStack(alignment: .center) {
+                            Text(displayName)
+                                .font(.system(size: 18, weight: .regular, design: .default))
+                                .foregroundColor(.white)
+
+                            Spacer()
+
+                            Text("\(lesson.dateString) • \(lesson.periodNumber). Stunde")
+                                .font(.system(size: 13, weight: .regular, design: .default))
+                                .foregroundColor(.white.opacity(0.80))
                         }
+                        .padding(.horizontal, 20)
+                        .padding(.top, 14)
+                        .frame(height: headerHeight)
+
+                        // PencilKit Zeichenebene (nur mit Apple Pencil beschreibbar)
+                        PencilKitCanvasRepresentable(
+                            drawing: $drawing,
+                            toolSelection: toolSelection,
+                            penWidth: penWidth,
+                            colorScheme: colorScheme,
+                            onCanvasCreated: { cv in
+                                self.canvasView = cv
+                            }
+                        )
+                        .frame(width: paperWidth, height: max(180, canvasHeight - headerHeight - 10))
+                        .padding(.top, headerHeight)
+                    }
+                    .frame(width: paperWidth, height: canvasHeight)
+
+                    // Runder Zieh-Button zum flexiblen Ändern der Höhe
+                    Circle()
+                        .fill(.ultraThinMaterial)
+                        .frame(width: 36, height: 36)
+                        .overlay(
+                            Image(systemName: "arrow.up.and.down")
+                                .font(.system(size: 14, weight: .regular, design: .default))
+                                .foregroundColor(.white)
+                        )
+                        .overlay(
+                            Circle()
+                                .strokeBorder(Color.white.opacity(0.35), lineWidth: 1)
+                        )
+                        .shadow(color: Color.black.opacity(0.18), radius: 4, x: 0, y: 2)
+                        .contentShape(Circle())
+                        .hoverEffect(.lift)
+                        .gesture(
+                            DragGesture(minimumDistance: 1)
+                                .onChanged { value in
+                                    let newH = dragStartHeight + value.translation.height
+                                    canvasHeight = max(260, min(1000, newH))
+                                }
+                                .onEnded { _ in
+                                    dragStartHeight = canvasHeight
+                                }
+                        )
+                }
+                .matchedGeometryEffect(
+                    id: "lesson_card_\(lesson.noteKey)",
+                    in: noteNamespace,
+                    properties: .frame,
+                    anchor: .center,
+                    isSource: false
+                )
+                .scaleEffect(scale)
+                .offset(offset)
+                // Exakt zentriert auf dem Bildschirm
+                .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                // Stufenlose, kontinuierliche 2-Finger Zoom- & Verschiebegeste
+                .gesture(
+                    SimultaneousGesture(
+                        MagnificationGesture()
+                            .onChanged { value in
+                                scale = max(0.6, min(3.0, baseScale * value))
+                            }
+                            .onEnded { _ in
+                                baseScale = scale
+                            },
+                        DragGesture()
+                            .onChanged { value in
+                                offset = CGSize(
+                                    width: baseOffset.width + value.translation.width,
+                                    height: baseOffset.height + value.translation.height
+                                )
+                            }
+                            .onEnded { _ in
+                                baseOffset = offset
+                            }
                     )
+                )
+
+                // 3. TOP FLOATING WERKZEUGLEISTE & SCHLIESSEN-BUTTON
+                VStack {
+                    HStack(spacing: 12) {
+                        // Schließen & Speichern Liquid Glass Button
+                        Button(action: saveAndDismiss) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 13, weight: .regular, design: .default))
+                                Text("Fertig & Speichern")
+                                    .font(.system(size: 13, weight: .regular, design: .default))
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                        }
+                        .liquidGlassButton(cornerRadius: 18, tint: .blue, isFilled: true)
+                        .foregroundColor(.white)
+
+                        Spacer()
+
+                        // Werkzeugleiste (Stift, Marker, Radierer, Dicke-Slider, Undo/Redo)
+                        DrawingToolbarView(
+                            toolSelection: $toolSelection,
+                            penWidth: $penWidth,
+                            onUndo: { canvasView?.undoManager?.undo() },
+                            onRedo: { canvasView?.undoManager?.redo() },
+                            onClear: {
+                                drawing = PKDrawing()
+                                canvasView?.drawing = PKDrawing()
+                            }
+                        )
+
+                        Spacer()
+
+                        // Schließen-Hinweis
+                        Text("Tippe ins Dunkle zum Schließen")
+                            .font(.system(size: 12, weight: .regular, design: .default))
+                            .foregroundColor(.white.opacity(0.85))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule()
+                                    .fill(.ultraThinMaterial)
+                            )
+                            .overlay(
+                                Capsule()
+                                    .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
+                            )
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 16)
 
                     Spacer()
-
-                    // Hinweis-Info
-                    Text("Tippe ins Dunkle zum Schließen")
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundColor(.white.opacity(0.8))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Color.black.opacity(0.4))
-                        .clipShape(Capsule())
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 20)
-
-                Spacer()
             }
         }
         .onAppear {
             loadExistingNote()
+            withAnimation(.easeInOut(duration: 0.35)) {
+                isFullyAppeared = true
+            }
         }
     }
 
     private func loadExistingNote() {
         if let note = viewModel.noteFor(lesson: lesson) {
-            self.lineCount = note.lineCount
+            // Zeilenanzahl aus bestehender Notiz in Höhe übersetzen
+            self.canvasHeight = max(320, CGFloat(note.lineCount) * 56 + headerHeight + 40)
+            self.dragStartHeight = self.canvasHeight
             if let pkDrawing = try? PKDrawing(data: note.drawingData) {
                 self.drawing = pkDrawing
             }
@@ -217,27 +243,17 @@ public struct LessonDrawingOverlayView: View {
         let croppedImage = PencilKitCanvasRepresentable.cropDrawingToContent(currentDrawing)
         let pngData = croppedImage?.pngData()
         let drawingData = currentDrawing.dataRepresentation()
+        let calculatedLines = max(3, min(10, Int((canvasHeight - headerHeight) / 56)))
+
+        withAnimation(.easeInOut(duration: 0.25)) {
+            isFullyAppeared = false
+        }
 
         viewModel.saveNote(
             for: lesson,
             drawingData: drawingData,
             croppedImageData: pngData,
-            lineCount: lineCount
+            lineCount: calculatedLines
         )
-    }
-}
-
-/// Benutzerdefinierte Ecken-Rundung für das Papier-Ende
-struct CustomCornersShape: Shape {
-    var corners: UIRectCorner
-    var radius: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        let path = UIBezierPath(
-            roundedRect: rect,
-            byRoundingCorners: corners,
-            cornerRadii: CGSize(width: radius, height: radius)
-        )
-        return Path(path.cgPath)
     }
 }

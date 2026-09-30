@@ -7,62 +7,54 @@ public struct EmptyTimetableView: View {
     public init() {}
 
     public var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 18) {
             Image(systemName: "calendar.badge.plus")
-                .font(.system(size: 54))
+                .font(.system(size: 48, weight: .regular, design: .default))
                 .foregroundColor(.blue)
 
             Text("Kein Stundenplan hinterlegt")
-                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .font(.system(size: 20, weight: .regular, design: .default))
                 .foregroundColor(.primary)
 
             Text("Richte deine WebUntis-Zugangsdaten in den Einstellungen ein oder teste die App direkt mit realistischen Beispieldaten.")
-                .font(.system(size: 15, weight: .regular, design: .rounded))
+                .font(.system(size: 14, weight: .regular, design: .default))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 480)
+                .frame(maxWidth: 460)
 
-            HStack(spacing: 16) {
-                // Einstellungen öffnen
+            HStack(spacing: 14) {
+                // Einstellungen öffnen Liquid Glass Button
                 Button(action: { viewModel.isSettingsPresented = true }) {
                     HStack(spacing: 8) {
-                        Image(systemName: "gearshape.fill")
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 14, weight: .regular, design: .default))
                         Text("WebUntis konfigurieren")
+                            .font(.system(size: 14, weight: .regular, design: .default))
                     }
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
-                    .background(Color.blue)
-                    .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .hoverEffect(.lift)
+                .liquidGlassButton(cornerRadius: 12, tint: .blue, isFilled: true)
+                .foregroundColor(.white)
 
-                // Beispieldaten laden
+                // Beispieldaten laden Liquid Glass Button
                 Button(action: { viewModel.loadDemoData() }) {
                     HStack(spacing: 8) {
                         Image(systemName: "sparkles")
+                            .font(.system(size: 14, weight: .regular, design: .default))
                         Text("Beispieldaten laden")
+                            .font(.system(size: 14, weight: .regular, design: .default))
                     }
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
-                    .background(Color(UIColor.secondarySystemFill))
-                    .foregroundColor(.primary)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .hoverEffect(.lift)
+                .liquidGlassButton(cornerRadius: 12, tint: .orange)
+                .foregroundColor(.orange)
             }
-            .padding(.top, 8)
+            .padding(.top, 6)
         }
-        .padding(32)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(UIColor.secondarySystemBackground).opacity(0.85))
-                .shadow(color: Color.black.opacity(0.08), radius: 12, x: 0, y: 4)
-        )
-        .frame(maxWidth: 580)
+        .padding(28)
+        .liquidGlassCard(cornerRadius: 20, strokeOpacity: 0.25)
+        .frame(maxWidth: 540)
     }
 }

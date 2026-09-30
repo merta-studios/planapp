@@ -1,22 +1,27 @@
 import SwiftUI
 import PencilKit
 
-/// Vorgegebene Werkzeugleiste für den Notizzettel (Stift, Textmarker, Radierer, Undo/Redo)
+/// Vorgegebene Werkzeugleiste für den Notizzettel (Stift, Textmarker, Standard-Radierer, Dicke-Slider, Undo/Redo)
 public struct DrawingToolbarView: View {
     @Binding public var toolSelection: DrawingToolSelection
+    @Binding public var penWidth: CGFloat
+
     public let onUndo: () -> Void
     public let onRedo: () -> Void
     public let onClear: () -> Void
 
-    // Vordefinierte Farben für Stift (nur Schwarz, Rot, Blau, Grün)
-    public let penColors: [(name: String, color: UIColor, swiftColor: Color)] = [
-        ("Schwarz", .black, .black),
-        ("Rot", UIColor(red: 0.88, green: 0.15, blue: 0.15, alpha: 1.0), .red),
-        ("Blau", UIColor(red: 0.10, green: 0.45, blue: 0.90, alpha: 1.0), .blue),
-        ("Grün", UIColor(red: 0.12, green: 0.65, blue: 0.25, alpha: 1.0), .green)
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var showThicknessSlider: Bool = false
+
+    // Vordefinierte Farben für Stift (Schwarz wird im Dark Mode dynamisch weiß)
+    public let penColors: [(name: String, color: UIColor, lightColor: Color, darkColor: Color)] = [
+        ("Schwarz", .black, .black, .white),
+        ("Rot", UIColor(red: 0.88, green: 0.15, blue: 0.15, alpha: 1.0), .red, .red),
+        ("Blau", UIColor(red: 0.10, green: 0.45, blue: 0.90, alpha: 1.0), .blue, .blue),
+        ("Grün", UIColor(red: 0.12, green: 0.65, blue: 0.25, alpha: 1.0), .green, .green)
     ]
 
-    // Vordefinierte Farben für Textmarker (nur Gelb, Orange, Grün, Blau, Lila)
+    // Vordefinierte Farben für Textmarker
     public let markerColors: [(name: String, color: UIColor, swiftColor: Color)] = [
         ("Gelb", UIColor(red: 1.0, green: 0.90, blue: 0.20, alpha: 0.60), Color(red: 1.0, green: 0.90, blue: 0.20)),
         ("Orange", UIColor(red: 1.0, green: 0.58, blue: 0.15, alpha: 0.60), .orange),
@@ -27,22 +32,24 @@ public struct DrawingToolbarView: View {
 
     public init(
         toolSelection: Binding<DrawingToolSelection>,
+        penWidth: Binding<CGFloat>,
         onUndo: @escaping () -> Void,
         onRedo: @escaping () -> Void,
         onClear: @escaping () -> Void
     ) {
         self._toolSelection = toolSelection
+        self._penWidth = penWidth
         self.onUndo = onUndo
         self.onRedo = onRedo
         self.onClear = onClear
     }
 
     public var body: some View {
-        HStack(spacing: 16) {
-            // 1. STIFT (Buntstift) mit Farben
-            HStack(spacing: 8) {
+        HStack(spacing: 10) {
+            // 1. STIFT (Apple Standard-Stift mit Druckerkennung)
+            HStack(spacing: 6) {
                 Image(systemName: "pencil.tip")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.system(size: 14, weight: .regular, design: .default))
                     .foregroundColor(.primary)
 
                 ForEach(penColors, id: \.name) { item in
@@ -52,42 +59,84 @@ public struct DrawingToolbarView: View {
                         }
                         return false
                     }()
+                    let swatchColor = (colorScheme == .dark ? item.darkColor : item.lightColor)
 
                     Button(action: {
                         toolSelection = .pen(color: item.color)
                     }) {
                         ZStack {
                             Circle()
-                                .fill(item.swiftColor)
-                                .frame(width: 28, height: 28)
-                                .shadow(color: item.swiftColor.opacity(0.3), radius: 2, x: 0, y: 1)
+                                .fill(swatchColor)
+                                .frame(width: 22, height: 22)
+                                .overlay(
+                                    Circle()
+                                        .strokeBorder(Color.white.opacity(0.4), lineWidth: 1)
+                                )
 
                             if isSelected {
                                 Circle()
-                                    .strokeBorder(Color.white, lineWidth: 2.5)
-                                    .frame(width: 28, height: 28)
-                                Circle()
-                                    .strokeBorder(Color.black.opacity(0.3), lineWidth: 1)
-                                    .frame(width: 32, height: 32)
+                                    .strokeBorder(Color.blue, lineWidth: 2)
+                                    .frame(width: 26, height: 26)
                             }
                         }
                     }
                     .buttonStyle(PlainButtonStyle())
                     .hoverEffect(.lift)
                 }
+
+                // Strichstärke-Anzeige / Slider-Umschalter
+                Button(action: {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                        showThicknessSlider.toggle()
+                    }
+                }) {
+                    ZStack {
+                        Circle()
+                            .fill(Color(UIColor.tertiarySystemFill))
+                            .frame(width: 24, height: 24)
+
+                        Circle()
+                            .fill(Color.primary)
+                            .frame(width: max(2, min(14, penWidth * 1.5)), height: max(2, min(14, penWidth * 1.5)))
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+                .hoverEffect(.lift)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color(UIColor.tertiarySystemBackground))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color(UIColor.tertiarySystemBackground).opacity(0.7))
             .clipShape(Capsule())
 
+            // Ausklappbarer Dicke-Slider
+            if showThicknessSlider {
+                HStack(spacing: 6) {
+                    Text("Dicke:")
+                        .font(.system(size: 11, weight: .regular, design: .default))
+                        .foregroundColor(.secondary)
+
+                    Slider(value: $penWidth, in: 1.0...14.0, step: 0.5)
+                        .frame(width: 90)
+
+                    Text(String(format: "%.1f", penWidth))
+                        .font(.system(size: 11, weight: .regular, design: .default))
+                        .foregroundColor(.secondary)
+                        .frame(width: 24)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color(UIColor.tertiarySystemBackground).opacity(0.85))
+                .clipShape(Capsule())
+                .transition(.scale.combined(with: .opacity))
+            }
+
             Divider()
-                .frame(height: 24)
+                .frame(height: 18)
 
             // 2. TEXTMARKER mit Farben
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: "highlighter")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.system(size: 14, weight: .regular, design: .default))
                     .foregroundColor(.primary)
 
                 ForEach(markerColors, id: \.name) { item in
@@ -102,14 +151,14 @@ public struct DrawingToolbarView: View {
                         toolSelection = .marker(color: item.color)
                     }) {
                         ZStack {
-                            RoundedRectangle(cornerRadius: 6)
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
                                 .fill(item.swiftColor)
-                                .frame(width: 26, height: 26)
+                                .frame(width: 20, height: 20)
 
                             if isSelected {
-                                RoundedRectangle(cornerRadius: 6)
-                                    .strokeBorder(Color.primary, lineWidth: 2)
-                                    .frame(width: 30, height: 30)
+                                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                    .strokeBorder(Color.primary, lineWidth: 1.5)
+                                    .frame(width: 24, height: 24)
                             }
                         }
                     }
@@ -117,15 +166,15 @@ public struct DrawingToolbarView: View {
                     .hoverEffect(.lift)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color(UIColor.tertiarySystemBackground))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color(UIColor.tertiarySystemBackground).opacity(0.7))
             .clipShape(Capsule())
 
             Divider()
-                .frame(height: 24)
+                .frame(height: 18)
 
-            // 3. RADIERER
+            // 3. STANDARD-RADIERER (Bitmap / Pixel-Radierer)
             let isEraserSelected: Bool = {
                 if case .eraser = toolSelection { return true }
                 return false
@@ -134,15 +183,15 @@ public struct DrawingToolbarView: View {
             Button(action: {
                 toolSelection = .eraser
             }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "eraser.fill")
-                        .font(.system(size: 15, weight: .semibold))
+                HStack(spacing: 4) {
+                    Image(systemName: "eraser")
+                        .font(.system(size: 13, weight: .regular, design: .default))
                     Text("Radierer")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 12, weight: .regular, design: .default))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(isEraserSelected ? Color.blue : Color(UIColor.tertiarySystemBackground))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(isEraserSelected ? Color.blue : Color(UIColor.tertiarySystemBackground).opacity(0.7))
                 .foregroundColor(isEraserSelected ? .white : .primary)
                 .clipShape(Capsule())
             }
@@ -150,54 +199,63 @@ public struct DrawingToolbarView: View {
             .hoverEffect(.lift)
 
             Divider()
-                .frame(height: 24)
+                .frame(height: 18)
 
             // 4. RÜCKGÄNGIG & VORWÄRTS
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 Button(action: onUndo) {
                     Image(systemName: "arrow.uturn.backward")
-                        .font(.system(size: 15, weight: .bold))
-                        .frame(width: 34, height: 34)
-                        .background(Color(UIColor.tertiarySystemBackground))
+                        .font(.system(size: 13, weight: .regular, design: .default))
+                        .frame(width: 28, height: 28)
+                        .background(Color(UIColor.tertiarySystemBackground).opacity(0.7))
                         .clipShape(Circle())
                 }
                 .buttonStyle(PlainButtonStyle())
                 .hoverEffect(.lift)
-                .accessibilityLabel("Rückgängig")
 
                 Button(action: onRedo) {
                     Image(systemName: "arrow.uturn.forward")
-                        .font(.system(size: 15, weight: .bold))
-                        .frame(width: 34, height: 34)
-                        .background(Color(UIColor.tertiarySystemBackground))
+                        .font(.system(size: 13, weight: .regular, design: .default))
+                        .frame(width: 28, height: 28)
+                        .background(Color(UIColor.tertiarySystemBackground).opacity(0.7))
                         .clipShape(Circle())
                 }
                 .buttonStyle(PlainButtonStyle())
                 .hoverEffect(.lift)
-                .accessibilityLabel("Wiederholen")
             }
 
             Divider()
-                .frame(height: 24)
+                .frame(height: 18)
 
             // 5. ZETTEL LEEREN
             Button(action: onClear) {
                 Image(systemName: "trash")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 13, weight: .regular, design: .default))
                     .foregroundColor(.red)
-                    .frame(width: 34, height: 34)
+                    .frame(width: 28, height: 28)
                     .background(Color.red.opacity(0.12))
                     .clipShape(Circle())
             }
             .buttonStyle(PlainButtonStyle())
             .hoverEffect(.lift)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
         .background(
             Capsule()
-                .fill(Color(UIColor.secondarySystemBackground).opacity(0.95))
-                .shadow(color: Color.black.opacity(0.18), radius: 12, x: 0, y: 4)
+                .fill(.ultraThinMaterial)
         )
+        .overlay(
+            Capsule()
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.3), Color.white.opacity(0.1)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+        )
+        .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
     }
 }

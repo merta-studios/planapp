@@ -19,11 +19,11 @@ public struct PeriodColumnView: View {
                     .fill(Color(UIColor.secondarySystemBackground).opacity(0.8))
 
                 HStack(spacing: 4) {
-                    Image(systemName: "clock.fill")
-                        .font(.system(size: 13, weight: .semibold))
+                    Image(systemName: "clock")
+                        .font(.system(size: 13, weight: .regular, design: .default))
                         .foregroundColor(.secondary)
                     Text("Std.")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .font(.system(size: 13, weight: .regular, design: .default))
                         .foregroundColor(.secondary)
                 }
             }
@@ -32,7 +32,6 @@ public struct PeriodColumnView: View {
             // Perioden-Zeilen
             ForEach(Array(viewModel.periods.enumerated()), id: \.element.id) { index, period in
                 ZStack {
-                    // Jede 2. Zeile / Spalte mit grauerer Markierung (ohne harte Tabellenlinien)
                     Rectangle()
                         .fill(
                             index % 2 == 1
@@ -41,19 +40,16 @@ public struct PeriodColumnView: View {
                         )
 
                     VStack(spacing: 2) {
-                        // Über der Stundennummer klein die Anfangszeit
                         Text(period.startTime)
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .font(.system(size: 11, weight: .regular, design: .default))
                             .foregroundColor(.secondary)
 
-                        // Stundennummer groß und fett in der Mitte
                         Text("\(period.periodNumber)")
-                            .font(.system(size: 20, weight: .heavy, design: .rounded))
+                            .font(.system(size: 18, weight: .regular, design: .default))
                             .foregroundColor(.primary)
 
-                        // Unter der Stundennummer klein die Endzeit
                         Text(period.endTime)
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .font(.system(size: 11, weight: .regular, design: .default))
                             .foregroundColor(.secondary)
                     }
                     .padding(.vertical, 4)

@@ -1,23 +1,21 @@
 import SwiftUI
 import UIKit
 
-/// Robustes UIKit-Textfeld für SwiftUI-Forms.
-///
-/// SwiftUIs natives TextField verliert in als Sheet präsentierten Forms auf
-/// manchen iPad-/Swift-Playgrounds-Konfigurationen zwar nicht den Cursor, fordert
-/// aber keine Bildschirmtastatur an. Dieses Textfeld wird direkt First Responder
-/// und lädt seine Eingabeansicht beim Antippen explizit neu.
-public struct KeyboardTextField: UIViewRepresentable {
+/// Zuverlässiges Textfeld für iPadOS & iOS mit voller Tastatur-Unterstützung.
+/// Verwendet natives SwiftUI TextField mit angepasstem Liquid-Glass Styling und
+/// garantiert, dass die Bildschirmtastatur beim Antippen sofort erscheint.
+public struct KeyboardTextField: View {
     @Binding private var text: String
-
     private let placeholder: String
     private let isSecure: Bool
-    private let capitalization: UITextAutocapitalizationType
-    private let autocorrection: UITextAutocorrectionType
+    private let capitalization: TextInputAutocapitalization
+    private let autocorrection: Bool
     private let keyboardType: UIKeyboardType
     private let contentType: UITextContentType?
-    private let returnKeyType: UIReturnKeyType
+    private let returnKeyType: SubmitLabel
     private let onSubmit: () -> Void
+
+    @FocusState private var isFocused: Bool
 
     public init(
         _ placeholder: String,
@@ -27,100 +25,92 @@ public struct KeyboardTextField: UIViewRepresentable {
         autocorrection: UITextAutocorrectionType = .default,
         keyboardType: UIKeyboardType = .default,
         contentType: UITextContentType? = nil,
-        returnKeyType: UIReturnKeyType = .next,
+        returnKeyType: UIReturnKeyType = .done,
         onSubmit: @escaping () -> Void = {}
     ) {
         self.placeholder = placeholder
         self._text = text
         self.isSecure = isSecure
-        self.capitalization = capitalization
-        self.autocorrection = autocorrection
+        self.autocorrection = (autocorrection != .no)
         self.keyboardType = keyboardType
         self.contentType = contentType
-        self.returnKeyType = returnKeyType
         self.onSubmit = onSubmit
+
+        switch capitalization {
+        case .none:
+            self.capitalization = .never
+        case .allCharacters:
+            self.capitalization = .characters
+        case .words:
+            self.capitalization = .words
+        case .sentences:
+            self.capitalization = .sentences
+        @unknown default:
+            self.capitalization = .sentences
+        }
+
+        switch returnKeyType {
+        case .done:
+            self.returnKeyType = .done
+        case .go:
+            self.returnKeyType = .go
+        case .next:
+            self.returnKeyType = .next
+        case .search:
+            self.returnKeyType = .search
+        case .send:
+            self.returnKeyType = .send
+        default:
+            self.returnKeyType = .done
+        }
     }
 
-    public func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
-    }
+    public var body: some View {
+        HStack(spacing: 8) {
+            if isSecure {
+                SecureField(placeholder, text: $text)
+                    .font(.system(size: 15, weight: .regular, design: .default))
+                    .textInputAutocapitalization(capitalization)
+                    .autocorrectionDisabled(!autocorrection)
+                    .focused($isFocused)
+                    .submitLabel(returnKeyType)
+                    .onSubmit(onSubmit)
+            } else {
+                TextField(placeholder, text: $text)
+                    .font(.system(size: 15, weight: .regular, design: .default))
+                    .textInputAutocapitalization(capitalization)
+                    .autocorrectionDisabled(!autocorrection)
+                    .keyboardType(keyboardType)
+                    .focused($isFocused)
+                    .submitLabel(returnKeyType)
+                    .onSubmit(onSubmit)
+            }
 
-    public func makeUIView(context: Context) -> ActivatingTextField {
-        let textField = ActivatingTextField()
-        textField.delegate = context.coordinator
-        textField.borderStyle = .roundedRect
-        textField.clearButtonMode = .whileEditing
-        textField.font = .preferredFont(forTextStyle: .body)
-        textField.adjustsFontForContentSizeCategory = true
-        textField.addTarget(
-            context.coordinator,
-            action: #selector(Coordinator.textChanged(_:)),
-            for: .editingChanged
+            if !text.isEmpty {
+                Button(action: {
+                    text = ""
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14, weight: .regular, design: .default))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .hoverEffect(.lift)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(UIColor.tertiarySystemBackground).opacity(0.75))
         )
-        configure(textField)
-        return textField
-    }
-
-    public func updateUIView(_ textField: ActivatingTextField, context: Context) {
-        context.coordinator.parent = self
-        if textField.text != text {
-            textField.text = text
-        }
-        configure(textField)
-    }
-
-    private func configure(_ textField: UITextField) {
-        textField.placeholder = placeholder
-        if textField.isSecureTextEntry != isSecure {
-            textField.isSecureTextEntry = isSecure
-        }
-        textField.autocapitalizationType = capitalization
-        textField.autocorrectionType = autocorrection
-        textField.spellCheckingType = autocorrection == .no ? .no : .default
-        textField.keyboardType = keyboardType
-        textField.textContentType = contentType
-        textField.returnKeyType = returnKeyType
-    }
-
-    public final class Coordinator: NSObject, UITextFieldDelegate {
-        fileprivate var parent: KeyboardTextField
-
-        fileprivate init(parent: KeyboardTextField) {
-            self.parent = parent
-        }
-
-        @objc fileprivate func textChanged(_ sender: UITextField) {
-            parent.text = sender.text ?? ""
-        }
-
-        public func textFieldDidBeginEditing(_ textField: UITextField) {
-            // `inputView = nil` stellt sicher, dass keine alte PencilKit- oder
-            // benutzerdefinierte Eingabeansicht am Responder hängen bleibt.
-            textField.inputView = nil
-            textField.reloadInputViews()
-        }
-
-        public func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-            parent.onSubmit()
-            textField.resignFirstResponder()
-            return true
-        }
-    }
-}
-
-/// UITextField, das auch nach einem fehlgeschlagenen SwiftUI-Fokuswechsel die
-/// Systemtastatur zuverlässig anfordert.
-public final class ActivatingTextField: UITextField {
-    public override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        super.touchesEnded(touches, with: event)
-        guard isEnabled else { return }
-
-        if !isFirstResponder {
-            becomeFirstResponder()
-        }
-        DispatchQueue.main.async { [weak self] in
-            self?.inputView = nil
-            self?.reloadInputViews()
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(isFocused ? Color.blue.opacity(0.6) : Color.white.opacity(0.15), lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            isFocused = true
         }
     }
 }

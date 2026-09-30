@@ -5,7 +5,7 @@ public struct DayColumnView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
 
     public let day: Date
-    public let columnIndex: Int // 1 für Mo, 2 für Di, 3 für Mi, 4 für Do, 5 für Fr
+    public let columnIndex: Int
     public let rowHeight: CGFloat
     public let headerHeight: CGFloat
     public let noteNamespace: Namespace.ID
@@ -32,13 +32,12 @@ public struct DayColumnView: View {
         VStack(spacing: 0) {
             // SPALTENKOPF (Wochentag und Datum)
             ZStack {
-                // Hintergrund des Headers
                 if isToday {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(Color.blue.opacity(0.15))
                         .overlay(
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(Color.blue.opacity(0.5), lineWidth: 1.5)
+                                .strokeBorder(Color.blue.opacity(0.4), lineWidth: 1.0)
                         )
                 } else {
                     Rectangle()
@@ -52,7 +51,7 @@ public struct DayColumnView: View {
                 VStack(spacing: 3) {
                     HStack(spacing: 4) {
                         Text(day.weekdayLongString)
-                            .font(.system(size: 15, weight: isToday ? .heavy : .bold, design: .rounded))
+                            .font(.system(size: 14, weight: .regular, design: .default))
                             .foregroundColor(isToday ? .blue : .primary)
 
                         if isToday {
@@ -61,7 +60,7 @@ public struct DayColumnView: View {
                     }
 
                     Text(day.headerDateString)
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .font(.system(size: 12, weight: .regular, design: .default))
                         .foregroundColor(isToday ? .blue.opacity(0.85) : .secondary)
                 }
                 .padding(.vertical, 6)
@@ -114,7 +113,6 @@ public struct DayColumnView: View {
 
     /// Berechnet die Graustufe für das linienlose Tabellenraster
     private func cellBackgroundColor(column: Int, row: Int) -> Color {
-        // Jede 2. Spalte und jede 2. Zeile erhalten eine grauere Markierung
         let isColShaded = (column % 2 == 1)
         let isRowShaded = (row % 2 == 1)
 

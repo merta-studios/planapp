@@ -4,183 +4,249 @@ import SwiftUI
 public struct SubjectCustomizationSection: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
 
+    // Formular-Felder für NEUES Fach (bleibt beim Bearbeiten völlig unberührt)
     @State private var originalSubjectInput: String = ""
     @State private var customNameInput: String = ""
     @State private var selectedColorHex: String = "#3B82F6"
-    @State private var editingId: UUID? = nil
+
+    // Dialog & Sheet Zustände
+    @State private var showImportAlert: Bool = false
+    @State private var showDeleteAllAlert: Bool = false
+    @State private var editingSubject: SubjectCustomization? = nil
 
     public init() {}
 
     public var body: some View {
-        Section(header: Text("Fächer, Farben & Namen anpassen").font(.system(size: 14, weight: .bold))) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Lege fest, welche Hintergrundfarbe ein Fach im Stundenplan hat und wie der Name ersetzt werden soll (z.B. Untis-Kürzel 'M' zu 'Mathematik').")
-                    .font(.system(size: 13))
-                    .foregroundColor(.secondary)
-
-                // NEUES FACH HINZUFÜGEN / BEARBEITEN
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(editingId == nil ? "Neues Fach anlegen:" : "Fach bearbeiten:")
-                        .font(.system(size: 14, weight: .semibold))
-
-                    HStack(spacing: 10) {
-                        // Fachkürzel aus Untis
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Name von Untis:")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.secondary)
-                            KeyboardTextField(
-                                "z.B. M, D, ENG",
-                                text: $originalSubjectInput,
-                                capitalization: .allCharacters,
-                                autocorrection: .no
-                            )
-                            .frame(minHeight: 36)
-                        }
-
-                        // Neuer schöner Name
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Neuer Name:")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.secondary)
-                            KeyboardTextField(
-                                "z.B. Mathematik",
-                                text: $customNameInput,
-                                returnKeyType: .done,
-                                onSubmit: saveCustomization
-                            )
-                            .frame(minHeight: 36)
-                        }
-                    }
-
-                    // Farbwähler
-                    ColorPickerPresets(selectedHex: $selectedColorHex)
-
-                    // Hinzufügen / Aktualisieren Button
-                    HStack {
-                        if editingId != nil {
-                            Button("Abbrechen") {
-                                resetForm()
-                            }
-                            .foregroundColor(.secondary)
-                            .hoverEffect(.lift)
-                        }
-
-                        Spacer()
-
-                        Button(action: saveCustomization) {
-                            HStack(spacing: 6) {
-                                Image(systemName: editingId == nil ? "plus.circle.fill" : "checkmark.circle.fill")
-                                Text(editingId == nil ? "Fach hinzufügen" : "Speichern")
-                                    .fontWeight(.semibold)
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(Color.blue)
-                            .foregroundColor(.white)
-                            .clipShape(Capsule())
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .hoverEffect(.lift)
-                        .disabled(originalSubjectInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                    .padding(.top, 4)
-                }
-                .padding(12)
-                .background(Color(UIColor.secondarySystemBackground).opacity(0.6))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-
-                // Schneller Import aus aktuellem Stundenplan
-                Button(action: {
-                    viewModel.importDiscoveredSubjects()
-                }) {
-                    HStack {
-                        Image(systemName: "arrow.down.doc.fill")
-                        Text("Aus aktuellem Stundenplan importieren")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
+        VStack(alignment: .leading, spacing: 14) {
+            // Abschnittsüberschrift
+            HStack(spacing: 8) {
+                Image(systemName: "paintpalette")
+                    .font(.system(size: 16, weight: .regular, design: .default))
                     .foregroundColor(.blue)
-                }
-                .hoverEffect(.lift)
-                .padding(.top, 2)
+                Text("Fächer, Farben & Namen anpassen")
+                    .font(.system(size: 15, weight: .regular, design: .default))
+                    .foregroundColor(.primary)
+            }
 
-                Divider()
+            Text("Lege fest, welche Hintergrundfarbe ein Fach im Stundenplan hat und wie der Name ersetzt werden soll (z.B. Untis-Kürzel 'M' zu 'Mathematik').")
+                .font(.system(size: 13, weight: .regular, design: .default))
+                .foregroundColor(.secondary)
 
-                // LISTE DER KONFIGURIERTEN FÄCHER
-                Text("Eingestellte Fächer (\(viewModel.subjectCustomizations.count)):")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.secondary)
+            // 1. NEUES FACH ANLEGEN (Separater Bereich – wird beim Bearbeiten NICHT überschrieben)
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Neues Fach anlegen:")
+                    .font(.system(size: 14, weight: .regular, design: .default))
+                    .foregroundColor(.primary)
 
-                ForEach(viewModel.subjectCustomizations) { item in
-                    HStack(spacing: 12) {
-                        // Farbmuster
-                        Circle()
-                            .fill(Color(hex: item.colorHex))
-                            .frame(width: 24, height: 24)
-                            .shadow(color: Color(hex: item.colorHex).opacity(0.3), radius: 2)
-
-                        // Untis-Kürzel
-                        Text(item.originalSubject)
-                            .font(.system(size: 15, weight: .bold, design: .monospaced))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Color(UIColor.secondarySystemFill))
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 11, weight: .bold))
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Name von Untis:")
+                            .font(.system(size: 11, weight: .regular, design: .default))
                             .foregroundColor(.secondary)
-
-                        // Ersetzter Name
-                        Text(item.customName.isEmpty ? item.originalSubject : item.customName)
-                            .font(.system(size: 15, weight: .medium))
-
-                        Spacer()
-
-                        // Bearbeiten
-                        Button(action: {
-                            editItem(item)
-                        }) {
-                            Image(systemName: "pencil")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.blue)
-                                .frame(width: 30, height: 30)
-                                .background(Color.blue.opacity(0.1))
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .hoverEffect(.lift)
-
-                        // Löschen
-                        Button(action: {
-                            withAnimation {
-                                viewModel.deleteCustomization(id: item.id)
-                            }
-                        }) {
-                            Image(systemName: "trash")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.red)
-                                .frame(width: 30, height: 30)
-                                .background(Color.red.opacity(0.1))
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .hoverEffect(.lift)
+                        KeyboardTextField(
+                            "z.B. M, D, ENG",
+                            text: $originalSubjectInput,
+                            capitalization: .allCharacters,
+                            autocorrection: .no
+                        )
                     }
-                    .padding(.vertical, 4)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Neuer Name:")
+                            .font(.system(size: 11, weight: .regular, design: .default))
+                            .foregroundColor(.secondary)
+                        KeyboardTextField(
+                            "z.B. Mathematik",
+                            text: $customNameInput,
+                            returnKeyType: .done,
+                            onSubmit: addNewCustomization
+                        )
+                    }
+                }
+
+                ColorPickerPresets(selectedHex: $selectedColorHex)
+
+                HStack {
+                    Spacer()
+
+                    Button(action: addNewCustomization) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 14, weight: .regular, design: .default))
+                            Text("Fach hinzufügen")
+                                .font(.system(size: 14, weight: .regular, design: .default))
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                    }
+                    .liquidGlassButton(cornerRadius: 10, tint: .blue, isFilled: true)
+                    .foregroundColor(.white)
+                    .disabled(originalSubjectInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-            .padding(.vertical, 6)
+            .padding(14)
+            .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.2)
+
+            // 2. IMPORT & ALLE LÖSCHEN BUTTONS MIT BESTÄTIGUNG
+            HStack(spacing: 10) {
+                // Importieren Button
+                Button(action: {
+                    showImportAlert = true
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.down.doc")
+                            .font(.system(size: 13, weight: .regular, design: .default))
+                        Text("Aus aktuellem Stundenplan importieren")
+                            .font(.system(size: 13, weight: .regular, design: .default))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .padding(.horizontal, 10)
+                }
+                .liquidGlassButton(cornerRadius: 10, tint: .blue)
+                .foregroundColor(.blue)
+
+                // Alle löschen Button
+                Button(action: {
+                    showDeleteAllAlert = true
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 13, weight: .regular, design: .default))
+                        Text("Alle löschen")
+                            .font(.system(size: 13, weight: .regular, design: .default))
+                    }
+                    .padding(.vertical, 9)
+                    .padding(.horizontal, 12)
+                }
+                .liquidGlassButton(cornerRadius: 10, tint: .red)
+                .foregroundColor(.red)
+                .disabled(viewModel.subjectCustomizations.isEmpty)
+                .opacity(viewModel.subjectCustomizations.isEmpty ? 0.45 : 1.0)
+            }
+            .padding(.top, 2)
+
+            Divider()
+                .padding(.vertical, 2)
+
+            // 3. LISTE DER KONFIGURIERTEN FÄCHER
+            HStack {
+                Text("Eingestellte Fächer (\(viewModel.subjectCustomizations.count)):")
+                    .font(.system(size: 13, weight: .regular, design: .default))
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+
+            if viewModel.subjectCustomizations.isEmpty {
+                VStack(spacing: 6) {
+                    Text("Keine benutzerdefinierten Fächer vorhanden.")
+                        .font(.system(size: 13, weight: .regular, design: .default))
+                        .foregroundColor(.secondary)
+                    Text("Füge oben ein Fach hinzu oder importiere Fächer aus deinem aktuellen Stundenplan.")
+                        .font(.system(size: 12, weight: .regular, design: .default))
+                        .foregroundColor(.secondary.opacity(0.8))
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .liquidGlassCard(cornerRadius: 12, strokeOpacity: 0.15)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(viewModel.subjectCustomizations) { item in
+                        HStack(spacing: 12) {
+                            Circle()
+                                .fill(Color(hex: item.colorHex))
+                                .frame(width: 22, height: 22)
+                                .shadow(color: Color(hex: item.colorHex).opacity(0.3), radius: 2)
+
+                            Text(item.originalSubject)
+                                .font(.system(size: 14, weight: .regular, design: .default))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color(UIColor.secondarySystemFill))
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 11, weight: .regular, design: .default))
+                                .foregroundColor(.secondary)
+
+                            Text(item.customName.isEmpty ? item.originalSubject : item.customName)
+                                .font(.system(size: 14, weight: .regular, design: .default))
+
+                            Spacer()
+
+                            // Bearbeiten Button (Öffnet separates manuelles Bearbeitungsfenster)
+                            Button(action: {
+                                editingSubject = item
+                            }) {
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 13, weight: .regular, design: .default))
+                                    .foregroundColor(.blue)
+                                    .frame(width: 32, height: 32)
+                            }
+                            .liquidGlassButton(cornerRadius: 16, tint: .blue)
+
+                            // Löschen Button
+                            Button(action: {
+                                withAnimation {
+                                    viewModel.deleteCustomization(id: item.id)
+                                }
+                            }) {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 13, weight: .regular, design: .default))
+                                    .foregroundColor(.red)
+                                    .frame(width: 32, height: 32)
+                            }
+                            .liquidGlassButton(cornerRadius: 16, tint: .red)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .liquidGlassCard(cornerRadius: 12, strokeOpacity: 0.18)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
+        // Bestätigung für Import
+        .alert("Stundenplan-Fächer importieren", isPresented: $showImportAlert) {
+            Button("Abbrechen", role: .cancel) {}
+            Button("Importieren") {
+                viewModel.importDiscoveredSubjects()
+            }
+        } message: {
+            Text("Möchtest du alle Fächer aus dem aktuellen Stundenplan zur Liste hinzufügen?")
+        }
+        // Bestätigung für Alle Löschen
+        .alert("Alle Fächer löschen", isPresented: $showDeleteAllAlert) {
+            Button("Abbrechen", role: .cancel) {}
+            Button("Alle löschen", role: .destructive) {
+                withAnimation {
+                    viewModel.deleteAllCustomizations()
+                }
+            }
+        } message: {
+            Text("Möchtest du wirklich alle eingestellten Fächer unwiderruflich aus der Liste entfernen?")
+        }
+        // Manuelles Bearbeitungs-Fenster (Sheet)
+        .sheet(item: $editingSubject) { subject in
+            EditSubjectSheet(subject: subject) { updated in
+                withAnimation {
+                    viewModel.addOrUpdateCustomization(updated)
+                }
+                editingSubject = nil
+            } onCancel: {
+                editingSubject = nil
+            }
         }
     }
 
-    private func saveCustomization() {
+    private func addNewCustomization() {
         let original = originalSubjectInput.trimmingCharacters(in: .whitespacesAndNewlines)
         let custom = customNameInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !original.isEmpty else { return }
 
         let item = SubjectCustomization(
-            id: editingId ?? UUID(),
             originalSubject: original,
             customName: custom.isEmpty ? original : custom,
             colorHex: selectedColorHex
@@ -189,20 +255,126 @@ public struct SubjectCustomizationSection: View {
         withAnimation {
             viewModel.addOrUpdateCustomization(item)
         }
-        resetForm()
+        originalSubjectInput = ""
+        customNameInput = ""
+        selectedColorHex = "#3B82F6"
+    }
+}
+
+/// Separates Sheet-Fenster zum manuellen Bearbeiten eines bestehenden Fachs
+struct EditSubjectSheet: View {
+    let subject: SubjectCustomization
+    let onSave: (SubjectCustomization) -> Void
+    let onCancel: () -> Void
+
+    @State private var originalSubject: String = ""
+    @State private var customName: String = ""
+    @State private var colorHex: String = "#3B82F6"
+
+    init(
+        subject: SubjectCustomization,
+        onSave: @escaping (SubjectCustomization) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.subject = subject
+        self.onSave = onSave
+        self.onCancel = onCancel
+        self._originalSubject = State(initialValue: subject.originalSubject)
+        self._customName = State(initialValue: subject.customName)
+        self._colorHex = State(initialValue: subject.colorHex)
     }
 
-    private func editItem(_ item: SubjectCustomization) {
-        self.editingId = item.id
-        self.originalSubjectInput = item.originalSubject
-        self.customNameInput = item.customName
-        self.selectedColorHex = item.colorHex
+    var body: some View {
+        NavigationView {
+            ZStack {
+                Color(UIColor.systemBackground).ignoresSafeArea()
+
+                VStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Passe die Einstellungen für dieses Schulfach an.")
+                            .font(.system(size: 14, weight: .regular, design: .default))
+                            .foregroundColor(.secondary)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Name von Untis:")
+                                .font(.system(size: 12, weight: .regular, design: .default))
+                                .foregroundColor(.secondary)
+                            KeyboardTextField(
+                                "z.B. M",
+                                text: $originalSubject,
+                                capitalization: .allCharacters,
+                                autocorrection: .no
+                            )
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Neuer Name im Stundenplan:")
+                                .font(.system(size: 12, weight: .regular, design: .default))
+                                .foregroundColor(.secondary)
+                            KeyboardTextField(
+                                "z.B. Mathematik",
+                                text: $customName,
+                                returnKeyType: .done,
+                                onSubmit: saveChanges
+                            )
+                        }
+
+                        ColorPickerPresets(selectedHex: $colorHex)
+                    }
+                    .padding(16)
+                    .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
+
+                    Spacer()
+
+                    HStack(spacing: 12) {
+                        Button(action: onCancel) {
+                            Text("Abbrechen")
+                                .font(.system(size: 15, weight: .regular, design: .default))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                        }
+                        .liquidGlassButton(cornerRadius: 12)
+                        .foregroundColor(.secondary)
+
+                        Button(action: saveChanges) {
+                            Text("Speichern")
+                                .font(.system(size: 15, weight: .regular, design: .default))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                        }
+                        .liquidGlassButton(cornerRadius: 12, tint: .blue, isFilled: true)
+                        .foregroundColor(.white)
+                        .disabled(originalSubject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+                .padding(20)
+            }
+            .navigationTitle("Fach bearbeiten")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Fertig") {
+                        saveChanges()
+                    }
+                    .font(.system(size: 15, weight: .regular, design: .default))
+                    .disabled(originalSubject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .navigationViewStyle(StackNavigationViewStyle())
     }
 
-    private func resetForm() {
-        self.editingId = nil
-        self.originalSubjectInput = ""
-        self.customNameInput = ""
-        self.selectedColorHex = "#3B82F6"
+    private func saveChanges() {
+        let cleanOriginal = originalSubject.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanCustom = customName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanOriginal.isEmpty else { return }
+
+        let updated = SubjectCustomization(
+            id: subject.id,
+            originalSubject: cleanOriginal,
+            customName: cleanCustom.isEmpty ? cleanOriginal : cleanCustom,
+            colorHex: colorHex
+        )
+        onSave(updated)
     }
 }
