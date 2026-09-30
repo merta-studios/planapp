@@ -120,14 +120,14 @@ public struct TimetableView: View {
                 .environmentObject(viewModel)
         }
         // Fehlermeldungen beobachten
-        .onChange(of: viewModel.errorMessage) { newError in
+        .onChange(of: viewModel.errorMessage) { _, newError in
             if let err = newError {
                 showToast(err, isError: true)
                 viewModel.errorMessage = nil
             }
         }
         // Erfolgsmeldungen beobachten
-        .onChange(of: viewModel.successMessage) { newSuccess in
+        .onChange(of: viewModel.successMessage) { _, newSuccess in
             if let succ = newSuccess {
                 showToast(succ, isError: false)
                 viewModel.successMessage = nil
