@@ -76,6 +76,66 @@ extension View {
     public func liquidGlassButton(cornerRadius: CGFloat = 12, tint: Color? = nil, isFilled: Bool = false) -> some View {
         self.modifier(LiquidGlassButtonModifier(cornerRadius: cornerRadius, tintColor: tint, isFilled: isFilled))
     }
+
+    /// Lightweight card background without a live `.ultraThinMaterial` blur.
+    /// Real-time material blur is comparatively expensive to composite, and
+    /// stacking dozens of them (e.g. one per row in a scrolling settings
+    /// list) is what made the Settings screen feel laggy. This keeps the same
+    /// rounded, softly-outlined look using a plain, cheap color fill instead.
+    public func lightCard(cornerRadius: CGFloat = 16, strokeOpacity: Double = 0.12) -> some View {
+        self.modifier(LightCardModifier(cornerRadius: cornerRadius, strokeOpacity: strokeOpacity))
+    }
+
+    /// Lightweight button background, the non-material counterpart to
+    /// `liquidGlassButton`, used throughout Settings for the same performance
+    /// reason as `lightCard`.
+    public func lightButton(cornerRadius: CGFloat = 12, tint: Color? = nil, isFilled: Bool = false) -> some View {
+        self.modifier(LightButtonModifier(cornerRadius: cornerRadius, tintColor: tint, isFilled: isFilled))
+    }
+}
+
+/// Cheap, opaque replacement for `LiquidGlassCardModifier` (no real-time blur).
+public struct LightCardModifier: ViewModifier {
+    public var cornerRadius: CGFloat = 16
+    public var strokeOpacity: Double = 0.12
+
+    public func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Color(UIColor.secondarySystemBackground))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(strokeOpacity), lineWidth: 1)
+            )
+    }
+}
+
+/// Cheap, opaque replacement for `LiquidGlassButtonModifier` (no real-time blur).
+public struct LightButtonModifier: ViewModifier {
+    public var cornerRadius: CGFloat = 12
+    public var tintColor: Color? = nil
+    public var isFilled: Bool = false
+
+    public func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(
+                        isFilled
+                            ? (tintColor ?? .blue)
+                            : (tintColor?.opacity(0.14) ?? Color(UIColor.tertiarySystemFill))
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(
+                        (tintColor ?? Color.primary).opacity(isFilled ? 0 : 0.18),
+                        lineWidth: 1
+                    )
+            )
+    }
 }
 
 /// Reusable Liquid Glass Button Komponente

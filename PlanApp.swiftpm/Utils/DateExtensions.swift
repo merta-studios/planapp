@@ -26,6 +26,22 @@ extension Date {
         Calendar.current.isDateInToday(self)
     }
 
+    /// Die Woche, die für die Navigation als "aktuell" gelten soll.
+    /// An Wochenenden (Samstag/Sonntag) gibt es keinen Schultag mehr in der
+    /// laufenden Woche, daher zeigt dies bereits auf die Montag-Woche danach.
+    public static func relevantCurrentWeekStart(
+        from date: Date = Date(),
+        calendar: Calendar = .germanCalendar
+    ) -> Date {
+        let monday = date.startOfWeek(using: calendar)
+        // component(.weekday) liefert unabhängig von firstWeekday immer 1 = Sonntag ... 7 = Samstag.
+        let weekday = calendar.component(.weekday, from: date)
+        if weekday == 1 || weekday == 7 {
+            return calendar.date(byAdding: .day, value: 7, to: monday) ?? monday
+        }
+        return monday
+    }
+
     /// Prüft, ob zwei Daten derselbe Kalendertag sind
     public func isSameDay(as other: Date) -> Bool {
         Calendar.current.isDate(self, inSameDayAs: other)

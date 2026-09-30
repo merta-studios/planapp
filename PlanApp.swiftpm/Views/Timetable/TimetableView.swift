@@ -152,7 +152,13 @@ public struct TimetableView: View {
     }
 
     private func weekSwipeGesture(pageWidth: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 5, coordinateSpace: .local)
+        // Using .global here (instead of .local) matters: with a .local
+        // coordinate space nested inside a ScrollView, UIKit can silently let
+        // the ScrollView's own pan recognizer take over mid-gesture, so this
+        // DragGesture only ever reported a value once on release instead of
+        // continuously while the finger moved. .global keeps this gesture in
+        // control for the whole drag, so the week already follows the finger.
+        DragGesture(minimumDistance: 5, coordinateSpace: .global)
             .onChanged { value in
                 guard !isSettlingWeek else { return }
 

@@ -42,7 +42,6 @@ public struct ColorPickerPresets: View {
                                 Circle()
                                     .fill(Color(hex: preset.hex))
                                     .frame(width: 34, height: 34)
-                                    .shadow(color: Color(hex: preset.hex).opacity(0.35), radius: 4, x: 0, y: 2)
 
                                 if selectedHex.uppercased() == preset.hex.uppercased() {
                                     Circle()

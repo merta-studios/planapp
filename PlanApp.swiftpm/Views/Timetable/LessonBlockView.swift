@@ -10,6 +10,10 @@ public struct LessonBlockView: View {
 
     @State private var isHovered: Bool = false
     @State private var pinchScale: CGFloat = 1.0
+    /// Aktueller Bildschirm-Rahmen dieser Karte (globale Koordinaten). Wird
+    /// live nachgeführt, damit die Zoom-Animation der Zeichenfläche exakt aus
+    /// der Position und Größe dieser Karte heraus starten kann.
+    @State private var globalFrame: CGRect = .zero
 
     public init(lesson: Lesson, height: CGFloat, noteNamespace: Namespace.ID) {
         self.lesson = lesson
@@ -152,12 +156,14 @@ public struct LessonBlockView: View {
             .padding(8)
         }
         .frame(height: height)
-        .matchedGeometryEffect(
-            id: "lesson_card_\(lesson.noteKey)",
-            in: noteNamespace,
-            properties: .frame,
-            anchor: .center,
-            isSource: true
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { globalFrame = proxy.frame(in: .global) }
+                    .onChange(of: proxy.frame(in: .global)) { _, newValue in
+                        globalFrame = newValue
+                    }
+            }
         )
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .hoverEffect(.lift)
@@ -169,14 +175,14 @@ public struct LessonBlockView: View {
                 }
                 .onEnded { scale in
                     if scale > 1.15 {
-                        viewModel.openNote(for: lesson)
+                        viewModel.openNote(for: lesson, sourceFrame: globalFrame)
                     }
                     pinchScale = 1.0
                 }
         )
         // Klick öffnet Notiz-Bereich
         .onTapGesture {
-            viewModel.openNote(for: lesson)
+            viewModel.openNote(for: lesson, sourceFrame: globalFrame)
         }
     }
 }

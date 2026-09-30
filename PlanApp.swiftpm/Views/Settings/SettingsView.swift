@@ -83,7 +83,7 @@ public struct SettingsView: View {
                             }
                         }
                         .padding(16)
-                        .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
+                        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
 
                         // 6. Stundenplan leeren (Zurücksetzen)
                         Button(action: {
@@ -98,7 +98,7 @@ public struct SettingsView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
                         }
-                        .liquidGlassButton(cornerRadius: 14, tint: .red)
+                        .lightButton(cornerRadius: 14, tint: .red)
                         .foregroundColor(.red)
                         .padding(.bottom, 24)
                     }
@@ -116,7 +116,7 @@ public struct SettingsView: View {
                             .padding(.horizontal, 14)
                             .padding(.vertical, 6)
                     }
-                    .liquidGlassButton(cornerRadius: 10, tint: .blue, isFilled: true)
+                    .lightButton(cornerRadius: 10, tint: .blue, isFilled: true)
                     .foregroundColor(.white)
                 }
             }

@@ -43,6 +43,15 @@ public struct LessonDrawingOverlayView: View {
     @State private var scale: CGFloat = 1
     @State private var offset: CGSize = .zero
 
+    // Hero (zoom-in / zoom-out) transition state. The note visibly grows out
+    // of the tapped lesson card and shrinks back into it on close, instead of
+    // just cross-fading in place.
+    @State private var heroSourceFrame: CGRect = .zero
+    @State private var heroBlend: CGFloat = 0
+    // The scale right after opening. Used to keep header text and the resize
+    // handle visually constant while the user later pinch-zooms the canvas.
+    @State private var baseScale: CGFloat = 1
+
     // Header drag state.
     @State private var isMovingFromHeader = false
     @State private var headerDragStartOffset: CGSize = .zero
@@ -104,18 +113,24 @@ public struct LessonDrawingOverlayView: View {
             }
             .onAppear {
                 loadExistingNote()
+                heroSourceFrame = viewModel.activeNoteSourceFrame
 
                 // Wait one layout pass so saved height and safe-area dimensions
                 // are both present before calculating the initial fit.
                 DispatchQueue.main.async {
                     initializeTransform(in: viewport)
+                    baseScale = scale
                     didInitialize = true
 
-                    withAnimation(.spring(response: 0.46, dampingFraction: 0.84)) {
+                    // isExpanded fades the card to grey while heroBlend morphs
+                    // the panel's size and position from the tapped card to the
+                    // centered, fully expanded note in the very same animation.
+                    withAnimation(.spring(response: 0.48, dampingFraction: 0.85)) {
                         isExpanded = true
+                        heroBlend = 1
                     }
 
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.36) {
                         withAnimation(.easeOut(duration: 0.18)) {
                             showsEditor = true
                         }
@@ -203,18 +218,52 @@ public struct LessonDrawingOverlayView: View {
                 .allowsHitTesting(showsEditor)
         }
         .frame(width: paperWidth, height: panelHeight, alignment: .top)
-        .matchedGeometryEffect(
-            id: "lesson_card_\(lesson.noteKey)",
-            in: noteNamespace,
-            properties: .frame,
-            anchor: .center,
-            isSource: false
+        .scaleEffect(
+            x: renderScale(in: viewport).width,
+            y: renderScale(in: viewport).height,
+            anchor: .center
         )
-        .scaleEffect(scale, anchor: .center)
-        .position(
+        .position(renderCenter(in: viewport))
+    }
+
+    /// Non-uniform scale used while the note morphs from the small lesson
+    /// card into its expanded, centered shape (and back on close). Once the
+    /// hero transition has settled this simply equals the normal uniform
+    /// pinch-zoom `scale`.
+    private func renderScale(in viewport: DrawingViewport) -> CGSize {
+        let target = CGSize(width: scale, height: scale)
+        guard heroBlend < 0.999, heroSourceFrame != .zero, panelHeight > 0 else {
+            return target
+        }
+        let sourceScaleX = heroSourceFrame.width / paperWidth
+        let sourceScaleY = heroSourceFrame.height / panelHeight
+        let x = sourceScaleX + (target.width - sourceScaleX) * heroBlend
+        let y = sourceScaleY + (target.height - sourceScaleY) * heroBlend
+        return CGSize(width: max(0.01, x), height: max(0.01, y))
+    }
+
+    /// Screen position used while the note morphs from the tapped card's
+    /// location to the centered layout (and back on close).
+    private func renderCenter(in viewport: DrawingViewport) -> CGPoint {
+        let target = CGPoint(
             x: viewport.screenCenter.x + offset.width,
             y: viewport.screenCenter.y + offset.height
         )
+        guard heroBlend < 0.999, heroSourceFrame != .zero else { return target }
+        let source = CGPoint(x: heroSourceFrame.midX, y: heroSourceFrame.midY)
+        return CGPoint(
+            x: source.x + (target.x - source.x) * heroBlend,
+            y: source.y + (target.y - source.y) * heroBlend
+        )
+    }
+
+    /// Counter-scale so header text and the resize handle keep a constant
+    /// apparent size while the user pinch-zooms the drawing canvas. During the
+    /// opening/closing hero transition this stays neutral (1), so everything
+    /// morphs together for the "cool" zoom animation.
+    private var chromeScaleCompensation: CGFloat {
+        guard baseScale > 0.0001 else { return 1 }
+        return min(1.6, max(0.6, baseScale / max(scale, 0.0001)))
     }
 
     private func noteHeader(
@@ -238,11 +287,13 @@ public struct LessonDrawingOverlayView: View {
             isExpanded ? .primary : subjectColor.contrastingTextColor
         )
         .padding(.horizontal, 20)
+        .scaleEffect(chromeScaleCompensation, anchor: .center)
         .frame(width: paperWidth, height: headerHeight)
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 1, coordinateSpace: .global)
                 .onChanged { value in
+                    guard showsEditor else { return }
                     if !isMovingFromHeader {
                         isMovingFromHeader = true
                         headerDragStartOffset = offset
@@ -274,11 +325,14 @@ public struct LessonDrawingOverlayView: View {
                     .strokeBorder(Color.white.opacity(0.35), lineWidth: 1)
             )
             .shadow(color: Color.black.opacity(0.18), radius: 4, x: 0, y: 2)
+            .scaleEffect(chromeScaleCompensation, anchor: .center)
+            .frame(width: handleSize, height: handleSize)
             .contentShape(Circle())
             .hoverEffect(.lift)
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
+                        guard showsEditor else { return }
                         if !isResizing {
                             isResizing = true
                             resizeStartHeight = canvasHeight
@@ -326,40 +380,12 @@ public struct LessonDrawingOverlayView: View {
     // MARK: - Floating controls
 
     private func editorToolbar(viewport: DrawingViewport) -> some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 12) {
-                Button(action: saveAndDismiss) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 13, weight: .semibold, design: .default))
-                        Text("Fertig & Speichern")
-                            .font(.system(size: 13, weight: .semibold, design: .default))
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                }
-                .liquidGlassButton(cornerRadius: 18, tint: .blue, isFilled: true)
-                .foregroundColor(.white)
-
-                Spacer(minLength: 12)
-
-                Text("Mit 1–2 Fingern verschieben • mit 2 Fingern zoomen")
-                    .font(.system(size: 12, weight: .regular, design: .default))
-                    .foregroundColor(.white.opacity(0.88))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Capsule().fill(.ultraThinMaterial))
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
-                    )
-            }
-
-            // The toolbar has its own horizontal scrolling fallback. It stays
-            // visible on compact widths instead of being pushed off-screen by
-            // the save button and hint.
+        // Closing happens by tapping the dimmed edge around the note, so the
+        // toolbar only needs to hold the drawing tools. Centering it (instead
+        // of stretching it edge-to-edge) avoids the large empty area that
+        // used to sit to the right of it.
+        HStack {
+            Spacer(minLength: 0)
             DrawingToolbarView(
                 toolSelection: $toolSelection,
                 penWidth: $penWidth,
@@ -371,11 +397,11 @@ public struct LessonDrawingOverlayView: View {
                     canvasView?.drawing = emptyDrawing
                 }
             )
-            .frame(maxWidth: viewport.bounds.width)
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, max(16, viewport.safeAreaInsets.leading + 12))
         .padding(.top, max(12, viewport.safeAreaInsets.top + 8))
-        .frame(maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: - Live pan, zoom and constraints
@@ -507,15 +533,21 @@ public struct LessonDrawingOverlayView: View {
         withAnimation(.easeOut(duration: 0.12)) {
             showsEditor = false
         }
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
+        // heroBlend shrinks the note back onto the lesson card at the same
+        // time as the grey-to-color cross-fade, mirroring the opening
+        // animation instead of just fading out in place.
+        withAnimation(.spring(response: 0.40, dampingFraction: 0.88)) {
             isExpanded = false
+            heroBlend = 0
         }
 
-        viewModel.saveNote(
-            for: lesson,
-            drawingData: drawingData,
-            croppedImageData: croppedImage?.pngData(),
-            lineCount: calculatedLines
-        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
+            viewModel.saveNote(
+                for: lesson,
+                drawingData: drawingData,
+                croppedImageData: croppedImage?.pngData(),
+                lineCount: calculatedLines
+            )
+        }
     }
 }

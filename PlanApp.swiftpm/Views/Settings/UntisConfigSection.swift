@@ -106,7 +106,7 @@ public struct UntisConfigSection: View {
                 }
                 .padding(.vertical, 10)
             }
-            .liquidGlassButton(cornerRadius: 10, tint: .blue, isFilled: true)
+            .lightButton(cornerRadius: 10, tint: .blue, isFilled: true)
             .foregroundColor(.white)
             .padding(.top, 4)
 
@@ -134,7 +134,7 @@ public struct UntisConfigSection: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
                 }
-                .liquidGlassButton(cornerRadius: 10, tint: .blue)
+                .lightButton(cornerRadius: 10, tint: .blue)
                 .foregroundColor(.blue)
                 .disabled(viewModel.isLoading)
 
@@ -151,7 +151,7 @@ public struct UntisConfigSection: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
                 }
-                .liquidGlassButton(cornerRadius: 10, tint: .orange)
+                .lightButton(cornerRadius: 10, tint: .orange)
                 .foregroundColor(.orange)
             }
 
@@ -168,7 +168,7 @@ public struct UntisConfigSection: View {
             }
         }
         .padding(16)
-        .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
+        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
         .onAppear {
             self.server = viewModel.untisCredentials.server
             self.school = viewModel.untisCredentials.school
