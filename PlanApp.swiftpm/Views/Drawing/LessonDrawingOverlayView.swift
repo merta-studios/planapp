@@ -450,6 +450,10 @@ public struct LessonDrawingOverlayView: View {
                 ),
                 backgroundStyle: $noteBackgroundStyle,
                 previewScale: max(0.01, scale),
+                selectedTextColorHex: activeTextBoxColorHex,
+                onApplyColorToSelectedText: { hex in
+                    applyColorToSelectedTextBox(hex)
+                },
                 isConvertingHandwriting: isConvertingHandwriting,
                 onConvertHandwriting: { convertHandwritingToEditableText() },
                 onUndo: { performUndo() },
@@ -533,6 +537,15 @@ public struct LessonDrawingOverlayView: View {
 
     private func configureTextUndo() {
         textUndo.getter = { textBoxes }
+        textUndo.drawingSetter = { data in
+            let restoredDrawing = (try? PKDrawing(data: data)) ?? PKDrawing()
+            drawing = restoredDrawing
+            canvasView?.drawing = restoredDrawing
+            // Der Canvas-eigene Undo-Stack passt nach einem von außen
+            // gesetzten Zeichnungs-Zustand nicht mehr zur Realität.
+            canvasView?.undoManager?.removeAllActions()
+            lastStrokeMutation = .distantPast
+        }
         textUndo.setter = { restored in
             textBoxes = restored
             if let sel = selectedTextBoxID, !restored.contains(where: { $0.id == sel }) {
@@ -580,14 +593,53 @@ public struct LessonDrawingOverlayView: View {
 
     private func clearPage() {
         let beforeBoxes = textBoxes
+        let beforeDrawing = (canvasView?.drawing ?? drawing).dataRepresentation()
+
         selectedTextBoxID = nil
         editingTextBoxID = nil
         textBoxes = []
-        textUndo.push(before: beforeBoxes, after: [])
 
         let emptyDrawing = PKDrawing()
         drawing = emptyDrawing
         canvasView?.drawing = emptyDrawing
+        canvasView?.undoManager?.removeAllActions()
+        lastStrokeMutation = .distantPast
+
+        // Ein einziger Undo-Schritt holt Textfelder UND Striche zurück.
+        textUndo.push(
+            before: NoteUndoSnapshot(textBoxes: beforeBoxes, drawingData: beforeDrawing),
+            after: NoteUndoSnapshot(textBoxes: [], drawingData: emptyDrawing.dataRepresentation())
+        )
+    }
+
+    // MARK: - Textfarbe des ausgewählten Feldes
+
+    /// Das Feld, auf das sich die Farb-Slots der Werkzeugleiste gerade
+    /// beziehen: entweder das bearbeitete oder das ausgewählte Textfeld.
+    private var activeTextBoxID: UUID? {
+        editingTextBoxID ?? selectedTextBoxID
+    }
+
+    private var activeTextBoxColorHex: String? {
+        guard let id = activeTextBoxID else { return nil }
+        return textBoxes.first(where: { $0.id == id })?.colorHex
+    }
+
+    /// Wendet eine in der Werkzeugleiste angetippte Farbe auf das aktuell
+    /// ausgewählte Textfeld an (statt das Zeichenwerkzeug zu wechseln).
+    private func applyColorToSelectedTextBox(_ hex: String) {
+        guard let id = activeTextBoxID,
+              let index = textBoxes.firstIndex(where: { $0.id == id }) else { return }
+
+        let normalized = UIColor(hex: hex).toHex().uppercased()
+        guard textBoxes[index].colorHex.caseInsensitiveCompare(normalized) != .orderedSame else {
+            return
+        }
+
+        let before = textBoxes
+        textBoxes[index].colorHex = normalized
+        Haptics.select()
+        textUndo.push(before: before, after: textBoxes)
     }
 
     // MARK: - Handschrift in Text
@@ -650,13 +702,26 @@ public struct LessonDrawingOverlayView: View {
         editingTextBoxID = nil
 
         let beforeBoxes = textBoxes
+        let beforeDrawing = (canvasView?.drawing ?? drawing).dataRepresentation()
+
         textBoxes.append(contentsOf: recognizedBoxes)
-        textUndo.push(before: beforeBoxes, after: textBoxes)
 
         let emptyDrawing = PKDrawing()
         drawing = emptyDrawing
         canvasView?.drawing = emptyDrawing
-        lastStrokeMutation = Date()
+        // Die Striche wurden nicht über den Canvas-Undo-Stack entfernt,
+        // sondern ersetzt. Der alte Stack würde sonst gegen den kombinierten
+        // Schritt unten arbeiten.
+        canvasView?.undoManager?.removeAllActions()
+        lastStrokeMutation = .distantPast
+
+        // Ein einziger Rückgängig-Schritt macht die komplette Umwandlung
+        // rückgängig: Die erzeugten Textfelder verschwinden und die
+        // ursprüngliche Handschrift kommt zurück.
+        textUndo.push(
+            before: NoteUndoSnapshot(textBoxes: beforeBoxes, drawingData: beforeDrawing),
+            after: NoteUndoSnapshot(textBoxes: textBoxes, drawingData: emptyDrawing.dataRepresentation())
+        )
 
         toolSelection = .text
         Haptics.success()

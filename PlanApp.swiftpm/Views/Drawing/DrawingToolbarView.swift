@@ -14,6 +14,11 @@ public struct DrawingToolbarView: View {
     @Binding public var backgroundStyle: NoteBackgroundStyle
 
     public let previewScale: CGFloat
+    /// Farbe des gerade ausgewählten Textfelds (falls eines ausgewählt ist).
+    /// Ist dieser Wert gesetzt, wenden die Farb-Slots die Farbe auf den Text
+    /// an, statt das Zeichenwerkzeug zu wechseln.
+    public let selectedTextColorHex: String?
+    public let onApplyColorToSelectedText: (String) -> Void
     public let isConvertingHandwriting: Bool
     public let onConvertHandwriting: () -> Void
     public let onUndo: () -> Void
@@ -39,6 +44,8 @@ public struct DrawingToolbarView: View {
         markerColorSlots: Binding<[String]>,
         backgroundStyle: Binding<NoteBackgroundStyle>,
         previewScale: CGFloat = 1,
+        selectedTextColorHex: String? = nil,
+        onApplyColorToSelectedText: @escaping (String) -> Void = { _ in },
         isConvertingHandwriting: Bool = false,
         onConvertHandwriting: @escaping () -> Void = {},
         onUndo: @escaping () -> Void,
@@ -53,6 +60,8 @@ public struct DrawingToolbarView: View {
         _markerColorSlots = markerColorSlots
         _backgroundStyle = backgroundStyle
         self.previewScale = previewScale
+        self.selectedTextColorHex = selectedTextColorHex
+        self.onApplyColorToSelectedText = onApplyColorToSelectedText
         self.isConvertingHandwriting = isConvertingHandwriting
         self.onConvertHandwriting = onConvertHandwriting
         self.onUndo = onUndo
@@ -68,9 +77,10 @@ public struct DrawingToolbarView: View {
                 markerControls
                 toolbarDivider
                 textToolButton
-                thicknessButton
                 eraserButton
                 lassoButton
+                toolbarDivider
+                thicknessButton
                 toolbarDivider
                 historyControls
                 toolbarDivider
@@ -114,6 +124,11 @@ public struct DrawingToolbarView: View {
             ForEach(Array(penColorSlots.enumerated()), id: \.offset) { index, hex in
                 let slotColor = UIColor(hex: hex)
                 let isSelected: Bool = {
+                    // Ist ein Textfeld ausgewählt, zeigt der Slot an, ob
+                    // dessen Textfarbe dieser Farbe entspricht.
+                    if let textHex = selectedTextColorHex {
+                        return textHex.caseInsensitiveCompare(hex) == .orderedSame
+                    }
                     if case .pen = toolSelection {
                         return selectedPenSlotIndex == index
                     }
@@ -124,7 +139,11 @@ public struct DrawingToolbarView: View {
                 let swatch = Color(hex: hex)
 
                 Button {
-                    if isSelected {
+                    if selectedTextColorHex != nil {
+                        // Textfeld ausgewählt: Farbe auf den Text anwenden,
+                        // das Werkzeug bleibt das Text-Werkzeug.
+                        onApplyColorToSelectedText(hex)
+                    } else if isSelected {
                         Haptics.tap()
                         editingMarkerSlotIndex = nil
                         editingPenSlotIndex = index
@@ -204,6 +223,9 @@ public struct DrawingToolbarView: View {
             ForEach(Array(markerColorSlots.enumerated()), id: \.offset) { index, hex in
                 let slotColor = UIColor(hex: hex).withAlphaComponent(0.60)
                 let isSelected: Bool = {
+                    if let textHex = selectedTextColorHex {
+                        return textHex.caseInsensitiveCompare(hex) == .orderedSame
+                    }
                     if case .marker = toolSelection {
                         return selectedMarkerSlotIndex == index
                     }
@@ -212,7 +234,9 @@ public struct DrawingToolbarView: View {
                 let swatch = Color(hex: hex)
 
                 Button {
-                    if isSelected {
+                    if selectedTextColorHex != nil {
+                        onApplyColorToSelectedText(hex)
+                    } else if isSelected {
                         Haptics.tap()
                         editingPenSlotIndex = nil
                         editingMarkerSlotIndex = index
@@ -304,17 +328,13 @@ public struct DrawingToolbarView: View {
             Haptics.select()
             toolSelection = .text
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "textformat")
-                    .font(.system(size: 15, weight: .semibold))
-                Text("Text")
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .padding(.horizontal, 12)
-            .frame(height: buttonSize)
-            .background(isSelected ? Color.blue : Color(UIColor.tertiarySystemBackground).opacity(0.72))
-            .foregroundColor(isSelected ? .white : .primary)
-            .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
+            // Nur das Aa-Symbol, kein Beschriftungstext.
+            Image(systemName: "textformat")
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: buttonSize, height: buttonSize)
+                .background(isSelected ? Color.blue : Color(UIColor.tertiarySystemBackground).opacity(0.72))
+                .foregroundColor(isSelected ? .white : .primary)
+                .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
