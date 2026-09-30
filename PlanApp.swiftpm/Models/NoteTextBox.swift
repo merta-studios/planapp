@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import UIKit
 
 /// Ein frei bewegliches Textfeld auf der Zeichenfläche einer Stunden-Notiz.
 /// Koordinaten sind in Punkt-Koordinaten der Zeichenfläche (unskaliert).
@@ -10,6 +11,14 @@ public struct NoteTextBox: Identifiable, Codable, Equatable {
     public var y: Double        // linke obere Ecke, Y
     public var width: Double    // Breite des Feldes (Text bricht automatisch um)
     public var fontSize: Double
+    /// Textfarbe als Hex-String (z. B. "#1E1E1E"). Wird in der Werkzeugleiste
+    /// gewählt, während das Textfeld ausgewählt ist. Ältere Speicherstände
+    /// ohne dieses Feld werden beim Dekodieren auf Schwarz zurückgesetzt.
+    public var color: String
+
+    /// Standard-Textfarbe: reines Schwarz, exakt wie vor der Einführung der
+    /// wählbaren Textfarbe – bestehende Notizen sehen unverändert aus.
+    public static let defaultColorHex = "#000000"
 
     public init(
         id: UUID = UUID(),
@@ -17,7 +26,8 @@ public struct NoteTextBox: Identifiable, Codable, Equatable {
         x: Double,
         y: Double,
         width: Double = 240,
-        fontSize: Double = 17
+        fontSize: Double = 17,
+        color: String = NoteTextBox.defaultColorHex
     ) {
         self.id = id
         self.text = text
@@ -25,6 +35,36 @@ public struct NoteTextBox: Identifiable, Codable, Equatable {
         self.y = y
         self.width = width
         self.fontSize = fontSize
+        self.color = color
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, text, x, y, width, fontSize, color
+    }
+
+    /// Bewusst handgeschriebenes Dekodieren: `color` ist ein später
+    /// hinzugekommenes Feld. Mit `decodeIfPresent` bleiben alle alten
+    /// Speicherstände (ohne Farbe) ohne Datenverlust lesbar.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(UUID.self, forKey: .id)
+        self.text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
+        self.x = try container.decodeIfPresent(Double.self, forKey: .x) ?? 6
+        self.y = try container.decodeIfPresent(Double.self, forKey: .y) ?? 6
+        self.width = try container.decodeIfPresent(Double.self, forKey: .width) ?? 240
+        self.fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? 17
+        self.color = try container.decodeIfPresent(String.self, forKey: .color) ?? NoteTextBox.defaultColorHex
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(text, forKey: .text)
+        try container.encode(x, forKey: .x)
+        try container.encode(y, forKey: .y)
+        try container.encode(width, forKey: .width)
+        try container.encode(fontSize, forKey: .fontSize)
+        try container.encode(color, forKey: .color)
     }
 
     /// Defensive Normalisierung für geladene oder per OCR erzeugte Textfelder.
@@ -44,6 +84,10 @@ public struct NoteTextBox: Identifiable, Codable, Equatable {
 
         sanitized.width = min(max(90, sanitized.width), 640)
         sanitized.fontSize = min(max(10, sanitized.fontSize), 48)
+
+        // Farbangabe normalisieren: Der UIColor-Round-Trip garantiert auch bei
+        // ungültigen oder alten Hex-Werten einen gültigen, renderbaren Wert.
+        sanitized.color = UIColor(hex: sanitized.color).toHex()
 
         if let areaSize,
            areaSize.width.isFinite,

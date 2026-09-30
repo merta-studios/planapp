@@ -59,6 +59,7 @@ public struct KeyboardTextField: View {
 
             if !text.isEmpty {
                 Button(action: {
+                    Haptics.tap()
                     text = ""
                 }) {
                     Image(systemName: "xmark.circle.fill")
