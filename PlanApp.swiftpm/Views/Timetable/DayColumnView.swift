@@ -197,7 +197,8 @@ public struct DayColumnView: View {
 
             Rectangle()
                 .fill(Color.red.opacity(0.9))
-                .frame(maxWidth: .infinity, height: 2)
+                .frame(height: 2)
+                .frame(maxWidth: .infinity)
                 .offset(y: horizontalLineOffset)
 
             Circle()
