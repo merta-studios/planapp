@@ -13,8 +13,13 @@ public struct DrawingCanvasBackgroundView: View {
 
     public var body: some View {
         ZStack {
+            // Die Zeichenfläche ist bewusst echtes Papier: Sie darf weder das
+            // dynamische `systemBackground` noch ein Material übernehmen.
+            // Beides würde im Dark Mode eine graue Fläche ergeben. Die
+            // Bedienelemente außerhalb dieser View dürfen weiterhin ihr
+            // dunkles Erscheinungsbild verwenden.
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(Color(UIColor.systemBackground).opacity(0.76))
+                .fill(Color.white)
 
             DrawingCanvasPattern(style: style)
                 .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))

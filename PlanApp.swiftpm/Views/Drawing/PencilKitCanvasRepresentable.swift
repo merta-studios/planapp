@@ -136,35 +136,28 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         // der SwiftUI-Seite wieder ausgehebelt.
         //
         // Deshalb: im Text-Modus die Interaktion der Canvas-View komplett
-        // abschalten, sonst wieder aktivieren. Zusätzlich wird der
-        // Zeichnen-Recognizer deaktiviert, damit auch keine Striche entstehen.
+        // abschalten, sonst wieder aktivieren. Das ist ausreichend, um den
+        // PencilKit-Recognizer zu stoppen. Den internen
+        // `drawingGestureRecognizer` zusätzlich während eines laufenden
+        // Touch-Events ein-/auszuschalten, kann UIKit mit einem
+        // "gesture recognizer changed while handling touches"-Abbruch
+        // quittieren und war die Ursache des App-Crashs.
         canvasView.isUserInteractionEnabled = !isTextTool
-        canvasView.drawingGestureRecognizer.isEnabled = !isTextTool
 
         if isTextTool, canvasView.isFirstResponder {
             canvasView.resignFirstResponder()
         }
     }
 
-    /// Passt reines Schwarz/Weiß dynamisch an das Erscheinungsbild an
+    /// Liefert die gewählte Farbe unverändert zurück.
+    ///
+    /// Die Zeichenfläche ist immer weiß, auch wenn die restliche App im
+    /// Dark Mode läuft. Eine frühere automatische Schwarz/Weiß-Umkehr machte
+    /// deshalb den Standardstift weiß auf weiß und die OCR unlesbar. Farben
+    /// gehören zur Werkzeugauswahl und dürfen nicht vom UI-Erscheinungsbild
+    /// abhängen.
     private func resolveDynamicColor(_ color: UIColor) -> UIColor {
-        var r: CGFloat = 0
-        var g: CGFloat = 0
-        var b: CGFloat = 0
-        var a: CGFloat = 0
-        color.getRed(&r, green: &g, blue: &b, alpha: &a)
-
-        let isBlack = r < 0.05 && g < 0.05 && b < 0.05
-        let isWhite = r > 0.95 && g > 0.95 && b > 0.95
-
-        if colorScheme == .dark {
-            if isBlack { return .white }
-            if isWhite { return .black }
-        } else {
-            if isWhite { return .white }
-            if isBlack { return .black }
-        }
-        return color
+        color
     }
 
     public final class Coordinator: NSObject, PKCanvasViewDelegate, UIPencilInteractionDelegate, UIGestureRecognizerDelegate {
@@ -300,7 +293,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 let font = UIFont.systemFont(ofSize: CGFloat(box.fontSize))
                 let attributes: [NSAttributedString.Key: Any] = [
                     .font: font,
-                    .foregroundColor: UIColor.label
+                    .foregroundColor: UIColor.black
                 ]
                 let innerWidth = max(20, CGFloat(box.width) - 16)
                 let textRect = CGRect(
@@ -342,9 +335,10 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         let canvasRect = CGRect(origin: .zero, size: canvasSize)
         let contrastDrawing = highContrastCopy(of: drawing)
 
-        // Vision erkennt Handschrift deutlich zuverlässiger, wenn das Bild
-        // ausreichend groß ist. Deshalb wird mindestens 2x gerendert.
-        let renderScale = max(2, min(4, 1400 / max(canvasSize.width, 1)))
+        // Vision erkennt Handschrift deutlich zuverlässiger, wenn die
+        // Buchstaben nicht in der relativ kleinen Vorschau-Auflösung landen.
+        // Die Bildgröße bleibt dabei auf maximal ungefähr 4x begrenzt.
+        let renderScale = max(3, min(4, 2200 / max(canvasSize.width, 1)))
 
         let format = UIGraphicsImageRendererFormat()
         format.scale = renderScale
@@ -376,11 +370,17 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         in rect: CGRect,
         context: CGContext
     ) {
-        guard style != .blank else { return }
-
+        // Gespeicherte Vorschauen verwenden dieselbe weiße Papierfläche wie
+        // der Editor. Eine halbtransparente Füllung würde im Dark Mode den
+        // dunklen Untergrund durchscheinen lassen.
         context.saveGState()
-        UIColor.white.withAlphaComponent(0.70).setFill()
+        UIColor.white.setFill()
         context.fill(rect)
+
+        guard style != .blank else {
+            context.restoreGState()
+            return
+        }
 
         let spacing = NoteBackgroundMetrics.spacing(for: style)
         let alpha = NoteBackgroundMetrics.opacity(for: style)

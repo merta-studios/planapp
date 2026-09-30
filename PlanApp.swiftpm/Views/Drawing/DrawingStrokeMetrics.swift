@@ -1,27 +1,19 @@
 import CoreGraphics
 
-/// Umrechnung zwischen der *eingestellten* Werkzeug-Breite und der Strichstärke,
-/// die PencilKit tatsächlich auf dem Display zeichnet.
+/// Gemeinsame Maße für Werkzeugbreiten in der Zeichenfläche und in der
+/// Vorschau.
 ///
-/// Hintergrund: Die `width` eines `PKInkingTool` ist laut Apple ausdrücklich
-/// nur ein **Basiswert** („this width represents a base value based on an
-/// average pencil user characteristic“, WWDC19 – *Introducing PencilKit*).
-/// Die real gerenderte Breite ergibt sich zusätzlich aus Druck, Neigung und
-/// Geschwindigkeit des Apple Pencil und liegt beim normalen Schreiben spürbar
-/// **unter** dem eingestellten Basiswert.
-///
-/// Genau deshalb wirkte die frühere 1:1-Vorschau (Kreis-Durchmesser = Basiswert)
-/// immer zu groß. Die Faktoren hier bilden die tatsächlich sichtbare Strichstärke
-/// ab, sodass Vorschau und gezeichneter Strich übereinstimmen.
+/// `PKInkingTool` bekommt genau die Breite, die in den Einstellungen gewählt
+/// wurde. Druck und Neigung können die tatsächliche Form eines Pencil-Strichs
+/// später noch verändern; dafür darf die Vorschau aber keinen erfundenen
+/// Faktor verwenden. Der Punkt zeigt deshalb die exakte Basisbreite, inklusive
+/// der Skalierung, mit der die Notiz dargestellt wird.
 public enum DrawingStrokeMetrics {
 
-    /// Stift: kräftig druckabhängig, zeichnet im Mittel deutlich feiner als der Basiswert.
-    public static let penRenderFactor: CGFloat = 0.6
-
-    /// Textmarker: flache Spitze, kaum druckabhängig – nahe am Basiswert.
-    public static let markerRenderFactor: CGFloat = 0.85
-
-    /// Radierer: der Basiswert entspricht direkt dem Durchmesser des Radierers.
+    /// Der Wert wird direkt an PencilKit übergeben. Der Name bleibt als
+    /// gemeinsame API für Toolbar und Tests erhalten.
+    public static let penRenderFactor: CGFloat = 1.0
+    public static let markerRenderFactor: CGFloat = 1.0
     public static let eraserRenderFactor: CGFloat = 1.0
 
     /// Faktor für das aktuell gewählte Werkzeug.

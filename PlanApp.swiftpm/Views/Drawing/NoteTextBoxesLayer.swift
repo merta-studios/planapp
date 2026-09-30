@@ -78,7 +78,11 @@ struct NoteTextBoxesLayer: View {
                     )
             }
 
-            ForEach(textBoxes) { box in
+            // Explizite ID verhindert, dass SwiftUI bei einer gerade
+            // erzeugten/entfernten Box einen veralteten Element-Index
+            // wiederverwendet. Die Box wird weiter als Wert übergeben und
+            // Änderungen gehen ausschließlich über ihre stabile UUID zurück.
+            ForEach(textBoxes, id: \.id) { box in
                 NoteTextBoxView(
                     box: box,
                     isSelected: selectedID == box.id,
@@ -215,9 +219,11 @@ struct NoteTextBoxesLayer: View {
         let rawBox = NoteTextBox(x: Double(x), y: Double(y), width: Double(width))
         guard let box = rawBox.sanitized(in: size) else { return }
 
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-            textBoxes.append(box)
-        }
+        // Das neue UIKit-Textfeld wird direkt nach dem State-Update
+        // Erstbeantworter. Eine Layout-Animation um einen neu erzeugten
+        // UITextView kann den Responder während `makeUIView` entfernen und
+        // war dadurch eine weitere Quelle für Abstürze.
+        textBoxes.append(box)
         registerUndo(before, textBoxes)
 
         // Kein DispatchQueue-Umweg mehr nötig: Ohne Element-Bindings ist es
@@ -232,9 +238,10 @@ struct NoteTextBoxesLayer: View {
         let before = textBoxes
         if editingID == id { editingID = nil }
         if selectedID == id { selectedID = nil }
-        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-            textBoxes.removeAll { $0.id == id }
-        }
+        // UIKit-Textfelder nicht während einer Löschanimation aus dem
+        // View-Baum nehmen; der aktive First Responder wird oben explizit
+        // beendet und kann so sauber dismantled werden.
+        textBoxes.removeAll { $0.id == id }
         editSessionSnapshot = nil
         registerUndo(before, textBoxes)
     }
@@ -431,7 +438,9 @@ private struct NoteTextBoxView: View {
 
         return Text(trimmed.isEmpty ? "Text" : box.text)
             .font(.system(size: boxFontSize))
-            .foregroundColor(trimmed.isEmpty ? .secondary : .primary)
+            // Die Zeichenfläche ist immer weiß, auch wenn die App im Dark
+            // Mode läuft. Deshalb kein dynamisches `.primary` verwenden.
+            .foregroundColor(trimmed.isEmpty ? .gray : .black)
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
             .frame(width: max(20, boxWidth - 16), alignment: .topLeading)
@@ -461,6 +470,10 @@ private struct NoteTextBoxView: View {
             onChangeText: onChangeText,
             onEndEditing: onEndEditing
         )
+        // Ein UITextView gehört immer zu genau einer Box. So wird beim
+        // Wechsel von Anzeige- zu Editiermodus niemals ein alter UIKit-
+        // Responder mit einer anderen UUID weiterverwendet.
+        .id(box.id)
         .frame(
             width: boxWidth,
             height: estimatedTextBoxHeight(box),

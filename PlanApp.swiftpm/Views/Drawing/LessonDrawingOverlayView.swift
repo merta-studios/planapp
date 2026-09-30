@@ -708,7 +708,16 @@ public struct LessonDrawingOverlayView: View {
             width: paperWidth,
             height: max(180, canvasHeight - headerHeight)
         )
-        textBoxes = note.textBoxes.compactMap { $0.sanitized(in: canvasSize) }
+        // Alte oder hand-edited Speicherstände können doppelte IDs
+        // enthalten. SwiftUI würde solche Elemente in einer ForEach als
+        // dasselbe View-Element behandeln und beim ersten Text-Tap instabil
+        // werden lassen. Beim Laden wird deshalb genau eine sichere Box je
+        // UUID übernommen.
+        var loadedIDs = Set<UUID>()
+        textBoxes = note.textBoxes.compactMap { box in
+            guard loadedIDs.insert(box.id).inserted else { return nil }
+            return box.sanitized(in: canvasSize)
+        }
 
         if let savedDrawing = try? PKDrawing(data: note.drawingData) {
             drawing = savedDrawing

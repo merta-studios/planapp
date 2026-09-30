@@ -31,7 +31,9 @@ struct NoteTextEditor: UIViewRepresentable {
         textView.isOpaque = false
         textView.isScrollEnabled = false
         textView.font = .systemFont(ofSize: max(1, fontSize))
-        textView.textColor = .label
+        // Text liegt auf dem festen weißen Papier und darf nicht mit dem
+        // globalen Dark-Mode-Farbschema weiß werden.
+        textView.textColor = .black
         textView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
         textView.textContainer.lineFragmentPadding = 0
         textView.textContainer.widthTracksTextView = true
@@ -41,6 +43,20 @@ struct NoteTextEditor: UIViewRepresentable {
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.setContentHuggingPriority(.required, for: .vertical)
         textView.text = text
+
+        if isEditing {
+            let coordinator = context.coordinator
+            DispatchQueue.main.async { [weak textView, weak coordinator] in
+                guard let textView,
+                      let coordinator,
+                      !coordinator.isDismantled,
+                      coordinator.parent.isEditing,
+                      textView.window != nil,
+                      !textView.isFirstResponder else { return }
+                textView.becomeFirstResponder()
+            }
+        }
+
         return textView
     }
 
@@ -50,6 +66,9 @@ struct NoteTextEditor: UIViewRepresentable {
         let resolvedFontSize = max(1, fontSize)
         if uiView.font?.pointSize != resolvedFontSize {
             uiView.font = .systemFont(ofSize: resolvedFontSize)
+        }
+        if uiView.textColor != .black {
+            uiView.textColor = .black
         }
 
         // Externe Änderungen (Undo/Redo) auch während der Bearbeitung anzeigen,
@@ -62,14 +81,24 @@ struct NoteTextEditor: UIViewRepresentable {
             let selectedRange = uiView.selectedRange
             uiView.text = text
             let length = (text as NSString).length
-            let location = min(selectedRange.location, length)
+            // UIKit kann während des Ein-/Ausblendens kurz NSNotFound oder
+            // eine negative Cursorposition liefern. Niemals eine ungültige
+            // NSRange an UITextView zurückgeben – das endet in einer
+            // Objective-C Exception und damit in einem kompletten App-Crash.
+            let location = max(0, min(selectedRange.location, length))
             uiView.selectedRange = NSRange(location: location, length: 0)
             context.coordinator.isApplyingExternalChange = false
         }
 
         if isEditing, !uiView.isFirstResponder {
-            DispatchQueue.main.async { [weak uiView] in
-                guard let uiView, uiView.window != nil, !uiView.isFirstResponder else { return }
+            let coordinator = context.coordinator
+            DispatchQueue.main.async { [weak uiView, weak coordinator] in
+                guard let uiView,
+                      let coordinator,
+                      !coordinator.isDismantled,
+                      coordinator.parent.isEditing,
+                      uiView.window != nil,
+                      !uiView.isFirstResponder else { return }
                 uiView.becomeFirstResponder()
             }
         } else if !isEditing, uiView.isFirstResponder {
