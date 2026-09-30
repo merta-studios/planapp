@@ -28,15 +28,22 @@ extension PKStroke {
     /// Randbereich werden exakt auf die Kante gezogen, sodass der Strich
     /// sauber am Rand endet statt darüber hinauszulaufen.
     fileprivate func segmentsClipped(to rect: CGRect) -> [PKStroke] {
-        let points = Array(path.interpolatedPoints)
+        // `PKStrokePath` ist selbst eine Collection seiner Kontrollpunkte.
+        // Die frühere `interpolatedPoints`-Abkürzung ist kein Array und führt
+        // in aktuellen SDKs bei `Array(...)` zu einer falschen Überladungswahl
+        // (`arrayLiteral:`). Der direkte Collection-Initialisierer ist zudem
+        // seit iOS 14 verfügbar und behält die Original-Kontrollpunkte bei.
+        let points: [PKStrokePoint] = Array(path)
         guard !points.isEmpty else { return [] }
 
         // Breiteste Stelle des Strichs bestimmt, wie weit Punkte außerhalb
         // liegen dürfen und trotzdem noch (auf die Kante gezogen) sichtbar sind.
-        let maxStrokeWidth = points
-            .map { max($0.size.width, $0.size.height) }
-            .max() ?? 0
-        let margin = max(1.5, maxStrokeWidth * 0.75)
+        // Explizite CGFloat-Typen verhindern eine numerische Fehlableitung
+        // (z. B. Float16 statt CGFloat) in neueren SDKs.
+        let maxStrokeWidth: CGFloat = points.reduce(.zero) { width, point in
+            max(width, max(point.size.width, point.size.height))
+        }
+        let margin: CGFloat = max(1.5, maxStrokeWidth * 0.75)
         let keepZone = rect.insetBy(dx: -margin, dy: -margin)
 
         func clampedLocation(_ location: CGPoint) -> CGPoint {
