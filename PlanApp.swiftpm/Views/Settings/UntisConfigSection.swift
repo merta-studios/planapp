@@ -25,7 +25,7 @@ public struct UntisConfigSection: View {
                         .font(.system(size: 15, weight: .medium))
                         .frame(width: 90, alignment: .leading)
                     TextField("z.B. ikarus.webuntis.com", text: $server)
-                        .autocapitalization(.none)
+                        .textInputAutocapitalization(.never)
                         .disableAutocorrection(true)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                 }
@@ -36,7 +36,7 @@ public struct UntisConfigSection: View {
                         .font(.system(size: 15, weight: .medium))
                         .frame(width: 90, alignment: .leading)
                     TextField("z.B. gym-musterstadt", text: $school)
-                        .autocapitalization(.none)
+                        .textInputAutocapitalization(.never)
                         .disableAutocorrection(true)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                 }
@@ -47,7 +47,7 @@ public struct UntisConfigSection: View {
                         .font(.system(size: 15, weight: .medium))
                         .frame(width: 90, alignment: .leading)
                     TextField("Dein Untis-Benutzername", text: $user)
-                        .autocapitalization(.none)
+                        .textInputAutocapitalization(.never)
                         .disableAutocorrection(true)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                 }

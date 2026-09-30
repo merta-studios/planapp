@@ -58,8 +58,11 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         // Finger und Apple Pencil unterstützen
         canvasView.drawingPolicy = .anyInput
 
-        // Apple Pencil Pro Squeeze-Interaktion registrieren
-        let pencilInteraction = UIPencilInteraction(delegate: context.coordinator)
+        // Apple Pencil Pro Squeeze-Interaktion registrieren.
+        // Hinweis: `UIPencilInteraction(delegate:)` gibt es erst ab iOS 17.5 –
+        // der parameterlose Initializer plus `delegate`-Zuweisung funktioniert ab iOS 12.1.
+        let pencilInteraction = UIPencilInteraction()
+        pencilInteraction.delegate = context.coordinator
         canvasView.addInteraction(pencilInteraction)
 
         context.coordinator.canvasView = canvasView
