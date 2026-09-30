@@ -83,7 +83,9 @@ struct NoteTextEditor: UIViewRepresentable {
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
-            parent.onEndEditing()
+            DispatchQueue.main.async { [parent] in
+                parent.onEndEditing()
+            }
         }
     }
 }

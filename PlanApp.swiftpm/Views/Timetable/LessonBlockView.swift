@@ -17,6 +17,8 @@ public struct LessonBlockView: View {
     /// Gemessene Höhe des Text-Bereichs (Titelzeile + Zusatzinfos). Die
     /// Notiz-Vorschau darf sich bis knapp an diesen Text heran vergrößern.
     @State private var textContentHeight: CGFloat = 26
+    @State private var showLessonActions = false
+    @State private var showDeleteNoteConfirmation = false
 
     public init(lesson: Lesson, blockHeight: CGFloat, noteNamespace: Namespace.ID) {
         self.lesson = lesson
@@ -128,8 +130,10 @@ public struct LessonBlockView: View {
                                     Text(orig)
                                         .strikethrough(true, color: .red)
                                     Text("➔ \(lesson.teacherRaw)")
+                                        .strikethrough(lesson.isCancelled, color: .red)
                                 } else {
                                     Text(lesson.teacherRaw)
+                                        .strikethrough(lesson.isCancelled, color: .red)
                                 }
                             }
                             .font(.system(size: 12, weight: .regular, design: .default))
@@ -144,8 +148,10 @@ public struct LessonBlockView: View {
                                     Text(orig)
                                         .strikethrough(true, color: .red)
                                     Text("➔ \(lesson.roomRaw)")
+                                        .strikethrough(lesson.isCancelled, color: .red)
                                 } else {
                                     Text(lesson.roomRaw)
+                                        .strikethrough(lesson.isCancelled, color: .red)
                                 }
                             }
                             .font(.system(size: 12, weight: .regular, design: .default))
@@ -158,6 +164,7 @@ public struct LessonBlockView: View {
                         Text(lesson.substitutionText)
                             .font(.system(size: 11, weight: .regular, design: .default))
                             .foregroundColor(lesson.isCancelled ? .red.opacity(0.9) : subjectColor.contrastingTextColor)
+                            .strikethrough(lesson.isCancelled, color: .red)
                             .lineLimit(2)
                             .padding(.top, 1)
                     }
@@ -199,7 +206,9 @@ public struct LessonBlockView: View {
                 let maxW = max(24, globalFrame.width - 16)
                 // Verfügbare Höhe: Blockhöhe abzüglich oberem Padding,
                 // gemessenem Text und etwas Abstand nach unten.
-                let maxH = max(18, blockHeight - 8 - textContentHeight - 8 - 11)
+                // Minimaler Extra-Abstand zum Textbereich, damit die Vorschau
+                // bei kleinen Blöcken nicht direkt am letzten Text-Pixel klebt.
+                let maxH = max(18, blockHeight - 8 - textContentHeight - 8 - 14)
 
                 Image(uiImage: uiImg)
                     .resizable()
@@ -228,6 +237,48 @@ public struct LessonBlockView: View {
         )
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .hoverEffect(.lift)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(_):
+                isHovered = true
+            case .ended:
+                isHovered = false
+            }
+        }
+        .background(
+            PencilSqueezeActionAttachment {
+                guard isHovered else { return }
+                Haptics.tap()
+                showLessonActions = true
+            }
+        )
+        .contextMenu {
+            lessonActionButtons
+        }
+        .confirmationDialog(
+            "Optionen",
+            isPresented: $showLessonActions,
+            titleVisibility: .visible
+        ) {
+            lessonActionButtons
+            Button("Abbrechen", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "Notiz löschen?",
+            isPresented: $showDeleteNoteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Notiz löschen", role: .destructive) {
+                Haptics.warning()
+                viewModel.deleteNote(for: lesson)
+            }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text("Diese Notiz wird dauerhaft entfernt.")
+        }
         // Zoom-Geste mit zwei Fingern öffnet Notiz-Bereich
         .simultaneousGesture(
             MagnificationGesture()
@@ -245,8 +296,48 @@ public struct LessonBlockView: View {
         // Klick öffnet Notiz-Bereich (mit haptischem Feedback, auch beim
         // Antippen mit dem Apple Pencil)
         .onTapGesture {
+            openCurrentNote()
+        }
+    }
+
+    @ViewBuilder
+    private var lessonActionButtons: some View {
+        Button {
+            openCurrentNote()
+        } label: {
+            Label(
+                viewModel.noteFor(lesson: lesson) == nil ? "Notiz erstellen" : "Notiz bearbeiten",
+                systemImage: "square.and.pencil"
+            )
+        }
+
+        Button {
             Haptics.tap()
-            viewModel.openNote(for: lesson, sourceFrame: globalFrame)
+            Task {
+                await viewModel.openNoteForNextOccurrence(after: lesson)
+            }
+        } label: {
+            Label("Notiz für die nächste Stunde erstellen", systemImage: "calendar.badge.plus")
+        }
+
+        if viewModel.noteFor(lesson: lesson) != nil {
+            Button(role: .destructive) {
+                requestDeleteConfirmation()
+            } label: {
+                Label("Notiz löschen", systemImage: "trash")
+            }
+        }
+    }
+
+    private func openCurrentNote() {
+        Haptics.tap()
+        viewModel.openNote(for: lesson, sourceFrame: globalFrame)
+    }
+
+    private func requestDeleteConfirmation() {
+        Haptics.warning()
+        DispatchQueue.main.async {
+            showDeleteNoteConfirmation = true
         }
     }
 }

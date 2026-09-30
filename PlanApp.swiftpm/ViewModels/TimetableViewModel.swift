@@ -306,7 +306,8 @@ public final class TimetableViewModel: ObservableObject {
         drawingData: Data,
         croppedImageData: Data?,
         lineCount: Int,
-        textBoxes: [NoteTextBox] = []
+        textBoxes: [NoteTextBox] = [],
+        backgroundStyle: NoteBackgroundStyle = .blank
     ) {
         let key = lesson.noteKey
         let note = LessonNote(
@@ -315,6 +316,7 @@ public final class TimetableViewModel: ObservableObject {
             croppedImageData: croppedImageData,
             lineCount: lineCount,
             textBoxes: textBoxes,
+            backgroundStyle: backgroundStyle,
             updatedAt: Date()
         )
         self.lessonNotes[key] = note
@@ -328,6 +330,83 @@ public final class TimetableViewModel: ObservableObject {
     /// Gibt die Notiz für eine bestimmte Stunde zurück
     public func noteFor(lesson: Lesson) -> LessonNote? {
         return lessonNotes[lesson.noteKey]
+    }
+
+    /// Löscht die Notiz einer einzelnen Stunde.
+    public func deleteNote(for lesson: Lesson) {
+        let key = lesson.noteKey
+        guard lessonNotes[key] != nil else { return }
+        lessonNotes.removeValue(forKey: key)
+        storage.deleteLessonNote(for: key)
+        successMessage = "Notiz gelöscht."
+    }
+
+    /// Öffnet das nächste Vorkommen desselben Fachs innerhalb der nächsten drei Wochen.
+    /// Falls die Zielstunde in einer anderen Woche liegt, wird zuerst zu dieser Woche gewechselt.
+    public func openNoteForNextOccurrence(after lesson: Lesson, sourceFrame: CGRect = .zero) async {
+        guard let startDate = Date.fromYyyyMMdd(lesson.dateString) else {
+            errorMessage = "Datum der Stunde konnte nicht gelesen werden."
+            return
+        }
+
+        let calendar = Calendar.germanCalendar
+        let searchEndDate = calendar.date(byAdding: .day, value: 21, to: startDate) ?? startDate
+
+        // Falls Untis eingerichtet ist, laden wir alle betroffenen Wochen nach,
+        // damit auch ein Vorkommen in einer noch nicht geöffneten Woche gefunden wird.
+        if untisCredentials.isConfigured {
+            var week = startDate.startOfWeek(using: calendar)
+            let endWeek = searchEndDate.startOfWeek(using: calendar)
+            while week <= endWeek {
+                await syncWeek(startingAt: week, showsSuccessMessage: false)
+                guard let nextWeek = calendar.date(byAdding: .day, value: 7, to: week) else { break }
+                week = nextWeek
+            }
+        }
+
+        let normalizedSubject = lesson.subjectRaw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let startDay = calendar.startOfDay(for: startDate)
+        let endDay = calendar.startOfDay(for: searchEndDate)
+
+        var candidates: [Lesson] = []
+        var day = startDay
+        while day <= endDay {
+            for candidate in lessonsFor(day: day) {
+                let subjectMatches = candidate.subjectRaw
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased() == normalizedSubject
+                guard subjectMatches else { continue }
+
+                let currentBlockEndPeriod = lesson.periodNumber + max(1, lesson.durationPeriods) - 1
+                if calendar.isDate(day, inSameDayAs: startDate), candidate.periodNumber <= currentBlockEndPeriod {
+                    continue
+                }
+                candidates.append(candidate)
+            }
+
+            guard let nextDay = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = nextDay
+        }
+
+        guard let target = candidates.sorted(by: {
+            if $0.dateString != $1.dateString { return $0.dateString < $1.dateString }
+            return $0.periodNumber < $1.periodNumber
+        }).first,
+        let targetDate = Date.fromYyyyMMdd(target.dateString) else {
+            errorMessage = "Dieses Fach wurde in den nächsten 3 Wochen nicht nochmal gefunden."
+            return
+        }
+
+        let targetWeek = targetDate.startOfWeek(using: calendar)
+        if targetWeek != selectedWeekStart {
+            weekNavigationDirection = targetWeek > selectedWeekStart ? 1 : -1
+            selectedWeekStart = targetWeek
+        }
+
+        // Einen kurzen Layout-Pass abwarten, damit die Woche sichtbar gewechselt ist,
+        // bevor die Notiz geöffnet wird.
+        try? await Task.sleep(nanoseconds: 180_000_000)
+        openNote(for: target, sourceFrame: sourceFrame)
     }
 
     /// Löscht ALLE gespeicherten Notizen zu Stunden-Blöcken.

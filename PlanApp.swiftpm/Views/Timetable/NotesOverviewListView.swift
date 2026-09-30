@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Ansichts-Modus "Nur Notizen": chronologische, scrollbare Übersicht aller
 /// Stunden, die eine Notiz enthalten (Hausaufgaben, Tests, ...). Der Titel
@@ -51,37 +52,124 @@ public struct NotesOverviewListView: View {
         }
     }
 
-    public var body: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { timeline in
-            let items = buildListItems(relativeTo: timeline.date)
+    private enum OverviewLayoutRow: Identifiable {
+        case full(ListItem)
+        case cards([NotedLesson])
 
-            ScrollView(.vertical, showsIndicators: true) {
-                if items.isEmpty {
-                    emptyState
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 60)
-                } else {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        ForEach(items) { item in
-                            switch item {
-                            case .nowLine:
-                                nowLine(relativeTo: timeline.date)
-                                    .padding(.vertical, 4)
-                            case .dayHeader(let date):
-                                dayHeader(for: date)
-                                    .padding(.top, 8)
-                            case .row(let entry):
-                                noteRow(entry: entry)
-                            }
-                        }
+        var id: String {
+            switch self {
+            case .full(let item):
+                return "full_\(item.id)"
+            case .cards(let entries):
+                return "cards_" + entries.map(\.id).joined(separator: "_")
+            }
+        }
+    }
+
+    public var body: some View {
+        GeometryReader { geometry in
+            TimelineView(.periodic(from: .now, by: 60)) { timeline in
+                let items = buildListItems(relativeTo: timeline.date)
+                let usesTwoColumnGrid = shouldUseTwoColumnGrid(in: geometry.size)
+
+                ScrollView(.vertical, showsIndicators: true) {
+                    if items.isEmpty {
+                        emptyState
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 60)
+                    } else if usesTwoColumnGrid {
+                        twoColumnOverview(items: items, relativeTo: timeline.date)
+                    } else {
+                        listOverview(items: items, relativeTo: timeline.date)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(UIColor.systemBackground))
+    }
+
+    private func shouldUseTwoColumnGrid(in size: CGSize) -> Bool {
+        UIDevice.current.userInterfaceIdiom == .pad && size.width > size.height && size.width >= 760
+    }
+
+    private func listOverview(items: [ListItem], relativeTo date: Date) -> some View {
+        LazyVStack(alignment: .leading, spacing: 12) {
+            ForEach(items) { item in
+                switch item {
+                case .nowLine:
+                    nowLine(relativeTo: date)
+                        .padding(.vertical, 4)
+                case .dayHeader(let date):
+                    dayHeader(for: date)
+                        .padding(.top, 8)
+                case .row(let entry):
+                    noteRow(entry: entry, compact: true)
+                }
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
+    }
+
+    private func twoColumnOverview(items: [ListItem], relativeTo date: Date) -> some View {
+        LazyVStack(alignment: .leading, spacing: 12) {
+            ForEach(buildOverviewRows(from: items)) { row in
+                switch row {
+                case .full(let item):
+                    switch item {
+                    case .nowLine:
+                        nowLine(relativeTo: date)
+                            .padding(.vertical, 4)
+                    case .dayHeader(let headerDate):
+                        dayHeader(for: headerDate)
+                            .padding(.top, 8)
+                    case .row(let entry):
+                        noteRow(entry: entry, compact: true)
+                    }
+                case .cards(let entries):
+                    HStack(alignment: .top, spacing: 12) {
+                        ForEach(entries) { entry in
+                            noteRow(entry: entry, compact: true)
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                        }
+                        if entries.count == 1 {
+                            Spacer(minLength: 0)
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
+    }
+
+    private func buildOverviewRows(from items: [ListItem]) -> [OverviewLayoutRow] {
+        var rows: [OverviewLayoutRow] = []
+        var pendingCards: [NotedLesson] = []
+
+        func flushPendingCards() {
+            guard !pendingCards.isEmpty else { return }
+            rows.append(.cards(pendingCards))
+            pendingCards.removeAll()
+        }
+
+        for item in items {
+            switch item {
+            case .row(let entry):
+                pendingCards.append(entry)
+                if pendingCards.count == 2 {
+                    flushPendingCards()
+                }
+            case .dayHeader, .nowLine:
+                flushPendingCards()
+                rows.append(.full(item))
+            }
+        }
+        flushPendingCards()
+
+        return rows
     }
 
     // MARK: - Datensammlung
@@ -222,10 +310,10 @@ public struct NotesOverviewListView: View {
     }
 
     /// Eine Zeile: Titel exakt wie über der Zeichenfläche, darunter die Notiz.
-    private func noteRow(entry: NotedLesson) -> some View {
+    private func noteRow(entry: NotedLesson, compact: Bool) -> some View {
         let display = viewModel.resolveSubjectDisplay(for: entry.lesson)
 
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: compact ? 8 : 10) {
             NoteHeaderContent(
                 lesson: entry.lesson,
                 display: display,
@@ -234,10 +322,10 @@ public struct NotesOverviewListView: View {
                 primaryColor: .primary
             )
 
-            noteContent(for: entry.note)
+            noteContent(for: entry.note, compact: compact)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, compact ? 11 : 14)
+        .padding(.vertical, compact ? 8 : 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.2)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -251,13 +339,17 @@ public struct NotesOverviewListView: View {
     /// Die eigentliche Notiz: gerenderte Vorschau (Handschrift + Textfelder),
     /// mit Text-Fallback, falls kein Vorschaubild existiert.
     @ViewBuilder
-    private func noteContent(for note: LessonNote) -> some View {
+    private func noteContent(for note: LessonNote, compact: Bool) -> some View {
         if let imageData = note.croppedImageData, let image = UIImage(data: imageData) {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFit()
-                .frame(maxWidth: 460, maxHeight: 220, alignment: .leading)
-                .padding(6)
+                .frame(
+                    maxWidth: compact ? 360 : 460,
+                    maxHeight: compact ? 150 : 190,
+                    alignment: .leading
+                )
+                .padding(compact ? 4 : 6)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(Color.white.opacity(0.7))
@@ -270,7 +362,7 @@ public struct NotesOverviewListView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(texts.enumerated()), id: \.offset) { _, text in
                         Text(text)
-                            .font(.system(size: 15, weight: .regular, design: .default))
+                            .font(.system(size: compact ? 14 : 15, weight: .regular, design: .default))
                             .foregroundColor(.primary)
                             .multilineTextAlignment(.leading)
                     }

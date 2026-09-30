@@ -46,9 +46,12 @@ struct NoteTextBoxesLayer: View {
             if isTextToolActive || selectedID != nil || editingID != nil {
                 Color.clear
                     .contentShape(Rectangle())
-                    .onTapGesture(coordinateSpace: .local) { location in
-                        handleBackgroundTap(at: location)
-                    }
+                    .gesture(
+                        SpatialTapGesture(coordinateSpace: .local)
+                            .onEnded { value in
+                                handleBackgroundTap(at: value.location)
+                            }
+                    )
             }
 
             ForEach($textBoxes) { $box in
@@ -203,11 +206,33 @@ struct NoteTextBoxesLayer: View {
 
     /// Entfernt Felder, die leer sind oder nur Leerzeichen enthalten.
     private func cleanupEmptyBoxes(keeping keepID: UUID?) {
-        let removable = textBoxes.filter {
-            $0.id != keepID && $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let removableIDs = Set(textBoxes.compactMap { box -> UUID? in
+            guard box.id != keepID,
+                  box.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+            return box.id
+        })
+        guard !removableIDs.isEmpty else { return }
+
+        // Auf den nächsten Main-Loop schieben: So wird kein Binding-Element
+        // mitten in SwiftUIs ForEach-Update entfernt (das konnte beim Text-Tool
+        // zu instabilen Zuständen führen).
+        let textBoxesBinding = $textBoxes
+        let selectedBinding = $selectedID
+        let editingBinding = $editingID
+        DispatchQueue.main.async {
+            var updatedBoxes = textBoxesBinding.wrappedValue
+            updatedBoxes.removeAll { removableIDs.contains($0.id) }
+            textBoxesBinding.wrappedValue = updatedBoxes
+
+            if let selectedID = selectedBinding.wrappedValue, removableIDs.contains(selectedID) {
+                selectedBinding.wrappedValue = nil
+            }
+            if let editingID = editingBinding.wrappedValue, removableIDs.contains(editingID) {
+                editingBinding.wrappedValue = nil
+            }
         }
-        guard !removable.isEmpty else { return }
-        textBoxes.removeAll { box in removable.contains(where: { $0.id == box.id }) }
     }
 
     /// Klemmt ein Feld vollständig in die Zeichenfläche ein.
@@ -341,7 +366,11 @@ private struct NoteTextBoxView: View {
             isEditing: isEditing,
             onEndEditing: onEndEditing
         )
-        .frame(width: CGFloat(box.width), alignment: .topLeading)
+        .frame(
+            width: CGFloat(box.width),
+            height: estimatedTextBoxHeight(box),
+            alignment: .topLeading
+        )
     }
 
     // MARK: - Verschieben (sofort, folgt dem Finger)
