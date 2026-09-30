@@ -11,7 +11,11 @@ public struct DrawingToolbarView: View {
     @Binding public var eraserWidth: CGFloat
     @Binding public var penColorSlots: [String]
     @Binding public var markerColorSlots: [String]
+    @Binding public var backgroundStyle: NoteBackgroundStyle
 
+    public let previewScale: CGFloat
+    public let isConvertingHandwriting: Bool
+    public let onConvertHandwriting: () -> Void
     public let onUndo: () -> Void
     public let onRedo: () -> Void
     public let onClear: () -> Void
@@ -21,6 +25,8 @@ public struct DrawingToolbarView: View {
     @State private var showClearConfirmation = false
     @State private var editingPenSlotIndex: Int? = nil
     @State private var editingMarkerSlotIndex: Int? = nil
+    @State private var selectedPenSlotIndex: Int = 0
+    @State private var selectedMarkerSlotIndex: Int = 0
 
     private let buttonSize: CGFloat = 40
     private let buttonCornerRadius: CGFloat = 10
@@ -32,6 +38,10 @@ public struct DrawingToolbarView: View {
         eraserWidth: Binding<CGFloat>,
         penColorSlots: Binding<[String]>,
         markerColorSlots: Binding<[String]>,
+        backgroundStyle: Binding<NoteBackgroundStyle>,
+        previewScale: CGFloat = 1,
+        isConvertingHandwriting: Bool = false,
+        onConvertHandwriting: @escaping () -> Void = {},
         onUndo: @escaping () -> Void,
         onRedo: @escaping () -> Void,
         onClear: @escaping () -> Void
@@ -42,6 +52,10 @@ public struct DrawingToolbarView: View {
         _eraserWidth = eraserWidth
         _penColorSlots = penColorSlots
         _markerColorSlots = markerColorSlots
+        _backgroundStyle = backgroundStyle
+        self.previewScale = previewScale
+        self.isConvertingHandwriting = isConvertingHandwriting
+        self.onConvertHandwriting = onConvertHandwriting
         self.onUndo = onUndo
         self.onRedo = onRedo
         self.onClear = onClear
@@ -100,8 +114,8 @@ public struct DrawingToolbarView: View {
             ForEach(Array(penColorSlots.enumerated()), id: \.offset) { index, hex in
                 let slotColor = UIColor(hex: hex)
                 let isSelected: Bool = {
-                    if case .pen(let selectedColor) = toolSelection {
-                        return selectedColor.toHex().caseInsensitiveCompare(hex) == .orderedSame
+                    if case .pen = toolSelection {
+                        return selectedPenSlotIndex == index
                     }
                     return false
                 }()
@@ -115,9 +129,11 @@ public struct DrawingToolbarView: View {
                 Button {
                     if isSelected {
                         Haptics.tap()
+                        editingMarkerSlotIndex = nil
                         editingPenSlotIndex = index
                     } else {
                         Haptics.select()
+                        selectedPenSlotIndex = index
                         toolSelection = .pen(color: slotColor)
                     }
                 } label: {
@@ -162,11 +178,11 @@ public struct DrawingToolbarView: View {
                     DrawingColorPalettePopover(
                         selectedHex: hex,
                         onSelectColor: { newHex in
-                            if index < penColorSlots.count {
-                                penColorSlots[index] = newHex
-                            }
-                            toolSelection = .pen(color: UIColor(hex: newHex))
+                            updatePenSlot(index, with: newHex)
                             editingPenSlotIndex = nil
+                        },
+                        onSelectCustomColor: { newHex in
+                            updatePenSlot(index, with: newHex)
                         }
                     )
                     .presentationCompactAdaptation(.popover)
@@ -191,8 +207,8 @@ public struct DrawingToolbarView: View {
             ForEach(Array(markerColorSlots.enumerated()), id: \.offset) { index, hex in
                 let slotColor = UIColor(hex: hex).withAlphaComponent(0.60)
                 let isSelected: Bool = {
-                    if case .marker(let selectedColor) = toolSelection {
-                        return selectedColor.toHex().caseInsensitiveCompare(hex) == .orderedSame
+                    if case .marker = toolSelection {
+                        return selectedMarkerSlotIndex == index
                     }
                     return false
                 }()
@@ -201,9 +217,11 @@ public struct DrawingToolbarView: View {
                 Button {
                     if isSelected {
                         Haptics.tap()
+                        editingPenSlotIndex = nil
                         editingMarkerSlotIndex = index
                     } else {
                         Haptics.select()
+                        selectedMarkerSlotIndex = index
                         toolSelection = .marker(color: slotColor)
                     }
                 } label: {
@@ -240,11 +258,11 @@ public struct DrawingToolbarView: View {
                     DrawingColorPalettePopover(
                         selectedHex: hex,
                         onSelectColor: { newHex in
-                            if index < markerColorSlots.count {
-                                markerColorSlots[index] = newHex
-                            }
-                            toolSelection = .marker(color: UIColor(hex: newHex).withAlphaComponent(0.60))
+                            updateMarkerSlot(index, with: newHex)
                             editingMarkerSlotIndex = nil
+                        },
+                        onSelectCustomColor: { newHex in
+                            updateMarkerSlot(index, with: newHex)
                         }
                     )
                     .presentationCompactAdaptation(.popover)
@@ -255,6 +273,26 @@ public struct DrawingToolbarView: View {
         .padding(.vertical, 4)
         .background(Color(UIColor.tertiarySystemBackground).opacity(0.72))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func updatePenSlot(_ index: Int, with newHex: String) {
+        guard penColorSlots.indices.contains(index) else { return }
+        let normalized = normalizedHex(newHex)
+        penColorSlots[index] = normalized
+        selectedPenSlotIndex = index
+        toolSelection = .pen(color: UIColor(hex: normalized))
+    }
+
+    private func updateMarkerSlot(_ index: Int, with newHex: String) {
+        guard markerColorSlots.indices.contains(index) else { return }
+        let normalized = normalizedHex(newHex)
+        markerColorSlots[index] = normalized
+        selectedMarkerSlotIndex = index
+        toolSelection = .marker(color: UIColor(hex: normalized).withAlphaComponent(0.60))
+    }
+
+    private func normalizedHex(_ hex: String) -> String {
+        UIColor(hex: hex).toHex().uppercased()
     }
 
     // MARK: - Text-Werkzeug
@@ -299,13 +337,13 @@ public struct DrawingToolbarView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous)
                     .fill(Color(UIColor.tertiarySystemBackground).opacity(0.72))
-                // Punkt 1:1 in pt – der Kreis zeigt exakt die Strichstärke,
-                // nur durch die Button-Größe nach oben begrenzt.
+                // Sichtbare Vorschau: Die echte Zeichnung liegt auf der skalierten
+                // Notizfläche, daher wird nur die Vorschau mit derselben Skala angepasst.
                 Circle()
                     .fill(Color.primary)
                     .frame(
-                        width: max(3, min(24, currentToolWidth)),
-                        height: max(3, min(24, currentToolWidth))
+                        width: max(3, min(24, currentToolWidth * previewScale)),
+                        height: max(3, min(24, currentToolWidth * previewScale))
                     )
             }
             .frame(width: buttonSize, height: buttonSize)
@@ -319,7 +357,8 @@ public struct DrawingToolbarView: View {
                 width: currentWidthBinding,
                 range: currentWidthRange,
                 previewColor: currentToolPreviewColor,
-                title: currentThicknessTitle
+                title: currentThicknessTitle,
+                previewScale: previewScale
             )
             .presentationCompactAdaptation(.popover)
         }
@@ -425,6 +464,32 @@ public struct DrawingToolbarView: View {
 
     private var moreOptionsButton: some View {
         Menu {
+            Button {
+                Haptics.tap()
+                onConvertHandwriting()
+            } label: {
+                Label(
+                    isConvertingHandwriting ? "Wird umgewandelt …" : "Handschrift in Text umwandeln",
+                    systemImage: "text.viewfinder"
+                )
+            }
+            .disabled(isConvertingHandwriting)
+
+            Menu {
+                ForEach(NoteBackgroundStyle.allCases) { style in
+                    Button {
+                        Haptics.select()
+                        backgroundStyle = style
+                    } label: {
+                        Label(style.title, systemImage: backgroundStyle == style ? "checkmark" : style.systemImage)
+                    }
+                }
+            } label: {
+                Label("Hintergrund", systemImage: "rectangle.on.rectangle")
+            }
+
+            Divider()
+
             Button(role: .destructive) {
                 showClearConfirmation = true
             } label: {
@@ -489,11 +554,12 @@ private struct ThicknessSliderPanel: View {
     let range: ClosedRange<CGFloat>
     let previewColor: Color
     let title: String
+    let previewScale: CGFloat
 
-    /// Exakte Vorschau: 1:1 Punkte, lediglich nach oben durch die 76pt-Fläche
-    /// und nach unten durch die Lesbarkeit begrenzt.
+    /// Sichtbare Vorschau: Die Zeichenfläche selbst kann verkleinert dargestellt
+    /// sein. Nur die Vorschau wird deshalb skaliert, die echte Werkzeug-Dicke nicht.
     private var previewDiameter: CGFloat {
-        max(3, min(72, width))
+        max(3, min(72, width * previewScale))
     }
 
     var body: some View {

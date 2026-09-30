@@ -165,7 +165,8 @@ public final class TimetableStorageService {
         metadata[note.id] = [
             "lineCount": note.lineCount,
             "updatedAt": note.updatedAt.timeIntervalSince1970,
-            "hasDrawing": !note.drawingData.isEmpty || !note.textBoxes.isEmpty
+            "hasDrawing": !note.drawingData.isEmpty || !note.textBoxes.isEmpty,
+            "backgroundStyle": note.backgroundStyle.rawValue
         ]
         defaults.set(metadata, forKey: Keys.notesMetadata)
     }
@@ -192,6 +193,8 @@ public final class TimetableStorageService {
         let lineCount = metadata?["lineCount"] as? Int ?? 6
         let timeInterval = metadata?["updatedAt"] as? Double ?? Date().timeIntervalSince1970
         let date = Date(timeIntervalSince1970: timeInterval)
+        let backgroundRaw = metadata?["backgroundStyle"] as? String
+        let backgroundStyle = backgroundRaw.flatMap(NoteBackgroundStyle.init(rawValue:)) ?? .blank
 
         return LessonNote(
             id: noteKey,
@@ -199,6 +202,7 @@ public final class TimetableStorageService {
             croppedImageData: imageData,
             lineCount: lineCount,
             textBoxes: textBoxes,
+            backgroundStyle: backgroundStyle,
             updatedAt: date
         )
     }

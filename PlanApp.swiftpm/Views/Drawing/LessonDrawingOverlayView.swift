@@ -1,5 +1,7 @@
 import SwiftUI
 import PencilKit
+import Vision
+import ImageIO
 
 private struct DrawingViewport {
     let size: CGSize
@@ -24,7 +26,7 @@ private struct DrawingViewport {
 }
 
 /// Full-screen editor which expands the selected lesson card into a centered,
-/// grey note. Apple Pencil & Touch draw; two fingers move the note, the round handle
+/// grey note. Drawing is Apple-Pencil-only; two fingers move the note, the round handle
 /// below resizes it. Zooming is intentionally not supported.
 public struct LessonDrawingOverlayView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
@@ -40,6 +42,9 @@ public struct LessonDrawingOverlayView: View {
     @State private var markerWidth: CGFloat = 16
     @State private var eraserWidth: CGFloat = 24
     @State private var canvasView: PKCanvasView?
+    @State private var noteBackgroundStyle: NoteBackgroundStyle = .blank
+    @State private var isConvertingHandwriting = false
+    @State private var recognitionAlertMessage: String? = nil
 
     // Textfelder (Text-Werkzeug)
     @State private var textBoxes: [NoteTextBox] = []
@@ -171,6 +176,18 @@ public struct LessonDrawingOverlayView: View {
                     }
                 }
             }
+            .alert("Handschrift umwandeln", isPresented: Binding(
+                get: { recognitionAlertMessage != nil },
+                set: { isPresented in
+                    if !isPresented { recognitionAlertMessage = nil }
+                }
+            )) {
+                Button("OK", role: .cancel) {
+                    recognitionAlertMessage = nil
+                }
+            } message: {
+                Text(recognitionAlertMessage ?? "")
+            }
         }
     }
 
@@ -201,8 +218,7 @@ public struct LessonDrawingOverlayView: View {
 
                 // A lightly separated writing surface keeps all Pencil colors
                 // readable while the selected lesson itself visibly turns grey.
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(Color(UIColor.systemBackground).opacity(0.76))
+                DrawingCanvasBackgroundView(style: noteBackgroundStyle)
                     .frame(
                         width: paperWidth - 16,
                         height: max(180, canvasHeight - headerHeight - 8)
@@ -236,7 +252,7 @@ public struct LessonDrawingOverlayView: View {
                 )
                 .offset(y: headerHeight)
                 .opacity(showsEditor ? 1 : 0)
-                .allowsHitTesting(showsEditor)
+                .allowsHitTesting(showsEditor && !isTextToolActive)
 
                 // Frei bewegliche Textfelder über der Zeichenfläche.
                 NoteTextBoxesLayer(
@@ -434,6 +450,10 @@ public struct LessonDrawingOverlayView: View {
                         viewModel.saveDrawingSettings()
                     }
                 ),
+                backgroundStyle: $noteBackgroundStyle,
+                previewScale: max(0.01, scale),
+                isConvertingHandwriting: isConvertingHandwriting,
+                onConvertHandwriting: { convertHandwritingToEditableText() },
                 onUndo: { performUndo() },
                 onRedo: { performRedo() },
                 onClear: { clearPage() }
@@ -572,6 +592,131 @@ public struct LessonDrawingOverlayView: View {
         canvasView?.drawing = emptyDrawing
     }
 
+    // MARK: - Handschrift in Text
+
+    private func convertHandwritingToEditableText() {
+        guard !isConvertingHandwriting else { return }
+
+        let currentDrawing = canvasView?.drawing ?? drawing
+        guard !currentDrawing.strokes.isEmpty else {
+            Haptics.warning()
+            recognitionAlertMessage = "Es wurde keine Handschrift gefunden, die umgewandelt werden kann."
+            return
+        }
+
+        let canvasSize = CGSize(
+            width: paperWidth,
+            height: max(180, canvasHeight - headerHeight)
+        )
+        guard let cgImage = PencilKitCanvasRepresentable.renderDrawingForRecognition(
+            drawing: currentDrawing,
+            canvasSize: canvasSize
+        )?.cgImage else {
+            Haptics.warning()
+            recognitionAlertMessage = "Die Zeichnung konnte nicht für die Texterkennung vorbereitet werden."
+            return
+        }
+
+        isConvertingHandwriting = true
+
+        let request = VNRecognizeTextRequest { request, error in
+            let recognizedBoxes: [NoteTextBox]
+            if error == nil,
+               let observations = request.results as? [VNRecognizedTextObservation] {
+                recognizedBoxes = makeTextBoxes(from: observations, canvasSize: canvasSize)
+            } else {
+                recognizedBoxes = []
+            }
+
+            DispatchQueue.main.async {
+                isConvertingHandwriting = false
+
+                guard !recognizedBoxes.isEmpty else {
+                    Haptics.warning()
+                    recognitionAlertMessage = "Es konnte keine gut lesbare Handschrift erkannt werden."
+                    return
+                }
+
+                let beforeBoxes = textBoxes
+                textBoxes.append(contentsOf: recognizedBoxes)
+                textUndo.push(before: beforeBoxes, after: textBoxes)
+
+                // Die erkannten Striche werden durch bearbeitbare Textfelder ersetzt.
+                let emptyDrawing = PKDrawing()
+                drawing = emptyDrawing
+                canvasView?.drawing = emptyDrawing
+                lastStrokeMutation = Date()
+
+                selectedTextBoxID = recognizedBoxes.first?.id
+                editingTextBoxID = nil
+                toolSelection = .text
+                Haptics.success()
+            }
+        }
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        request.recognitionLanguages = ["de-DE", "en-US"]
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
+            do {
+                try handler.perform([request])
+            } catch {
+                DispatchQueue.main.async {
+                    isConvertingHandwriting = false
+                    Haptics.warning()
+                    recognitionAlertMessage = "Die Handschrift konnte nicht umgewandelt werden."
+                }
+            }
+        }
+    }
+
+    private func makeTextBoxes(
+        from observations: [VNRecognizedTextObservation],
+        canvasSize: CGSize
+    ) -> [NoteTextBox] {
+        let margin: CGFloat = 6
+        let sorted = observations.sorted {
+            if abs($0.boundingBox.minY - $1.boundingBox.minY) > 0.02 {
+                return $0.boundingBox.minY > $1.boundingBox.minY
+            }
+            return $0.boundingBox.minX < $1.boundingBox.minX
+        }
+
+        return sorted.compactMap { observation in
+            guard let candidate = observation.topCandidates(1).first else { return nil }
+            let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+
+            let normalized = observation.boundingBox
+            let rawX = normalized.minX * canvasSize.width
+            let rawY = (1 - normalized.maxY) * canvasSize.height
+            let rawWidth = normalized.width * canvasSize.width
+            let rawHeight = normalized.height * canvasSize.height
+            let fontSize = max(12, min(34, rawHeight * 0.82))
+            let width = min(
+                max(90, rawWidth + 28),
+                max(90, canvasSize.width - (margin * 2))
+            )
+            let x = min(
+                max(margin, rawX - 8),
+                max(margin, canvasSize.width - width - margin)
+            )
+            let y = min(
+                max(margin, rawY - 6),
+                max(margin, canvasSize.height - max(42, rawHeight + 16) - margin)
+            )
+
+            return NoteTextBox(
+                text: text,
+                x: Double(x),
+                y: Double(y),
+                width: Double(width),
+                fontSize: Double(fontSize)
+            )
+        }
+    }
+
     // MARK: - Persistence and transition
 
     /// Übernimmt Standard-Dicken, Standard-Größe und startet immer mit dem
@@ -586,6 +731,7 @@ public struct LessonDrawingOverlayView: View {
         // Immer standardmäßig Stift mit der ersten Farbe aus dem Slot
         let initialHex = settings.penColorSlots.first ?? "#1E1E1E"
         toolSelection = .pen(color: UIColor(hex: initialHex))
+        noteBackgroundStyle = settings.defaultBackgroundStyle
 
         canvasHeight = min(
             maximumCanvasHeight,
@@ -603,6 +749,7 @@ public struct LessonDrawingOverlayView: View {
         )
         resizeStartHeight = canvasHeight
         textBoxes = note.textBoxes
+        noteBackgroundStyle = note.backgroundStyle
 
         if let savedDrawing = try? PKDrawing(data: note.drawingData) {
             drawing = savedDrawing
@@ -631,6 +778,7 @@ public struct LessonDrawingOverlayView: View {
         let croppedImage = PencilKitCanvasRepresentable.renderNotePreview(
             drawing: croppedDrawing,
             textBoxes: cleanedTextBoxes,
+            backgroundStyle: noteBackgroundStyle,
             clipRect: canvasRect
         )
         let drawingData = croppedDrawing.dataRepresentation()
@@ -654,7 +802,8 @@ public struct LessonDrawingOverlayView: View {
                 drawingData: drawingData,
                 croppedImageData: croppedImage?.pngData(),
                 lineCount: calculatedLines,
-                textBoxes: cleanedTextBoxes
+                textBoxes: cleanedTextBoxes,
+                backgroundStyle: noteBackgroundStyle
             )
         }
     }

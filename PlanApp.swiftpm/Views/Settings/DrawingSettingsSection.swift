@@ -70,7 +70,42 @@ public struct DrawingSettingsSection: View {
             .padding(14)
             .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
 
-            // 3. AUTOMATISCHES AUFRÄUMEN & ALLES LÖSCHEN
+            // 3. STANDARD-HINTERGRUND
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "rectangle.on.rectangle")
+                        .font(.system(size: 14, weight: .regular, design: .default))
+                        .foregroundColor(.blue)
+                    Text("Standard-Hintergrund")
+                        .font(.system(size: 14, weight: .regular, design: .default))
+                    Spacer()
+                    Text(viewModel.drawingSettings.defaultBackgroundStyle.title)
+                        .font(.system(size: 13, weight: .regular, design: .default))
+                        .foregroundColor(.secondary)
+                }
+
+                Picker("Standard-Hintergrund", selection: Binding(
+                    get: { viewModel.drawingSettings.defaultBackgroundStyle },
+                    set: { newValue in
+                        viewModel.drawingSettings.defaultBackgroundStyle = newValue
+                        viewModel.saveDrawingSettings()
+                    }
+                )) {
+                    ForEach(NoteBackgroundStyle.allCases) { style in
+                        Label(style.title, systemImage: style.systemImage)
+                            .tag(style)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Text("Neue Notizen starten mit diesem Hintergrund. Pro Notiz kannst du ihn im Drei-Punkte-Menü ändern.")
+                    .font(.system(size: 12, weight: .regular, design: .default))
+                    .foregroundColor(.secondary)
+            }
+            .padding(14)
+            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
+
+            // 4. AUTOMATISCHES AUFRÄUMEN & ALLES LÖSCHEN
             VStack(alignment: .leading, spacing: 12) {
                 Toggle(isOn: Binding(
                     get: { viewModel.drawingSettings.autoDeletePastNotes },

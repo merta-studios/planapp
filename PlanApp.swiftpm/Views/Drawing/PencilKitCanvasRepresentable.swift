@@ -2,10 +2,10 @@ import SwiftUI
 import PencilKit
 import UIKit
 
-/// SwiftUI wrapper for `PKCanvasView` with Apple Pencil and touch drawing.
-/// Apple Pencil and single-finger draw on the canvas; two fingers are forwarded
-/// to the surrounding note as incremental pan updates. Zooming is deliberately
-/// not supported – the note is moved and resized only.
+/// SwiftUI wrapper for `PKCanvasView` with Apple-Pencil-only drawing.
+/// Direct finger touches never draw; two fingers are forwarded to the surrounding
+/// note as incremental pan updates. Zooming is deliberately not supported – the
+/// note is moved and resized only.
 public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     @Binding public var drawing: PKDrawing
     public let toolSelection: DrawingToolSelection
@@ -64,8 +64,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         canvasView.drawing = drawing
         canvasView.delegate = context.coordinator
 
-        // Ermöglicht Zeichnen sowohl mit Apple Pencil als auch mit Finger/Touch/Maus
-        canvasView.drawingPolicy = .anyInput
+        // Nur der Apple Pencil darf Striche erzeugen. Finger bleiben für
+        // UI-Bedienung und die eigene Zwei-Finger-Verschiebe-Geste reserviert.
+        canvasView.drawingPolicy = .pencilOnly
         canvasView.isScrollEnabled = false
         canvasView.bounces = false
         // Eigene Scroll-Gesten des CanvasView deaktivieren
@@ -124,7 +125,12 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             isTextTool = true
         }
 
-        canvasView.drawingGestureRecognizer.isEnabled = !isTextTool
+        // Im Text-Modus nimmt die SwiftUI-Text-Ebene die Eingaben entgegen.
+        // Den PencilKit-Recognizer selbst lassen wir aktiv, weil das Umschalten
+        // mitten in UIKit-Gesten instabil sein kann; stattdessen deaktivieren wir
+        // die Interaktion des Canvas als Ganzes.
+        canvasView.drawingGestureRecognizer.isEnabled = true
+        canvasView.isUserInteractionEnabled = !isTextTool
     }
 
     /// Passt reines Schwarz/Weiß dynamisch an das Erscheinungsbild an
@@ -215,6 +221,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     public static func renderNotePreview(
         drawing: PKDrawing,
         textBoxes: [NoteTextBox],
+        backgroundStyle: NoteBackgroundStyle = .blank,
         clipRect: CGRect? = nil
     ) -> UIImage? {
         var contentRect = CGRect.null
@@ -266,6 +273,8 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             cgContext.scaleBy(x: scaleFactor, y: scaleFactor)
             cgContext.translateBy(x: -renderBounds.origin.x, y: -renderBounds.origin.y)
 
+            drawPaperBackground(style: backgroundStyle, in: renderBounds, context: cgContext)
+
             if !drawing.strokes.isEmpty {
                 let drawingImage = drawing.image(from: renderBounds, scale: UIScreen.main.scale)
                 drawingImage.draw(in: renderBounds)
@@ -297,5 +306,98 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
             cgContext.restoreGState()
         }
+    }
+
+    /// Rendert die Zeichnung auf weißem Hintergrund für Vision-OCR.
+    /// Die Ausgabe ist absichtlich nicht zugeschnitten, damit erkannte
+    /// Textpositionen direkt in Canvas-Koordinaten zurückgerechnet werden können.
+    public static func renderDrawingForRecognition(
+        drawing: PKDrawing,
+        canvasSize: CGSize
+    ) -> UIImage? {
+        guard canvasSize.width > 0, canvasSize.height > 0 else { return nil }
+
+        let canvasRect = CGRect(origin: .zero, size: canvasSize)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = UIScreen.main.scale
+        format.opaque = true
+
+        let renderer = UIGraphicsImageRenderer(size: canvasSize, format: format)
+        return renderer.image { context in
+            UIColor.white.setFill()
+            context.cgContext.fill(canvasRect)
+
+            guard !drawing.strokes.isEmpty else { return }
+            let drawingImage = drawing.image(from: canvasRect, scale: UIScreen.main.scale)
+            drawingImage.draw(in: canvasRect)
+        }
+    }
+
+    private static func drawPaperBackground(
+        style: NoteBackgroundStyle,
+        in rect: CGRect,
+        context: CGContext
+    ) {
+        guard style != .blank else { return }
+
+        context.saveGState()
+        UIColor.white.withAlphaComponent(0.70).setFill()
+        context.fill(rect)
+
+        switch style {
+        case .blank:
+            break
+        case .dotted:
+            let spacing: CGFloat = 22
+            let radius: CGFloat = 1.2
+            UIColor.systemGray.withAlphaComponent(0.30).setFill()
+            var y = floor(rect.minY / spacing) * spacing
+            while y <= rect.maxY {
+                var x = floor(rect.minX / spacing) * spacing
+                while x <= rect.maxX {
+                    let dot = CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)
+                    context.fillEllipse(in: dot)
+                    x += spacing
+                }
+                y += spacing
+            }
+        case .lined:
+            drawLines(in: rect, context: context, spacing: 28, vertical: false, alpha: 0.26)
+        case .grid:
+            drawLines(in: rect, context: context, spacing: 28, vertical: false, alpha: 0.22)
+            drawLines(in: rect, context: context, spacing: 28, vertical: true, alpha: 0.22)
+        }
+
+        context.restoreGState()
+    }
+
+    private static func drawLines(
+        in rect: CGRect,
+        context: CGContext,
+        spacing: CGFloat,
+        vertical: Bool,
+        alpha: CGFloat
+    ) {
+        context.setStrokeColor(UIColor.systemGray.withAlphaComponent(alpha).cgColor)
+        context.setLineWidth(1)
+        context.beginPath()
+
+        if vertical {
+            var x = floor(rect.minX / spacing) * spacing
+            while x <= rect.maxX {
+                context.move(to: CGPoint(x: x, y: rect.minY))
+                context.addLine(to: CGPoint(x: x, y: rect.maxY))
+                x += spacing
+            }
+        } else {
+            var y = floor(rect.minY / spacing) * spacing
+            while y <= rect.maxY {
+                context.move(to: CGPoint(x: rect.minX, y: y))
+                context.addLine(to: CGPoint(x: rect.maxX, y: y))
+                y += spacing
+            }
+        }
+
+        context.strokePath()
     }
 }

@@ -9,6 +9,7 @@ public struct DrawingSettings: Codable, Equatable {
     public var eraserWidth: Double           // Standard-Dicke Radierer
     public var defaultCanvasHeight: Double   // Standard-Höhe der Zeichenfläche beim Öffnen
     public var autoDeletePastNotes: Bool     // Notizen vergangener Stunden automatisch löschen
+    public var defaultBackgroundStyle: NoteBackgroundStyle // Standard-Hintergrund neuer Notizen
     public var penColorSlots: [String]       // Farb-Slots für den Stift in der Werkzeugleiste
     public var markerColorSlots: [String]    // Farb-Slots für den Textmarker in der Werkzeugleiste
 
@@ -33,6 +34,7 @@ public struct DrawingSettings: Codable, Equatable {
         eraserWidth: Double = 24,
         defaultCanvasHeight: Double = 460,
         autoDeletePastNotes: Bool = false,
+        defaultBackgroundStyle: NoteBackgroundStyle = .blank,
         penColorSlots: [String] = DrawingSettings.defaultPenColorSlots,
         markerColorSlots: [String] = DrawingSettings.defaultMarkerColorSlots
     ) {
@@ -41,12 +43,14 @@ public struct DrawingSettings: Codable, Equatable {
         self.eraserWidth = eraserWidth
         self.defaultCanvasHeight = defaultCanvasHeight
         self.autoDeletePastNotes = autoDeletePastNotes
+        self.defaultBackgroundStyle = defaultBackgroundStyle
         self.penColorSlots = penColorSlots.isEmpty ? DrawingSettings.defaultPenColorSlots : penColorSlots
         self.markerColorSlots = markerColorSlots.isEmpty ? DrawingSettings.defaultMarkerColorSlots : markerColorSlots
     }
 
     enum CodingKeys: String, CodingKey {
         case penWidth, markerWidth, eraserWidth, defaultCanvasHeight, autoDeletePastNotes
+        case defaultBackgroundStyle
         case penColorSlots, markerColorSlots
         case defaultPenColorHex, defaultMarkerColorHex, defaultTool
     }
@@ -58,6 +62,7 @@ public struct DrawingSettings: Codable, Equatable {
         self.eraserWidth = try container.decodeIfPresent(Double.self, forKey: .eraserWidth) ?? 24
         self.defaultCanvasHeight = try container.decodeIfPresent(Double.self, forKey: .defaultCanvasHeight) ?? 460
         self.autoDeletePastNotes = try container.decodeIfPresent(Bool.self, forKey: .autoDeletePastNotes) ?? false
+        self.defaultBackgroundStyle = try container.decodeIfPresent(NoteBackgroundStyle.self, forKey: .defaultBackgroundStyle) ?? .blank
 
         if let decodedPenSlots = try container.decodeIfPresent([String].self, forKey: .penColorSlots), !decodedPenSlots.isEmpty {
             self.penColorSlots = decodedPenSlots
@@ -87,6 +92,7 @@ public struct DrawingSettings: Codable, Equatable {
         try container.encode(eraserWidth, forKey: .eraserWidth)
         try container.encode(defaultCanvasHeight, forKey: .defaultCanvasHeight)
         try container.encode(autoDeletePastNotes, forKey: .autoDeletePastNotes)
+        try container.encode(defaultBackgroundStyle, forKey: .defaultBackgroundStyle)
         try container.encode(penColorSlots, forKey: .penColorSlots)
         try container.encode(markerColorSlots, forKey: .markerColorSlots)
     }

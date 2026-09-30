@@ -67,13 +67,19 @@ public enum DrawingPaletteGrid {
 public struct DrawingColorPalettePopover: View {
     public let selectedHex: String
     public let onSelectColor: (String) -> Void
+    public let onSelectCustomColor: (String) -> Void
 
     private let buttonDiameter: CGFloat = 32
     private let spacing: CGFloat = 8
 
-    public init(selectedHex: String, onSelectColor: @escaping (String) -> Void) {
+    public init(
+        selectedHex: String,
+        onSelectColor: @escaping (String) -> Void,
+        onSelectCustomColor: ((String) -> Void)? = nil
+    ) {
         self.selectedHex = selectedHex
         self.onSelectColor = onSelectColor
+        self.onSelectCustomColor = onSelectCustomColor ?? onSelectColor
     }
 
     public var body: some View {
@@ -195,20 +201,96 @@ public struct DrawingColorPalettePopover: View {
                     Circle().strokeBorder(Color.white.opacity(0.35), lineWidth: 1)
                 )
 
-            // Apples Standard Farbwähler (System ColorPicker)
-            ColorPicker("", selection: Binding(
-                get: { Color(hex: selectedHex) },
-                set: { newColor in
-                    Haptics.select()
-                    onSelectColor(newColor.toHex())
+            // Apples Standard-Farbwähler als echter UIKit-Launcher. Dadurch
+            // funktioniert der Custom Picker zuverlässig auch innerhalb des Popovers
+            // und schließt die Palette nicht bei jeder Live-Farbänderung.
+            SystemColorPickerButton(
+                selectedHex: selectedHex,
+                onColorChange: { newHex in
+                    onSelectCustomColor(newHex)
                 }
-            ), supportsOpacity: false)
-            .labelsHidden()
-            .opacity(0.015)
+            )
             .frame(width: buttonDiameter + 6, height: buttonDiameter + 6)
         }
         .frame(width: buttonDiameter + 6, height: buttonDiameter + 6)
         .hoverEffect(.lift)
         .accessibilityLabel("Eigene Farbe wählen")
+    }
+}
+
+private struct SystemColorPickerButton: UIViewRepresentable {
+    let selectedHex: String
+    let onColorChange: (String) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIView(context: Context) -> UIButton {
+        let button = UIButton(type: .custom)
+        button.backgroundColor = .clear
+        button.accessibilityLabel = "Eigene Farbe wählen"
+        button.addTarget(
+            context.coordinator,
+            action: #selector(Coordinator.openColorPicker(_:)),
+            for: .touchUpInside
+        )
+        return button
+    }
+
+    func updateUIView(_ uiView: UIButton, context: Context) {
+        context.coordinator.parent = self
+    }
+
+    final class Coordinator: NSObject, UIColorPickerViewControllerDelegate, UIAdaptivePresentationControllerDelegate {
+        var parent: SystemColorPickerButton
+        weak var picker: UIColorPickerViewController?
+
+        init(_ parent: SystemColorPickerButton) {
+            self.parent = parent
+        }
+
+        @objc func openColorPicker(_ sender: UIButton) {
+            guard picker == nil else { return }
+            guard var presenter = sender.closestViewController else { return }
+            while let presented = presenter.presentedViewController {
+                presenter = presented
+            }
+
+            Haptics.tap()
+            let picker = UIColorPickerViewController()
+            picker.delegate = self
+            picker.supportsAlpha = false
+            picker.selectedColor = UIColor(hex: parent.selectedHex)
+            picker.presentationController?.delegate = self
+            self.picker = picker
+            presenter.present(picker, animated: true)
+        }
+
+        func colorPickerViewControllerDidSelectColor(_ viewController: UIColorPickerViewController) {
+            parent.onColorChange(viewController.selectedColor.toHex())
+        }
+
+        func colorPickerViewControllerDidFinish(_ viewController: UIColorPickerViewController) {
+            parent.onColorChange(viewController.selectedColor.toHex())
+            picker = nil
+        }
+
+        func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+            picker = nil
+        }
+    }
+}
+
+private extension UIView {
+    var closestViewController: UIViewController? {
+        var responder: UIResponder? = self
+        while let nextResponder = responder?.next {
+            if let viewController = nextResponder as? UIViewController {
+                return viewController
+            }
+            responder = nextResponder
+        }
+        return nil
     }
 }

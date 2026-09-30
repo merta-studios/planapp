@@ -48,6 +48,7 @@ public struct NoteHeaderContent: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(display.name)
                     .font(.system(size: 18, weight: .semibold, design: .default))
+                    .strikethrough(lesson.isCancelled, color: .red)
                     .lineLimit(1)
 
                 if hasHeaderDetails {
@@ -60,8 +61,10 @@ public struct NoteHeaderContent: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text("\(lesson.periodNumber). Stunde")
                     .font(.system(size: 13, weight: .semibold, design: .default))
+                    .strikethrough(lesson.isCancelled, color: .red)
                 Text(headerDateText)
                     .font(.system(size: 12, weight: .regular, design: .default))
+                    .strikethrough(lesson.isCancelled, color: .red)
                     .opacity(0.78)
             }
             .lineLimit(1)
@@ -92,8 +95,10 @@ public struct NoteHeaderContent: View {
                         Text(orig)
                             .strikethrough(true, color: .red)
                         Text("➔ \(lesson.teacherRaw)")
+                            .strikethrough(lesson.isCancelled, color: .red)
                     } else {
                         Text(lesson.teacherRaw)
+                            .strikethrough(lesson.isCancelled, color: .red)
                     }
                 }
             }
@@ -106,8 +111,10 @@ public struct NoteHeaderContent: View {
                         Text(orig)
                             .strikethrough(true, color: .red)
                         Text("➔ \(lesson.roomRaw)")
+                            .strikethrough(lesson.isCancelled, color: .red)
                     } else {
                         Text(lesson.roomRaw)
+                            .strikethrough(lesson.isCancelled, color: .red)
                     }
                 }
             }
@@ -117,6 +124,7 @@ public struct NoteHeaderContent: View {
                     Image(systemName: "person.3")
                         .font(.system(size: 10, weight: .regular, design: .default))
                     Text(lesson.klasseRaw)
+                        .strikethrough(lesson.isCancelled, color: .red)
                 }
             }
 
@@ -126,6 +134,7 @@ public struct NoteHeaderContent: View {
                     Image(systemName: "clock")
                         .font(.system(size: 10, weight: .regular, design: .default))
                     Text("\(period.startTime) – \(period.endTime)")
+                        .strikethrough(lesson.isCancelled, color: .red)
                 }
             }
         }
