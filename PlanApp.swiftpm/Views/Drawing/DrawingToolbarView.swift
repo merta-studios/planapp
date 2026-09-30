@@ -20,7 +20,6 @@ public struct DrawingToolbarView: View {
     public let onRedo: () -> Void
     public let onClear: () -> Void
 
-    @Environment(\.colorScheme) private var colorScheme
     @State private var showThicknessSlider = false
     @State private var showClearConfirmation = false
     @State private var editingPenSlotIndex: Int? = nil
@@ -119,12 +118,9 @@ public struct DrawingToolbarView: View {
                     }
                     return false
                 }()
-                let swatch: Color = {
-                    if hex.caseInsensitiveCompare("#000000") == .orderedSame || hex.caseInsensitiveCompare("#1E1E1E") == .orderedSame {
-                        return colorScheme == .dark ? .white : Color(hex: hex)
-                    }
-                    return Color(hex: hex)
-                }()
+                // Die Papierfläche bleibt weiß, daher bleibt auch Schwarz im
+                // Farbfeld und beim Zeichnen schwarz – unabhängig vom Dark Mode.
+                let swatch = Color(hex: hex)
 
                 Button {
                     if isSelected {
@@ -381,16 +377,15 @@ public struct DrawingToolbarView: View {
         currentWidthBinding.wrappedValue
     }
 
-    /// Durchmesser des kleinen Punkts im Werkzeugleisten-Knopf. Er entspricht
-    /// exakt der Strichstärke, die beim Zeichnen sichtbar wird.
+    /// Durchmesser des Punkts im Werkzeugleisten-Knopf. Es gibt absichtlich
+    /// keinen zusätzlichen Faktor und keine pauschale Obergrenze: Die Größe
+    /// entspricht der eingestellten PencilKit-Breite (inklusive der aktuellen
+    /// Darstellungsskalierung der Notizfläche).
     private var compactPreviewDiameter: CGFloat {
-        min(
-            30,
-            DrawingStrokeMetrics.onScreenWidth(
-                for: toolSelection,
-                width: currentToolWidth,
-                canvasScale: previewScale
-            )
+        DrawingStrokeMetrics.onScreenWidth(
+            for: toolSelection,
+            width: currentToolWidth,
+            canvasScale: previewScale
         )
     }
 
@@ -421,7 +416,7 @@ public struct DrawingToolbarView: View {
     private var currentToolPreviewColor: Color {
         switch toolSelection {
         case .pen(let color):
-            return colorScheme == .dark && color == .black ? .white : Color(uiColor: color)
+            return Color(uiColor: color)
         case .marker(let color):
             return Color(uiColor: color.withAlphaComponent(1))
         case .eraser:
@@ -563,11 +558,9 @@ public struct DrawingToolbarView: View {
 /// Großer, gut greifbarer Dicken-Regler, der sich UNTER dem Dicken-Knopf
 /// öffnet.
 ///
-/// Die Vorschau zeigt einen echten Strich-Ausschnitt mit genau der Dicke, die
-/// später auch auf der Zeichenfläche erscheint: Basiswert × Render-Faktor des
-/// Werkzeugs (`DrawingStrokeMetrics`) × Darstellungs-Skalierung der Notiz.
-/// Ein Balken statt eines Kreises ist dabei die ehrlichere Darstellung – ein
-/// gefüllter Kreis wirkt bei gleichem Durchmesser immer deutlich massiger.
+/// Die Vorschau zeigt einen Punkt mit genau dem Durchmesser, der später auf
+/// der Zeichenfläche verwendet wird – inklusive Darstellungs-Skalierung der
+/// Notiz. Ein Beispielstrich würde die Dicke unnötig wie eine Linie wirken lassen.
 private struct ThicknessSliderPanel: View {
     @Binding var width: CGFloat
     let range: ClosedRange<CGFloat>
@@ -578,15 +571,14 @@ private struct ThicknessSliderPanel: View {
 
     private let previewLength: CGFloat = 240
 
-    /// Tatsächlich sichtbare Strichstärke in Punkten.
-    private var previewThickness: CGFloat {
-        min(
-            64,
-            DrawingStrokeMetrics.onScreenWidth(
-                for: toolSelection,
-                width: width,
-                canvasScale: previewScale
-            )
+    /// Tatsächlich sichtbare Strichstärke in Punkten. Der Regler zeigt einen
+    /// Punkt, keinen Beispielstrich, damit der Durchmesser direkt mit der
+    /// eingestellten Werkzeugbreite verglichen werden kann.
+    private var previewDiameter: CGFloat {
+        DrawingStrokeMetrics.onScreenWidth(
+            for: toolSelection,
+            width: width,
+            canvasScale: previewScale
         )
     }
 
@@ -601,9 +593,9 @@ private struct ThicknessSliderPanel: View {
                     .fill(Color(UIColor.tertiarySystemFill))
                     .frame(width: previewLength + 20, height: 72)
 
-                Capsule()
+                Circle()
                     .fill(previewColor)
-                    .frame(width: previewLength, height: previewThickness)
+                    .frame(width: previewDiameter, height: previewDiameter)
             }
             .frame(height: 76)
             .animation(.interactiveSpring(response: 0.15, dampingFraction: 0.8), value: width)

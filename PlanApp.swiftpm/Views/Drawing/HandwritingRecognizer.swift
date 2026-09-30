@@ -43,26 +43,55 @@ public enum HandwritingRecognizer {
 
             // Bewusst OHNE Completion-Block-Initializer: Das Ergebnis wird
             // direkt nach `perform` synchron aus `request.results` gelesen.
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = true
-            request.minimumTextHeight = 0.012
-            applyPreferredLanguages(to: request)
+            func makeRequest(usesLanguageCorrection: Bool) -> VNRecognizeTextRequest {
+                let request = VNRecognizeTextRequest()
+                request.recognitionLevel = .accurate
+                // Bei Handschrift sind Wortabstände und Schreibweisen oft
+                // nicht lexikalisch korrekt. Die Korrektur konnte zuvor
+                // gültige Buchstabenfolgen verwerfen.
+                request.usesLanguageCorrection = usesLanguageCorrection
+                // Die Zeichenfläche kann auf dem iPad stark verkleinert sein.
+                // Keine feste Mindesthöhe vor der eigentlichen Erkennung.
+                request.minimumTextHeight = 0
+                applyPreferredLanguages(to: request)
+                return request
+            }
 
-            let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
+            func observations(from request: VNRecognizeTextRequest) -> [VNRecognizedTextObservation] {
+                // `results` ist je nach SDK-Version unterschiedlich
+                // typisiert – der Umweg über `[VNObservation]?` funktioniert
+                // in beiden Fällen.
+                let rawResults: [VNObservation]? = request.results
+                return (rawResults ?? []).compactMap { $0 as? VNRecognizedTextObservation }
+            }
+
+            let firstRequest = makeRequest(usesLanguageCorrection: false)
             do {
-                try handler.perform([request])
+                try VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
+                    .perform([firstRequest])
             } catch {
                 finish(.failure(error))
                 return
             }
 
-            // `results` ist je nach SDK-Version unterschiedlich typisiert –
-            // der Umweg über `[VNObservation]?` funktioniert in beiden Fällen.
-            let rawResults: [VNObservation]? = request.results
-            let observations = (rawResults ?? []).compactMap { $0 as? VNRecognizedTextObservation }
+            var recognized = observations(from: firstRequest)
 
-            finish(.success(makeTextBoxes(from: observations, canvasSize: canvasSize)))
+            // Die beiden Vision-Modi verhalten sich bei verbundener
+            // Handschrift unterschiedlich. Ein zweiter, korrigierender Lauf
+            // ist ein Fallback, nicht die Voraussetzung für das Ergebnis.
+            if recognized.isEmpty {
+                let fallbackRequest = makeRequest(usesLanguageCorrection: true)
+                do {
+                    try VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
+                        .perform([fallbackRequest])
+                    recognized = observations(from: fallbackRequest)
+                } catch {
+                    // Ein fehlgeschlagener Fallback soll ein brauchbares
+                    // Ergebnis des ersten Laufs nicht nachträglich verwerfen.
+                }
+            }
+
+            finish(.success(makeTextBoxes(from: recognized, canvasSize: canvasSize)))
         }
     }
 
