@@ -8,12 +8,20 @@ public struct DayColumnView: View {
     public let columnIndex: Int // 1 für Mo, 2 für Di, 3 für Mi, 4 für Do, 5 für Fr
     public let rowHeight: CGFloat
     public let headerHeight: CGFloat
+    public let noteNamespace: Namespace.ID
 
-    public init(day: Date, columnIndex: Int, rowHeight: CGFloat, headerHeight: CGFloat) {
+    public init(
+        day: Date,
+        columnIndex: Int,
+        rowHeight: CGFloat,
+        headerHeight: CGFloat,
+        noteNamespace: Namespace.ID
+    ) {
         self.day = day
         self.columnIndex = columnIndex
         self.rowHeight = rowHeight
         self.headerHeight = headerHeight
+        self.noteNamespace = noteNamespace
     }
 
     private var isToday: Bool {
@@ -89,7 +97,11 @@ public struct DayColumnView: View {
                         let yOffset = CGFloat(periodIndex) * rowHeight + 3
                         let blockH = CGFloat(lesson.durationPeriods) * rowHeight - 6
 
-                        LessonBlockView(lesson: lesson, height: blockH)
+                        LessonBlockView(
+                            lesson: lesson,
+                            height: blockH,
+                            noteNamespace: noteNamespace
+                        )
                             .padding(.horizontal, 3)
                             .offset(y: yOffset)
                     }

@@ -7,6 +7,7 @@ public struct TimetableView: View {
     @State private var dragOffset: CGFloat = 0
     @State private var toastMessage: String? = nil
     @State private var toastIsError: Bool = false
+    @Namespace private var noteNamespace
 
     private let headerHeight: CGFloat = 58
     private let periodColumnWidth: CGFloat = 78
@@ -34,9 +35,9 @@ public struct TimetableView: View {
                         .padding(.horizontal, 16)
 
                     // 2. HAUPTBILDSCHIRM: STUNDENPLAN-TABELLE (6 Spalten)
-                    ScrollView([.vertical, .horizontal], showsIndicators: false) {
+                    ScrollView(.vertical, showsIndicators: false) {
                         let schoolDays = viewModel.selectedWeekStart.schoolWeekDays()
-                        let dayColumnWidth = max(160, (availableWidth - periodColumnWidth - 36) / 5)
+                        let dayColumnWidth = max(125, (availableWidth - periodColumnWidth - 36) / 5)
 
                         HStack(alignment: .top, spacing: 4) {
                             // SPALTE 0: Stundennummern und Uhrzeiten
@@ -51,7 +52,8 @@ public struct TimetableView: View {
                                     day: day,
                                     columnIndex: index + 1,
                                     rowHeight: calculatedRowHeight,
-                                    headerHeight: headerHeight
+                                    headerHeight: headerHeight,
+                                    noteNamespace: noteNamespace
                                 )
                                 .frame(width: dayColumnWidth)
                             }
@@ -70,15 +72,38 @@ public struct TimetableView: View {
                                 }
                             }
                             .onEnded { value in
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                                    if value.translation.width < -70 {
-                                        // Nach links wischen -> Nächste Woche
+                                let horizontalSwipe = abs(value.translation.width) > abs(value.translation.height)
+                                guard horizontalSwipe, abs(value.translation.width) > 70 else {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                                        dragOffset = 0
+                                    }
+                                    return
+                                }
+
+                                // Den alten Plan vollständig hinausschieben. Erst danach
+                                // wird die Woche gewechselt und der neue Plan von der
+                                // gegenüberliegenden Seite hereingeschoben – kein Fade.
+                                let movingToNextWeek = value.translation.width < 0
+                                let outgoingOffset = movingToNextWeek ? -availableWidth : availableWidth
+                                withAnimation(.easeInOut(duration: 0.22)) {
+                                    dragOffset = outgoingOffset
+                                }
+
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+                                    if movingToNextWeek {
                                         viewModel.goToNextWeek()
-                                    } else if value.translation.width > 70 {
-                                        // Nach rechts wischen -> Vorherige Woche
+                                    } else {
                                         viewModel.goToPreviousWeek()
                                     }
-                                    dragOffset = 0
+
+                                    var transaction = Transaction()
+                                    transaction.disablesAnimations = true
+                                    withTransaction(transaction) {
+                                        dragOffset = -outgoingOffset
+                                    }
+                                    withAnimation(.easeOut(duration: 0.26)) {
+                                        dragOffset = 0
+                                    }
                                 }
                             }
                     )
@@ -108,8 +133,8 @@ public struct TimetableView: View {
 
                 // 4. ZEICHNEN- & NOTIZ-OVERLAY (PENCILKIT)
                 if viewModel.isDrawingOverlayPresented, let activeLesson = viewModel.activeNoteLesson {
-                    LessonDrawingOverlayView(lesson: activeLesson)
-                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                    LessonDrawingOverlayView(lesson: activeLesson, noteNamespace: noteNamespace)
+                        .transition(.identity)
                         .zIndex(100)
                 }
             }

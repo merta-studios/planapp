@@ -22,20 +22,8 @@ public struct TimetableHeaderView: View {
 
             Spacer()
 
-            // WOCHEN-NAVIGATION
+            // WOCHENANZEIGE – Wechseln erfolgt ausschließlich per Wischgeste.
             HStack(spacing: 8) {
-                // Vorherige Woche Button
-                Button(action: { viewModel.goToPreviousWeek() }) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .bold))
-                        .frame(width: 38, height: 38)
-                        .background(Color(UIColor.secondarySystemFill))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(PlainButtonStyle())
-                .hoverEffect(.lift)
-
-                // Aktuelle Kalenderwoche & Datumsbereich
                 VStack(spacing: 2) {
                     Text(viewModel.selectedWeekStart.calendarWeekString)
                         .font(.system(size: 16, weight: .bold, design: .rounded))
@@ -47,33 +35,6 @@ public struct TimetableHeaderView: View {
                 }
                 .padding(.horizontal, 12)
 
-                // Nächste Woche Button
-                Button(action: { viewModel.goToNextWeek() }) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 15, weight: .bold))
-                        .frame(width: 38, height: 38)
-                        .background(Color(UIColor.secondarySystemFill))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(PlainButtonStyle())
-                .hoverEffect(.lift)
-
-                // "Heute" Sprung-Button
-                Button(action: { viewModel.goToCurrentWeek() }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.counterclockwise")
-                            .font(.system(size: 11, weight: .bold))
-                        Text("Heute")
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.blue.opacity(0.15))
-                    .foregroundColor(.blue)
-                    .clipShape(Capsule())
-                }
-                .buttonStyle(PlainButtonStyle())
-                .hoverEffect(.lift)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)

@@ -24,10 +24,15 @@ public struct UntisConfigSection: View {
                     Text("Server:")
                         .font(.system(size: 15, weight: .medium))
                         .frame(width: 90, alignment: .leading)
-                    TextField("z.B. ikarus.webuntis.com", text: $server)
-                        .textInputAutocapitalization(.never)
-                        .disableAutocorrection(true)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    KeyboardTextField(
+                        "z.B. ikarus.webuntis.com",
+                        text: $server,
+                        capitalization: .none,
+                        autocorrection: .no,
+                        keyboardType: .URL,
+                        contentType: .URL
+                    )
+                    .frame(minHeight: 36)
                 }
 
                 // Schule Feld
@@ -35,10 +40,13 @@ public struct UntisConfigSection: View {
                     Text("Schule:")
                         .font(.system(size: 15, weight: .medium))
                         .frame(width: 90, alignment: .leading)
-                    TextField("z.B. gym-musterstadt", text: $school)
-                        .textInputAutocapitalization(.never)
-                        .disableAutocorrection(true)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    KeyboardTextField(
+                        "z.B. gym-musterstadt",
+                        text: $school,
+                        capitalization: .none,
+                        autocorrection: .no
+                    )
+                    .frame(minHeight: 36)
                 }
 
                 // Benutzername Feld
@@ -46,10 +54,14 @@ public struct UntisConfigSection: View {
                     Text("Benutzer:")
                         .font(.system(size: 15, weight: .medium))
                         .frame(width: 90, alignment: .leading)
-                    TextField("Dein Untis-Benutzername", text: $user)
-                        .textInputAutocapitalization(.never)
-                        .disableAutocorrection(true)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    KeyboardTextField(
+                        "Dein Untis-Benutzername",
+                        text: $user,
+                        capitalization: .none,
+                        autocorrection: .no,
+                        contentType: .username
+                    )
+                    .frame(minHeight: 36)
                 }
 
                 // Passwort Feld
@@ -57,8 +69,17 @@ public struct UntisConfigSection: View {
                     Text("Passwort:")
                         .font(.system(size: 15, weight: .medium))
                         .frame(width: 90, alignment: .leading)
-                    SecureField("Dein Passwort", text: $pass)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    KeyboardTextField(
+                        "Dein Passwort",
+                        text: $pass,
+                        isSecure: true,
+                        capitalization: .none,
+                        autocorrection: .no,
+                        contentType: .password,
+                        returnKeyType: .done,
+                        onSubmit: saveInputs
+                    )
+                    .frame(minHeight: 36)
                 }
 
                 Toggle("Beim App-Start automatisch aktualisieren", isOn: $autoSync)

@@ -199,28 +199,112 @@ public final class WebUntisService {
         public let lstype: String?
     }
 
+    /// WebUntis liefert in Stundenplan-Einträgen je nach Server-Version entweder
+    /// Namen oder lediglich IDs. Außerdem kommen sowohl `longname` als auch
+    /// `longName` vor. Die eigenen Decoder unterstützen beide Varianten.
     public struct UntisNameElement: Decodable {
         public let id: Int?
         public let name: String?
         public let longname: String?
+
+        private enum CodingKeys: String, CodingKey { case id, name, longname, longName }
+
+        public init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            id = try values.decodeIfPresent(Int.self, forKey: .id)
+            name = try values.decodeIfPresent(String.self, forKey: .name)
+            let legacyLongName = try values.decodeIfPresent(String.self, forKey: .longname)
+            let modernLongName = try values.decodeIfPresent(String.self, forKey: .longName)
+            longname = legacyLongName ?? modernLongName
+        }
     }
 
     public struct UntisTeacherElement: Decodable {
         public let id: Int?
         public let name: String?
         public let orgname: String?
+        public let longname: String?
+
+        private enum CodingKeys: String, CodingKey { case id, name, orgname, longname, longName }
+
+        public init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            id = try values.decodeIfPresent(Int.self, forKey: .id)
+            name = try values.decodeIfPresent(String.self, forKey: .name)
+            orgname = try values.decodeIfPresent(String.self, forKey: .orgname)
+            let legacyLongName = try values.decodeIfPresent(String.self, forKey: .longname)
+            let modernLongName = try values.decodeIfPresent(String.self, forKey: .longName)
+            longname = legacyLongName ?? modernLongName
+        }
     }
 
     public struct UntisSubjectElement: Decodable {
         public let id: Int?
         public let name: String?
         public let longname: String?
+
+        private enum CodingKeys: String, CodingKey { case id, name, longname, longName }
+
+        public init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            id = try values.decodeIfPresent(Int.self, forKey: .id)
+            name = try values.decodeIfPresent(String.self, forKey: .name)
+            let legacyLongName = try values.decodeIfPresent(String.self, forKey: .longname)
+            let modernLongName = try values.decodeIfPresent(String.self, forKey: .longName)
+            longname = legacyLongName ?? modernLongName
+        }
     }
 
     public struct UntisRoomElement: Decodable {
         public let id: Int?
         public let name: String?
         public let orgname: String?
+        public let longname: String?
+
+        private enum CodingKeys: String, CodingKey { case id, name, orgname, longname, longName }
+
+        public init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            id = try values.decodeIfPresent(Int.self, forKey: .id)
+            name = try values.decodeIfPresent(String.self, forKey: .name)
+            orgname = try values.decodeIfPresent(String.self, forKey: .orgname)
+            let legacyLongName = try values.decodeIfPresent(String.self, forKey: .longname)
+            let modernLongName = try values.decodeIfPresent(String.self, forKey: .longName)
+            longname = legacyLongName ?? modernLongName
+        }
+    }
+
+    private struct MasterData {
+        var subjects: [Int: UntisSubjectElement] = [:]
+        var teachers: [Int: UntisTeacherElement] = [:]
+        var rooms: [Int: UntisRoomElement] = [:]
+        var classes: [Int: UntisNameElement] = [:]
+    }
+
+    private func fetchMasterData(credentials: UntisCredentials, sessionId: String) async -> MasterData {
+        guard let url = credentials.rpcEndpointURL else { return MasterData() }
+
+        // Manche Schulen sperren einzelne Stammdaten-Endpunkte. Deshalb darf ein
+        // fehlender Endpunkt die eigentlichen Stundenplandaten nicht verhindern.
+        let subjects: [UntisSubjectElement] = (try? await sendRPCRequest(
+            endpoint: url, method: "getSubjects", params: [:], sessionId: sessionId
+        )) ?? []
+        let teachers: [UntisTeacherElement] = (try? await sendRPCRequest(
+            endpoint: url, method: "getTeachers", params: [:], sessionId: sessionId
+        )) ?? []
+        let rooms: [UntisRoomElement] = (try? await sendRPCRequest(
+            endpoint: url, method: "getRooms", params: [:], sessionId: sessionId
+        )) ?? []
+        let classes: [UntisNameElement] = (try? await sendRPCRequest(
+            endpoint: url, method: "getKlassen", params: [:], sessionId: sessionId
+        )) ?? []
+
+        return MasterData(
+            subjects: subjects.reduce(into: [:]) { if let id = $1.id { $0[id] = $1 } },
+            teachers: teachers.reduce(into: [:]) { if let id = $1.id { $0[id] = $1 } },
+            rooms: rooms.reduce(into: [:]) { if let id = $1.id { $0[id] = $1 } },
+            classes: classes.reduce(into: [:]) { if let id = $1.id { $0[id] = $1 } }
+        )
     }
 
     /// Ruft den Stundenplan für einen Zeitraum (Woche) ab
@@ -265,7 +349,11 @@ public final class WebUntisService {
             sessionId: sessionId
         )
 
-        return mapUntisLessons(rawLessons, periods: periods)
+        // Viele WebUntis-Installationen liefern in `su`, `te`, `ro` und `kl`
+        // nur IDs. Über die Stammdaten werden Fach, Lehrkraft, Raum und Klasse
+        // zuverlässig aufgelöst, statt alles als „Unterricht“ anzuzeigen.
+        let masterData = await fetchMasterData(credentials: credentials, sessionId: sessionId)
+        return mapUntisLessons(rawLessons, periods: periods, masterData: masterData)
     }
 
     /// Meldet die WebUntis-Session ab
@@ -281,7 +369,11 @@ public final class WebUntisService {
 
     // MARK: - Helper Mapping
 
-    private func mapUntisLessons(_ rawList: [UntisLessonElement], periods: [Period]) -> [Lesson] {
+    private func mapUntisLessons(
+        _ rawList: [UntisLessonElement],
+        periods: [Period],
+        masterData: MasterData
+    ) -> [Lesson] {
         var lessons: [Lesson] = []
 
         let outFormatter = DateFormatter()
@@ -318,12 +410,43 @@ public final class WebUntisService {
                 }
             }
 
-            let subject = raw.su?.first?.name ?? raw.su?.first?.longname ?? "Unterricht"
-            let teacher = raw.te?.first?.name ?? ""
-            let origTeacher = raw.te?.first?.orgname
-            let room = raw.ro?.first?.name ?? ""
-            let origRoom = raw.ro?.first?.orgname
-            let klasse = raw.kl?.first?.name ?? ""
+            let rawSubject = raw.su?.first
+            let knownSubject = rawSubject?.id.flatMap { masterData.subjects[$0] }
+            let subject = firstNonEmpty(
+                rawSubject?.name,
+                rawSubject?.longname,
+                knownSubject?.name,
+                knownSubject?.longname
+            ) ?? "Unterricht"
+
+            let rawTeacher = raw.te?.first
+            let knownTeacher = rawTeacher?.id.flatMap { masterData.teachers[$0] }
+            let teacher = firstNonEmpty(
+                rawTeacher?.name,
+                rawTeacher?.longname,
+                knownTeacher?.name,
+                knownTeacher?.longname
+            ) ?? ""
+            let origTeacher = firstNonEmpty(rawTeacher?.orgname, knownTeacher?.orgname)
+
+            let rawRoom = raw.ro?.first
+            let knownRoom = rawRoom?.id.flatMap { masterData.rooms[$0] }
+            let room = firstNonEmpty(
+                rawRoom?.name,
+                rawRoom?.longname,
+                knownRoom?.name,
+                knownRoom?.longname
+            ) ?? ""
+            let origRoom = firstNonEmpty(rawRoom?.orgname, knownRoom?.orgname)
+
+            let rawClass = raw.kl?.first
+            let knownClass = rawClass?.id.flatMap { masterData.classes[$0] }
+            let klasse = firstNonEmpty(
+                rawClass?.name,
+                rawClass?.longname,
+                knownClass?.name,
+                knownClass?.longname
+            ) ?? ""
 
             let isCancelled = (raw.code?.lowercased() == "cancelled") ||
                 (raw.statflags?.contains("x") == true) ||
@@ -357,5 +480,12 @@ public final class WebUntisService {
         }
 
         return lessons
+    }
+
+    /// Liefert den ersten vorhandenen und nicht-leeren Text zurück.
+    private func firstNonEmpty(_ values: String?...) -> String? {
+        values
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
     }
 }

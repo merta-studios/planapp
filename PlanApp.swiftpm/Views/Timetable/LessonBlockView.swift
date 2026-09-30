@@ -6,13 +6,15 @@ public struct LessonBlockView: View {
 
     public let lesson: Lesson
     public let height: CGFloat
+    public let noteNamespace: Namespace.ID
 
     @State private var isHovered: Bool = false
     @State private var pinchScale: CGFloat = 1.0
 
-    public init(lesson: Lesson, height: CGFloat) {
+    public init(lesson: Lesson, height: CGFloat, noteNamespace: Namespace.ID) {
         self.lesson = lesson
         self.height = height
+        self.noteNamespace = noteNamespace
     }
 
     public var body: some View {
@@ -57,21 +59,14 @@ public struct LessonBlockView: View {
             VStack(alignment: .leading, spacing: 4) {
                 // Obere Zeile: Fachname + Status-Badges
                 HStack(alignment: .top, spacing: 6) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        // Standard: Der fette Fachname
-                        Text(displayName)
-                            .font(.system(size: 16, weight: .bold, design: .rounded))
-                            .foregroundColor(lesson.isCancelled ? .secondary : subjectColor.contrastingTextColor)
-                            .strikethrough(lesson.isCancelled, color: .red)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-
-                        if lesson.durationPeriods == 2 {
-                            Text("Doppelstunde")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(subjectColor.contrastingSecondaryTextColor)
-                        }
-                    }
+                    // Der fette Fachname. Die Blockhöhe macht eine Doppelstunde
+                    // bereits eindeutig, daher ist kein zusätzlicher Text nötig.
+                    Text(displayName)
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundColor(lesson.isCancelled ? .secondary : subjectColor.contrastingTextColor)
+                        .strikethrough(lesson.isCancelled, color: .red)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
 
                     Spacer(minLength: 0)
 
@@ -83,9 +78,6 @@ public struct LessonBlockView: View {
                             StatusBadge(.substitution)
                         }
 
-                        if note?.hasDrawing == true {
-                            StatusBadge(.hasNote)
-                        }
                     }
                 }
 
@@ -145,12 +137,8 @@ public struct LessonBlockView: View {
                             .resizable()
                             .scaledToFit()
                             .frame(maxHeight: max(24, height * 0.42))
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color(red: 0.98, green: 0.98, blue: 0.96).opacity(0.9))
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                            .shadow(color: Color.black.opacity(0.12), radius: 2, x: 0, y: 1)
+                            // PNG wird transparent über dem Fach angezeigt – ohne
+                            // linierten oder papierfarbenen Notizzettel.
                         Spacer()
                     }
                     .padding(.bottom, 2)
@@ -159,6 +147,13 @@ public struct LessonBlockView: View {
             .padding(9)
         }
         .frame(height: height)
+        .matchedGeometryEffect(
+            id: "note_\(lesson.noteKey)",
+            in: noteNamespace,
+            properties: .frame,
+            anchor: .center,
+            isSource: true
+        )
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         // Apple Pencil Hover Unterstützung
         .hoverEffect(.lift)

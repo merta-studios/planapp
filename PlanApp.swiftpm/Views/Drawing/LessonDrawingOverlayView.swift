@@ -1,11 +1,12 @@
 import SwiftUI
 import PencilKit
 
-/// Vollbild-Overlay mit vergrößertem linierten Notizzettel über abgedunkeltem Stundenplan
+/// Vollbild-Overlay mit vergrößerter transparenter Zeichenfläche über abgedunkeltem Stundenplan
 public struct LessonDrawingOverlayView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
 
     public let lesson: Lesson
+    public let noteNamespace: Namespace.ID
 
     @State private var drawing: PKDrawing = PKDrawing()
     @State private var lineCount: Int = 6
@@ -22,8 +23,9 @@ public struct LessonDrawingOverlayView: View {
     private let lineHeight: CGFloat = 52
     private let headerHeight: CGFloat = 68
 
-    public init(lesson: Lesson) {
+    public init(lesson: Lesson, noteNamespace: Namespace.ID) {
         self.lesson = lesson
+        self.noteNamespace = noteNamespace
     }
 
     private var paperHeight: CGFloat {
@@ -45,7 +47,7 @@ public struct LessonDrawingOverlayView: View {
             // 2. INTERAKTIVER NOTIZZETTEL (Zoombar & Verschiebbar)
             VStack(spacing: 0) {
                 ZStack(alignment: .topLeading) {
-                    // Linierter Hintergrund
+                    // Transparenter, linienloser Hintergrund
                     LinedPaperBackground(
                         lineCount: lineCount,
                         lineHeight: lineHeight,
@@ -99,12 +101,21 @@ public struct LessonDrawingOverlayView: View {
                     .disabled(lineCount >= 10)
                 }
                 .frame(width: paperWidth, height: 50)
-                .background(Color(red: 0.985, green: 0.980, blue: 0.965))
+                .background(Color.white.opacity(0.12))
                 .clipShape(
                     CustomCornersShape(corners: [.bottomLeft, .bottomRight], radius: 16)
                 )
             }
             .frame(width: paperWidth, height: paperHeight)
+            // Öffnet aus dem angetippten Fachblock und gleitet beim Schließen
+            // exakt dorthin zurück.
+            .matchedGeometryEffect(
+                id: "note_\(lesson.noteKey)",
+                in: noteNamespace,
+                properties: .frame,
+                anchor: .center,
+                isSource: false
+            )
             .scaleEffect(scale)
             .offset(offset)
             // Zoom & Verschiebegesten
