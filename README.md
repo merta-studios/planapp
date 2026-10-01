@@ -149,19 +149,19 @@ let url  = AppResources.url(forResource: "AppLogo", withExtensions: ["png"])
 
 ## ⌨️ Hinweise zur Bildschirmtastatur (iPadOS / iOS)
 
-Alle Texteingaben der App – die Felder in den **Einstellungen**
-(`KeyboardTextField`) und die Textfelder auf der **Zeichenfläche**
-(`NoteTextEditor` / `CustomNoteTextView`) – verwenden native UIKit-Eingaben und
-teilen sich denselben Fokus-Ablauf (`Utils/SystemKeyboardFocus.swift`).
+Die Felder in den **Einstellungen** (`KeyboardTextField`) verwenden direkt
+`TextField` bzw. `SecureField` von SwiftUI. Damit übernimmt iPadOS den Fokus-
+und Tastaturablauf selbst; die App startet keinen zweiten UIKit-Responder-Ablauf
+mehr. Die Textfelder auf der **Zeichenfläche** (`NoteTextEditor` /
+`CustomNoteTextView`) benötigen wegen ihrer frei positionierbaren PencilKit-
+Ebene weiterhin eine UIKit-Brücke. Deren Fokus-Anfrage wartet auf ein aktives
+Key-Window und wird einmal nach Abschluss der SwiftUI-Hosting-Transaktion
+nachgeholt (`Utils/SystemKeyboardFocus.swift`).
 
-**Wichtig zu wissen:** `becomeFirstResponder()` ist kein „Tastatur anzeigen“-
-Befehl. iPadOS blendet die Bildschirmtastatur nur ein, wenn die View in einem
-`UIWindow` hängt, dessen `UIWindowScene` `.foregroundActive` und dessen Fenster
-Key-Window ist. In `makeUIView(context:)` ist das noch nicht der Fall. Deshalb
-werden programmatische Fokus-Anfragen **ereignisgesteuert** nachgeholt
-(`didMoveToWindow`, `UIWindow.didBecomeKeyNotification`,
-`UIScene.didActivateNotification`) statt mit Timern wiederholt. Beim Beenden
-oder Entfernen eines Feldes wird eine offene Anfrage ausdrücklich verworfen.
+Es gibt dabei keine `reloadInputViews()`-Aufrufe und keine Timer-/Retry-
+Schleifen: Beides kann einen bereits begonnenen Tastaturübergang abbrechen.
+Beim Beenden oder Entfernen eines Zeichenflächen-Felds wird eine offene
+Fokus-Anfrage ausdrücklich verworfen.
 
 **Externe Hardware-Tastatur:** Ist ein Magic Keyboard, Smart Keyboard Folio
 oder eine Bluetooth-Tastatur gekoppelt, **unterdrückt iPadOS die
