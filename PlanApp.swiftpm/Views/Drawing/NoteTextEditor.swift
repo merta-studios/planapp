@@ -205,7 +205,10 @@ final class CustomNoteTextView: UITextView {
         prepareForSystemKeyboard()
         if !isFirstResponder {
             _ = becomeFirstResponder()
-        }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.window != nil else { return }
+                _ = self.becomeFirstResponder()
+            }
         guard isFirstResponder else { return }
 
         for delay in [0.0, 0.05, 0.18] {

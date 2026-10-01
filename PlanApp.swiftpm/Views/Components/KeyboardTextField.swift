@@ -281,7 +281,10 @@ private final class SystemKeyboardTextField: UITextField {
         prepareForSystemKeyboard()
         if !isFirstResponder {
             _ = becomeFirstResponder()
-        }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.window != nil else { return }
+                _ = self.becomeFirstResponder()
+            }
         guard isFirstResponder else { return false }
 
         // Nach Ende des aktuellen Touch-/Fokus-Ereignisses neu laden. Direkt
