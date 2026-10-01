@@ -285,6 +285,8 @@ private final class SystemKeyboardTextField: UITextField {
                 guard let self, self.window != nil else { return }
                 _ = self.becomeFirstResponder()
             }
+        }
+
         guard isFirstResponder else { return false }
 
         // Nach Ende des aktuellen Touch-/Fokus-Ereignisses neu laden. Direkt
