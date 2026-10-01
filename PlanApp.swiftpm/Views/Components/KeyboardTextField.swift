@@ -3,11 +3,24 @@ import UIKit
 
 /// Zuverlässiges Textfeld für iPadOS & iOS mit voller Tastatur-Unterstützung.
 ///
-/// Kern ist ein natives UIKit-`UITextField` (per UIViewRepresentable). Im
-/// Gegensatz zum SwiftUI-`TextField` mit FocusState erscheint die
-/// Bildschirmtastatur damit zuverlässig beim Antippen – auch auf iPads mit
-/// gekoppeltem Apple Pencil / Scribble, wo SwiftUI-Felder zuvor nur den Cursor,
-/// aber keine Tastatur zeigten.
+/// Kern ist ein natives UIKit-`UITextField` (per `UIViewRepresentable`). Der
+/// Tipp auf das Feld wird vollständig von UIKit verarbeitet: UIKit erkennt ihn
+/// mit seinen eigenen Gesten-Erkennern, setzt den Cursor und macht das Feld
+/// zum First Responder – daraufhin blendet das System die Tastatur ein.
+///
+/// Bewusst **nicht** vorhanden (das waren die Ursachen des Fehlers
+/// „Cursor erscheint, Tastatur bleibt aus"):
+///
+/// * keine eigenen `touchesBegan`/`touchesEnded`-Overrides, die parallel zum
+///   UIKit-Gesten-Erkenner `becomeFirstResponder()` aufrufen,
+/// * keine wiederholten `reloadInputViews()`-Aufrufe per `asyncAfter`. Ein
+///   `reloadInputViews()` während der laufenden Einblend-Animation baut die
+///   Eingabeansicht neu auf und bricht die Animation ab; das Feld bleibt
+///   First Responder (Cursor blinkt), die Tastatur wird aber nie sichtbar.
+///
+/// Programmatische Fokus-Anfragen (Tipp auf die Kapsel neben dem Feld oder auf
+/// den Löschen-Knopf) laufen über ``SystemKeyboardFocusRequester`` und warten
+/// ereignisgesteuert, bis Fenster und Szene bereit sind.
 public struct KeyboardTextField: View {
     @Binding private var text: String
     @StateObject private var focusController = KeyboardTextFieldFocusController()
@@ -84,11 +97,13 @@ public struct KeyboardTextField: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
         )
-        // Nicht nur der exakt von UIKit belegte TextField-Bereich soll
-        // fokussieren: Ein Tipp irgendwo in der sichtbaren Kapsel fordert das
-        // native Feld und seine Apple-Systemtastatur an. Das behebt besonders
-        // auf dem iPad Fälle, in denen SwiftUI den Tap auf den Container statt
-        // auf das eingebettete UITextField routet.
+        // Auch ein Tipp auf den Innenabstand der sichtbaren Kapsel (also neben
+        // dem eigentlichen UITextField) soll fokussieren.
+        //
+        // `simultaneousGesture` ist hier wichtig: Eine normale `.onTapGesture`
+        // würde mit den UIKit-Gesten-Erkennern des Textfelds konkurrieren und
+        // den direkten Tipp auf das Feld verschlucken. Als simultane Geste
+        // bleibt der native UIKit-Fokusablauf vollständig erhalten.
         .contentShape(Rectangle())
         .simultaneousGesture(
             TapGesture().onEnded {
@@ -99,6 +114,8 @@ public struct KeyboardTextField: View {
 }
 
 private final class KeyboardTextFieldFocusController: ObservableObject {
+    /// Zähler statt `Bool`: Jede neue Anfrage ist eindeutig unterscheidbar,
+    /// auch wenn zwischendurch kein Zustand zurückgesetzt wurde.
     @Published var requestToken: Int = 0
 
     func requestKeyboard() {
@@ -106,8 +123,7 @@ private final class KeyboardTextFieldFocusController: ObservableObject {
     }
 }
 
-/// Die eigentliche UIKit-Brücke. Das Feld wird nativ First Responder, wenn es
-/// angetippt wird – dadurch öffnet iPadOS zuverlässig die Tastatur.
+/// Die eigentliche UIKit-Brücke.
 private struct NativeTextField: UIViewRepresentable {
     let placeholder: String
     @Binding var text: String
@@ -144,8 +160,10 @@ private struct NativeTextField: UIViewRepresentable {
         textField.clearButtonMode = .never
         textField.isSecureTextEntry = isSecure
         textField.adjustsFontForContentSizeCategory = true
-        // Keine alte PencilKit-, Scribble- oder benutzerdefinierte
-        // Eingabeansicht darf die Apple-Systemtastatur dieses Felds ersetzen.
+        // `inputView == nil` ist der Normalzustand und bedeutet „System-
+        // tastatur". Einmalig gesetzt zur Dokumentation der Absicht; danach
+        // wird der Wert nie wieder angefasst, damit kein `reloadInputViews()`
+        // nötig ist.
         textField.inputView = nil
         textField.text = text
 
@@ -157,14 +175,6 @@ private struct NativeTextField: UIViewRepresentable {
             action: #selector(Coordinator.editingChanged(_:)),
             for: .editingChanged
         )
-
-        let coordinator = context.coordinator
-        textField.onWindowAttached = { [weak textField, weak coordinator] in
-            guard let textField, let coordinator, coordinator.pendingKeyboardRequest else { return }
-            if textField.requestSystemKeyboard() {
-                coordinator.pendingKeyboardRequest = false
-            }
-        }
 
         return textField
     }
@@ -180,58 +190,55 @@ private struct NativeTextField: UIViewRepresentable {
         if uiView.isSecureTextEntry != isSecure {
             uiView.isSecureTextEntry = isSecure
         }
-        let attributed = NSAttributedString(
-            string: placeholder,
-            attributes: [.foregroundColor: UIColor.placeholderText]
-        )
         if uiView.attributedPlaceholder?.string != placeholder {
-            uiView.attributedPlaceholder = attributed
+            uiView.attributedPlaceholder = NSAttributedString(
+                string: placeholder,
+                attributes: [.foregroundColor: UIColor.placeholderText]
+            )
         }
 
-        // Änderungen von außen (z. B. Lösch-Button, Zurücksetzen beim
+        // Änderungen von außen (z. B. Lösch-Knopf, Zurücksetzen beim
         // Bearbeiten-Sheet) übernehmen, aber nie mitten in einer laufenden
         // IME-Eingabe greifen.
         if uiView.text != text, uiView.markedTextRange == nil {
             uiView.text = text
         }
 
+        // Nur echte, neue Fokus-Anfragen ausführen – `updateUIView` läuft bei
+        // jeder Layout-Änderung des umgebenden ScrollView/LazyVStack.
         if focusRequestToken != context.coordinator.lastHandledFocusRequestToken {
             context.coordinator.lastHandledFocusRequestToken = focusRequestToken
-            context.coordinator.pendingKeyboardRequest = true
-            if uiView.requestSystemKeyboard() {
-                context.coordinator.pendingKeyboardRequest = false
-            }
+            uiView.requestSystemKeyboard()
+        }
+    }
+
+    static func dismantleUIView(_ uiView: SystemKeyboardTextField, coordinator: Coordinator) {
+        coordinator.isDismantled = true
+        uiView.cancelPendingKeyboardRequest()
+        uiView.delegate = nil
+        if uiView.isFirstResponder {
+            uiView.resignFirstResponder()
         }
     }
 
     final class Coordinator: NSObject, UITextFieldDelegate {
         var parent: NativeTextField
         var lastHandledFocusRequestToken: Int = 0
-        var pendingKeyboardRequest = false
+        var isDismantled = false
 
         init(_ parent: NativeTextField) {
             self.parent = parent
         }
 
         @objc func editingChanged(_ textField: UITextField) {
+            guard !isDismantled else { return }
             parent.text = textField.text ?? ""
         }
 
-        func textFieldShouldBeginEditing(_ textField: UITextField) -> Bool {
-            // Während UIKit den Fokus vorbereitet, bereits die normale
-            // Eingabeansicht vormerken. Das verhindert den Zustand
-            // „Cursor ja, Tastatur nein“ nach Scribble/PencilKit-Fokus.
-            (textField as? SystemKeyboardTextField)?.prepareForSystemKeyboard()
-            return true
-        }
-
         func textFieldDidBeginEditing(_ textField: UITextField) {
-            // `becomeFirstResponder()` allein reicht auf einigen iPad- und
-            // Swift-Playgrounds-Konfigurationen nicht: Der Cursor ist dann
-            // sichtbar, die Bildschirmtastatur bleibt aber aus. Die native
-            // Eingabeansicht deshalb nach jedem echten Fokuswechsel mehrfach
-            // im nächsten Runloop neu laden.
-            _ = (textField as? SystemKeyboardTextField)?.requestSystemKeyboard()
+            // Der Fokus ist da – eine evtl. noch offene programmatische
+            // Anfrage ist damit erledigt und darf nicht nachlaufen.
+            (textField as? SystemKeyboardTextField)?.cancelPendingKeyboardRequest()
         }
 
         func textFieldShouldReturn(_ textField: UITextField) -> Bool {
@@ -241,67 +248,28 @@ private struct NativeTextField: UIViewRepresentable {
     }
 }
 
-/// `UITextField`, das bei jedem direkten Tipp nicht nur den Fokus, sondern
-/// ausdrücklich auch die Apple-Systemtastatur anfordert. Die explizite
-/// Aktivierung ist besonders in SwiftUI-Sheets und bei gekoppeltem Apple
-/// Pencil nötig, wo UIKit gelegentlich nur den Cursor anzeigt.
+/// `UITextField` mit ereignisgesteuerter, programmatischer Fokus-Anfrage.
+///
+/// Der direkte Tipp auf das Feld braucht hier **keinen** Sonderweg: Das
+/// übernimmt UIKit selbst. Die Klasse existiert nur, um eine programmatische
+/// Anfrage (Tipp auf die Kapsel, Löschen-Knopf) sauber zu vertagen, bis die
+/// View in einem aktiven Key-Window hängt.
 private final class SystemKeyboardTextField: UITextField {
-    var onWindowAttached: (() -> Void)?
-
-    override var canBecomeFirstResponder: Bool { true }
+    private lazy var focusRequester = SystemKeyboardFocusRequester(
+        view: self,
+        debugLabel: "KeyboardTextField"
+    )
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window != nil {
-            onWindowAttached?()
-        }
+        focusRequester.viewDidMoveToWindow()
     }
 
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        prepareForSystemKeyboard()
-        super.touchesBegan(touches, with: event)
+    func requestSystemKeyboard() {
+        focusRequester.requestFocus()
     }
 
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        super.touchesEnded(touches, with: event)
-        _ = requestSystemKeyboard()
-    }
-
-    func prepareForSystemKeyboard() {
-        // `nil` bedeutet die normale, von iPadOS/iOS bereitgestellte Tastatur.
-        // Das Zurücksetzen vor dem Fokuswechsel verhindert, dass eine alte
-        // PencilKit-/Scribble-Eingabeansicht wiederverwendet wird.
-        inputView = nil
-    }
-
-    @discardableResult
-    func requestSystemKeyboard() -> Bool {
-        guard isEnabled, isUserInteractionEnabled, window != nil else { return false }
-
-        prepareForSystemKeyboard()
-        if !isFirstResponder {
-            _ = becomeFirstResponder()
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.window != nil else { return }
-                _ = self.becomeFirstResponder()
-            }
-        }
-
-        guard isFirstResponder else { return false }
-
-        // Nach Ende des aktuellen Touch-/Fokus-Ereignisses neu laden. Direkt
-        // innerhalb von `touchesEnded` kann UIKit die Anforderung sonst noch
-        // durch seine eigene Responder-Verarbeitung überschreiben. Mehrere
-        // kurze Wiederholungen sind bewusst: SwiftUI-Sheets, PencilKit und
-        // Scribble können im Folge-Runloop erneut am InputView-Zustand drehen.
-        for delay in [0.0, 0.05, 0.18] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                guard let self, self.isFirstResponder, self.window != nil else { return }
-                self.inputView = nil
-                self.reloadInputViews()
-            }
-        }
-
-        return true
+    func cancelPendingKeyboardRequest() {
+        focusRequester.cancelPendingFocus()
     }
 }

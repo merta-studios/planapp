@@ -1021,6 +1021,10 @@ public struct LessonDrawingOverlayView: View {
     private func saveAndDismiss() {
         guard viewModel.isDrawingOverlayPresented else { return }
 
+        // Erst die Bearbeitung beenden: Dadurch gibt das UIKit-Textfeld den
+        // First Responder ab und verwirft eine evtl. offene Fokus-Anfrage,
+        // bevor die Overlay-Hierarchie abgebaut wird. Sonst könnte nach dem
+        // Schließen noch eine Tastatur aufspringen.
         selectedTextBoxID = nil
         editingTextBoxID = nil
 

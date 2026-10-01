@@ -144,3 +144,30 @@ und sowohl in Swift Playgrounds als auch in Xcode funktioniert:
 let logo = AppResources.image(named: "AppLogo")
 let url  = AppResources.url(forResource: "AppLogo", withExtensions: ["png"])
 ```
+
+---
+
+## ⌨️ Hinweise zur Bildschirmtastatur (iPadOS / iOS)
+
+Alle Texteingaben der App – die Felder in den **Einstellungen**
+(`KeyboardTextField`) und die Textfelder auf der **Zeichenfläche**
+(`NoteTextEditor` / `CustomNoteTextView`) – verwenden native UIKit-Eingaben und
+teilen sich denselben Fokus-Ablauf (`Utils/SystemKeyboardFocus.swift`).
+
+**Wichtig zu wissen:** `becomeFirstResponder()` ist kein „Tastatur anzeigen“-
+Befehl. iPadOS blendet die Bildschirmtastatur nur ein, wenn die View in einem
+`UIWindow` hängt, dessen `UIWindowScene` `.foregroundActive` und dessen Fenster
+Key-Window ist. In `makeUIView(context:)` ist das noch nicht der Fall. Deshalb
+werden programmatische Fokus-Anfragen **ereignisgesteuert** nachgeholt
+(`didMoveToWindow`, `UIWindow.didBecomeKeyNotification`,
+`UIScene.didActivateNotification`) statt mit Timern wiederholt. Beim Beenden
+oder Entfernen eines Feldes wird eine offene Anfrage ausdrücklich verworfen.
+
+**Externe Hardware-Tastatur:** Ist ein Magic Keyboard, Smart Keyboard Folio
+oder eine Bluetooth-Tastatur gekoppelt, **unterdrückt iPadOS die
+Bildschirmtastatur absichtlich** – sichtbar ist dann nur die schmale
+Kurzbefehlleiste am unteren Rand. Das ist Systemverhalten und lässt sich mit
+öffentlichen APIs nicht übersteuern. Zum Prüfen der Bildschirmtastatur die
+externe Tastatur abtrennen (oder im Simulator unter *I/O → Keyboard →
+„Connect Hardware Keyboard“* deaktivieren). In Debug-Builds protokolliert
+`KeyboardFocusDiagnostics` zusätzlich, ob eine Hardware-Tastatur erkannt wurde.

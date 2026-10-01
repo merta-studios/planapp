@@ -144,8 +144,17 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         // Touch-Events ein-/auszuschalten, kann UIKit mit einem
         // "gesture recognizer changed while handling touches"-Abbruch
         // quittieren und war die Ursache des App-Crashs.
-        canvasView.isUserInteractionEnabled = !isTextTool
+        // Nur bei echter Änderung schreiben: `isUserInteractionEnabled`
+        // während eines laufenden Touch-Events neu zu setzen bricht UIKit-
+        // Gesten ab. `updateUIView` läuft bei jedem SwiftUI-Update.
+        if canvasView.isUserInteractionEnabled != !isTextTool {
+            canvasView.isUserInteractionEnabled = !isTextTool
+        }
 
+        // Der Canvas darf im Text-Modus nicht First Responder bleiben:
+        // Sonst gehört die Eingabeansicht weiterhin ihm (Scribble), und das
+        // Textfeld der SwiftUI-Ebene bekommt zwar den Cursor, aber keine
+        // Systemtastatur.
         if isTextTool, canvasView.isFirstResponder {
             canvasView.resignFirstResponder()
         }

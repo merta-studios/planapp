@@ -30,6 +30,13 @@ func estimatedTextBoxHeight(_ box: NoteTextBox) -> CGFloat {
 /// - Felder, die leer sind oder nur Leerzeichen enthalten, verschwinden
 ///   automatisch, sobald sie weder ausgewählt noch in Bearbeitung sind.
 ///
+/// Tastatur-Fokus: Diese Ebene steuert den Fokus ausschließlich über
+/// `editingID`. Genau eine Box ist „in Bearbeitung“, und nur für diese wird
+/// ein `NoteTextEditor` (UITextView) erzeugt. Das Anfordern der Systemtastatur
+/// übernimmt der Editor selbst, sobald seine View in einem aktiven Key-Window
+/// hängt (siehe `Utils/SystemKeyboardFocus.swift`). Hier wird deshalb weder
+/// `becomeFirstResponder()` aufgerufen noch mit Verzögerungen gearbeitet.
+///
 /// WICHTIG (Stabilität): Diese Ebene arbeitet bewusst **ohne**
 /// `ForEach($textBoxes)`-Element-Bindings. Ein Element-Binding hält einen
 /// Index in das Array; wird ein Feld entfernt (z. B. ein leeres Feld beim
