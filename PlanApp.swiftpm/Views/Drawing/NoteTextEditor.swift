@@ -209,6 +209,8 @@ final class CustomNoteTextView: UITextView {
                 guard let self, self.window != nil else { return }
                 _ = self.becomeFirstResponder()
             }
+        }
+
         guard isFirstResponder else { return }
 
         for delay in [0.0, 0.05, 0.18] {
