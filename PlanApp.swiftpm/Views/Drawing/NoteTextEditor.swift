@@ -2,14 +2,28 @@ import SwiftUI
 import UIKit
 
 /// UIKit-basiertes mehrzeiliges Textfeld (`UITextView`) für die Textfelder auf
-/// der Zeichenfläche. Gegenüber dem SwiftUI-`TextField` garantiert es, dass
-/// die Bildschirmtastatur zuverlässig erscheint (`becomeFirstResponder`), und
-/// unterstützt weiterhin Scribble mit dem Apple Pencil.
+/// der Zeichenfläche. Unterstützt die Apple-Systemtastatur und weiterhin
+/// Scribble mit dem Apple Pencil.
 ///
 /// Der Text wird bewusst als **Wert** übergeben und über `onChangeText`
 /// zurückgemeldet (kein `@Binding` in ein Array-Element). So kann das Feld
 /// jederzeit gefahrlos aus der Ansicht entfernt werden – auch während die
 /// Tastatur noch offen ist.
+///
+/// ## Fokus-Ablauf
+///
+/// Ein frisch erzeugtes Textfeld soll sofort die Tastatur öffnen. In
+/// `makeUIView(context:)` hängt die View aber noch **nicht** im Fenster, ein
+/// `becomeFirstResponder()` schlägt dort still fehl. Deshalb wird die Anfrage
+/// über ``SystemKeyboardFocusRequester`` gestellt und ereignisgesteuert
+/// nachgeholt, sobald die View in einem aktiven Key-Window hängt – ohne Timer
+/// und ohne wiederholte `reloadInputViews()`-Aufrufe (die die Einblend-
+/// Animation der Tastatur abbrechen und genau zum Zustand „Cursor sichtbar,
+/// Tastatur fehlt" führen).
+///
+/// Beim Verlassen der Bearbeitung bzw. beim Entfernen der View wird eine evtl.
+/// offene Anfrage ausdrücklich verworfen, damit später keine fremde Tastatur
+/// aufspringt.
 struct NoteTextEditor: UIViewRepresentable {
     let text: String
     let fontSize: CGFloat
@@ -32,6 +46,8 @@ struct NoteTextEditor: UIViewRepresentable {
         textView.backgroundColor = .clear
         textView.isOpaque = false
         textView.isScrollEnabled = false
+        textView.isEditable = true
+        textView.isSelectable = true
         textView.font = .systemFont(ofSize: max(1, fontSize))
         // Text liegt auf dem festen weißen Papier und darf nicht mit dem
         // globalen Dark-Mode-Farbschema weiß werden.
@@ -42,34 +58,17 @@ struct NoteTextEditor: UIViewRepresentable {
         textView.autocorrectionType = .default
         textView.autocapitalizationType = .sentences
         textView.keyboardDismissMode = .none
-        // Immer die Apple-Systemtastatur verwenden; keine alte Eingabeansicht
-        // vom PencilKit-Canvas übernehmen.
+        // `nil` ist der Normalzustand und bedeutet „Systemtastatur". Einmalig
+        // gesetzt zur Dokumentation der Absicht; danach wird der Wert nicht
+        // mehr angefasst, deshalb ist auch kein `reloadInputViews()` nötig.
         textView.inputView = nil
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.setContentHuggingPriority(.required, for: .vertical)
         textView.text = text
 
-        textView.onWindowAttached = { [weak textView, weak coordinator = context.coordinator] in
-            guard let textView,
-                  let coordinator,
-                  !coordinator.isDismantled,
-                  coordinator.parent.isEditing else { return }
-            DispatchQueue.main.async {
-                guard coordinator.parent.isEditing, !coordinator.isDismantled else { return }
-                textView.requestSystemKeyboard()
-            }
-        }
-
         if isEditing {
-            let coordinator = context.coordinator
-            DispatchQueue.main.async { [weak textView, weak coordinator] in
-                guard let textView,
-                      let coordinator,
-                      !coordinator.isDismantled,
-                      coordinator.parent.isEditing,
-                      textView.window != nil else { return }
-                textView.requestSystemKeyboard()
-            }
+            // Wird automatisch nachgeholt, sobald die View im Fenster hängt.
+            textView.requestSystemKeyboard()
         }
 
         return textView
@@ -105,27 +104,24 @@ struct NoteTextEditor: UIViewRepresentable {
             context.coordinator.isApplyingExternalChange = false
         }
 
-        if isEditing, !uiView.isFirstResponder {
-            let coordinator = context.coordinator
-            DispatchQueue.main.async { [weak uiView, weak coordinator] in
-                guard let uiView,
-                      let coordinator,
-                      !coordinator.isDismantled,
-                      coordinator.parent.isEditing,
-                      uiView.window != nil else { return }
+        if isEditing {
+            if !uiView.isFirstResponder {
                 uiView.requestSystemKeyboard()
             }
-        } else if !isEditing, uiView.isFirstResponder {
-            uiView.resignFirstResponder()
+        } else {
+            uiView.cancelPendingKeyboardRequest()
+            if uiView.isFirstResponder {
+                uiView.resignFirstResponder()
+            }
         }
     }
 
     /// Aufräumen, bevor die View entfernt wird: Ein noch aktiver First
-    /// Responder würde sonst nach dem Entfernen weiter Delegate-Aufrufe
-    /// auslösen.
+    /// Responder oder eine offene Fokus-Anfrage würden sonst nach dem
+    /// Entfernen weiterwirken.
     static func dismantleUIView(_ uiView: CustomNoteTextView, coordinator: Coordinator) {
         coordinator.isDismantled = true
-        uiView.onWindowAttached = nil
+        uiView.cancelPendingKeyboardRequest()
         uiView.delegate = nil
         if uiView.isFirstResponder {
             uiView.resignFirstResponder()
@@ -141,16 +137,9 @@ struct NoteTextEditor: UIViewRepresentable {
             self.parent = parent
         }
 
-        func textViewShouldBeginEditing(_ textView: UITextView) -> Bool {
-            (textView as? CustomNoteTextView)?.prepareForSystemKeyboard()
-            return true
-        }
-
         func textViewDidBeginEditing(_ textView: UITextView) {
-            guard !isDismantled else { return }
-            // Wie bei den einzeiligen Einstellungsfeldern die native
-            // Systemtastatur nach dem Fokuswechsel ausdrücklich neu laden.
-            (textView as? CustomNoteTextView)?.requestSystemKeyboard()
+            // Fokus erreicht – eine evtl. noch offene Anfrage ist erledigt.
+            (textView as? CustomNoteTextView)?.cancelPendingKeyboardRequest()
         }
 
         func textViewDidChange(_ textView: UITextView) {
@@ -162,7 +151,10 @@ struct NoteTextEditor: UIViewRepresentable {
 
         func textViewDidEndEditing(_ textView: UITextView) {
             guard !isDismantled else { return }
+            (textView as? CustomNoteTextView)?.cancelPendingKeyboardRequest()
             let callback = parent.onEndEditing
+            // Der Rückruf ändert SwiftUI-Zustand (`editingID`). Das darf nicht
+            // mitten in der UIKit-Responder-Umschaltung passieren.
             DispatchQueue.main.async {
                 callback()
             }
@@ -170,55 +162,32 @@ struct NoteTextEditor: UIViewRepresentable {
     }
 }
 
+/// `UITextView` der Zeichenflächen-Textfelder.
+///
+/// Enthält bewusst **keine** eigenen `touchesBegan`/`touchesEnded`-Overrides:
+/// Der Tipp auf ein bereits sichtbares Textfeld wird vollständig von den
+/// internen Gesten-Erkennern von UIKit behandelt (Cursor setzen, First
+/// Responder werden, Tastatur einblenden). Eigene Touch-Behandlung lief
+/// parallel dazu und griff mitten in diesen Ablauf ein.
 final class CustomNoteTextView: UITextView {
-    var onWindowAttached: (() -> Void)?
-
-    override var canBecomeFirstResponder: Bool { true }
+    private lazy var focusRequester = SystemKeyboardFocusRequester(
+        view: self,
+        debugLabel: "NoteTextEditor"
+    )
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window != nil {
-            onWindowAttached?()
-        }
+        focusRequester.viewDidMoveToWindow()
     }
 
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        prepareForSystemKeyboard()
-        super.touchesBegan(touches, with: event)
-    }
-
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        super.touchesEnded(touches, with: event)
-        requestSystemKeyboard()
-    }
-
-    func prepareForSystemKeyboard() {
-        inputView = nil
-    }
-
-    /// Fordert neben dem First-Responder-Status ausdrücklich die native
-    /// iPadOS-/iOS-Tastatur an. Das behebt den Zustand „Cursor sichtbar,
-    /// Tastatur fehlt", der in SwiftUI-Overlays mit PencilKit auftreten kann.
+    /// Fordert den Fokus an (wird automatisch nachgeholt, sobald die View in
+    /// einem aktiven Key-Window hängt).
     func requestSystemKeyboard() {
-        guard isEditable, isUserInteractionEnabled, window != nil else { return }
+        focusRequester.requestFocus()
+    }
 
-        prepareForSystemKeyboard()
-        if !isFirstResponder {
-            _ = becomeFirstResponder()
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.window != nil else { return }
-                _ = self.becomeFirstResponder()
-            }
-        }
-
-        guard isFirstResponder else { return }
-
-        for delay in [0.0, 0.05, 0.18] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                guard let self, self.isFirstResponder, self.window != nil else { return }
-                self.inputView = nil
-                self.reloadInputViews()
-            }
-        }
+    /// Verwirft eine offene Fokus-Anfrage.
+    func cancelPendingKeyboardRequest() {
+        focusRequester.cancelPendingFocus()
     }
 }

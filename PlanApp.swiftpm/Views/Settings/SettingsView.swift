@@ -14,7 +14,15 @@ public struct SettingsView: View {
                 Color(UIColor.systemBackground).ignoresSafeArea()
 
                 ScrollView(.vertical, showsIndicators: true) {
-                    LazyVStack(spacing: 20) {
+                    // Bewusst `VStack` statt `LazyVStack`: Eine LazyVStack baut
+                    // Zeilen ab, sobald sie aus dem sichtbaren Bereich
+                    // scrollen. Wird beim Einblenden der Tastatur gescrollt,
+                    // kann dabei genau das UIKit-Textfeld entfernt werden, das
+                    // gerade First Responder ist – die Tastatur klappt wieder
+                    // zu bzw. erscheint gar nicht erst. Die Einstellungen haben
+                    // nur eine Handvoll Abschnitte, der Lazy-Vorteil wiegt das
+                    // nicht auf.
+                    VStack(spacing: 20) {
                         // 1. WebUntis API Konfiguration
                         UntisConfigSection()
 
