@@ -6,46 +6,20 @@ import GameController
 #endif
 #endif
 
-/// Ereignisgesteuerte Fokus-Anforderung für UIKit-Texteingaben, die über
-/// `UIViewRepresentable` in SwiftUI eingebettet sind.
+/// Koordiniert eine programmatische Fokus-Anfrage für eine UIKit-Texteingabe,
+/// die in SwiftUI eingebettet ist.
 ///
-/// ## Warum es diesen Helfer gibt
+/// Ein Aufruf in `makeUIView` erfolgt zu früh: Die View hat zu diesem Zeitpunkt
+/// noch kein Fenster und ist noch nicht beim Text-Input-System registriert.
+/// Der Requester merkt sich die Anfrage deshalb bis zum Einhängen ins aktive
+/// Key-Window und versucht den Fokus zusätzlich einmal im nächsten Main-Runloop.
+/// Dieser einzelne Runloop-Schritt ist wichtig für frisch von SwiftUI erzeugte
+/// `UIViewRepresentable`s: `didMoveToWindow()` kann vor dem Abschluss der
+/// aktuellen Hosting-Transaktion eintreffen.
 ///
-/// `becomeFirstResponder()` ist kein „Tastatur anzeigen"-Befehl. UIKit blendet
-/// die Bildschirmtastatur nur ein, wenn **alle** folgenden Bedingungen erfüllt
-/// sind:
-///
-/// 1. Die View hängt in einer `UIWindow`-Hierarchie (`view.window != nil`).
-///    In `makeUIView(context:)` ist das **noch nicht** der Fall – die View wird
-///    erst danach vom SwiftUI-Host eingehängt. Ein dort abgesetztes
-///    `becomeFirstResponder()` schlägt still fehl (Rückgabewert `false`).
-/// 2. Das Fenster gehört zu einer `UIWindowScene` im Zustand
-///    `.foregroundActive` und ist Key-Window. Während eines Szenen-Starts, beim
-///    Zurückkehren aus dem Hintergrund oder während ein Sheet eingeblendet
-///    wird, trifft das kurzzeitig nicht zu.
-/// 3. Die View ist interaktiv (`isUserInteractionEnabled`, nicht `isHidden`).
-///
-/// Ist eine Bedingung nicht erfüllt, kann UIKit trotzdem einen Cursor
-/// darstellen (die Textauswahl ist unabhängig von der Eingabeansicht) – genau
-/// das ist das gemeldete Symptom „Cursor sichtbar, aber keine Tastatur".
-///
-/// Statt die Anfrage mit Timern (`asyncAfter`) zu wiederholen, merkt sich
-/// dieser Helfer eine offene Anfrage und versucht es **ereignisgesteuert**
-/// erneut: beim Einhängen ins Fenster (`didMoveToWindow`), wenn das Fenster
-/// Key-Window wird und wenn die Szene aktiv wird. Danach wird die Anfrage
-/// verworfen. Dadurch gibt es keine „nachlaufenden" Fokus-Anfragen mehr,
-/// nachdem ein Textfeld beendet oder entfernt wurde.
-///
-/// ## Hinweis zur externen Hardware-Tastatur
-///
-/// Ist eine Hardware-Tastatur (Magic Keyboard, Smart Keyboard Folio,
-/// Bluetooth-Tastatur) gekoppelt, **unterdrückt iPadOS die Bildschirmtastatur
-/// absichtlich**. Sichtbar ist dann nur die schmale Kurzbefehlleiste am
-/// unteren Rand. Das ist kein Fehler der App und lässt sich mit öffentlichen
-/// APIs auch nicht übersteuern. In Debug-Builds protokolliert
-/// ``KeyboardFocusDiagnostics`` deshalb, ob eine Hardware-Tastatur erkannt
-/// wurde, damit dieser Fall bei Fehlerberichten nicht mit einem echten
-/// Fokus-Problem verwechselt wird.
+/// Es gibt ausdrücklich weder `reloadInputViews()` noch eine Timer-/Retry-
+/// Schleife. Beides kann die laufende Tastatur-Animation abbrechen und führte
+/// zuvor zum Zustand „Cursor sichtbar, aber keine Bildschirmtastatur“.
 final class SystemKeyboardFocusRequester {
 
     /// Gründe, aus denen ein Fokusversuch (noch) nicht erfolgreich war.
@@ -55,12 +29,14 @@ final class SystemKeyboardFocusRequester {
         case notInWindow
         case noWindowScene
         case sceneNotActive
+        case windowNotKey
         case cannotBecomeFirstResponder
         case rejectedByUIKit
     }
 
     private weak var view: UIView?
     private var isPending = false
+    private var isAttemptScheduled = false
     private var observerTokens: [NSObjectProtocol] = []
     private let debugLabel: String
 
@@ -70,55 +46,49 @@ final class SystemKeyboardFocusRequester {
     }
 
     deinit {
-        let center = NotificationCenter.default
-        for token in observerTokens {
-            center.removeObserver(token)
-        }
-    }
-
-    /// Fordert den First-Responder-Status (und damit die Systemtastatur) an.
-    ///
-    /// Gelingt das sofort, ist nichts weiter zu tun. Andernfalls bleibt die
-    /// Anfrage offen und wird genau dann wiederholt, wenn sich eine der
-    /// Voraussetzungen tatsächlich ändert – nicht nach einer geratenen Zeit.
-    @discardableResult
-    func requestFocus() -> Bool {
-        isPending = true
-        if attemptFocus() {
-            return true
-        }
-        // Nur wenn die Anfrage wirklich noch offen ist, auf die passenden
-        // Systemereignisse warten.
-        if isPending {
-            installObservers()
-        }
-        return false
-    }
-
-    /// Verwirft eine noch offene Fokus-Anfrage.
-    ///
-    /// Muss aufgerufen werden, sobald das Feld die Bearbeitung beendet, aus der
-    /// View-Hierarchie entfernt oder gelöscht wird. So kann keine verzögerte
-    /// Anfrage später eine fremde Tastatur öffnen.
-    func cancelPendingFocus() {
-        isPending = false
         removeObservers()
     }
 
-    /// Aus `UIView.didMoveToWindow()` aufzurufen.
-    func viewDidMoveToWindow() {
-        guard isPending else { return }
-        if view?.window == nil {
-            // Beim Aushängen aus dem Fenster bleibt die Anfrage bewusst offen:
-            // SwiftUI hängt Views beim Layout gelegentlich kurz um. Die
-            // Observer sorgen dafür, dass es danach erneut versucht wird.
-            return
+    /// Fordert den First-Responder-Status an. Ist die View noch nicht bereit,
+    /// bleibt die Anfrage bis zum passenden UIKit-Ereignis aktiv.
+    @discardableResult
+    func requestFocus() -> Bool {
+        isPending = true
+
+        if attemptFocus() {
+            return true
         }
-        _ = attemptFocus()
+
+        // Bei einer gerade von SwiftUI eingebauten View ist der nächste
+        // Main-Runloop der früheste Zeitpunkt, an dem die Hosting-Transaktion
+        // sicher abgeschlossen ist. Das ist eine einzelne, abbrechbare
+        // Übergabe – keine zeitbasierte Retry-Schleife.
+        scheduleNextRunLoopAttempt()
+        installObservers()
+        return false
+    }
+
+    /// Verwirft eine noch offene Fokus-Anfrage. Das muss beim Ende einer
+    /// Bearbeitung und beim Entfernen der View passieren, damit kein späteres
+    /// Scene-/Window-Ereignis ein bereits geschlossenes Feld wieder fokussiert.
+    func cancelPendingFocus() {
+        isPending = false
+        isAttemptScheduled = false
+        removeObservers()
+    }
+
+    /// Aus `UIView.didMoveToWindow()` aufrufen. Der Fokusversuch selbst läuft
+    /// bewusst im nächsten Main-Runloop, siehe Typ-Dokumentation.
+    func viewDidMoveToWindow() {
+        guard isPending, view?.window != nil else { return }
+        scheduleNextRunLoopAttempt()
     }
 
     // MARK: - Intern
 
+    /// Führt genau einen Fokusversuch aus. Falls etwa ein Sheet noch nicht sein
+    /// Key-Window erhalten hat, bleibt der Request offen und die registrierten
+    /// UIKit-Benachrichtigungen stoßen später einen neuen einzelnen Versuch an.
     @discardableResult
     private func attemptFocus() -> Bool {
         guard isPending else { return true }
@@ -145,11 +115,13 @@ final class SystemKeyboardFocusRequester {
             return false
         }
 
-        // Ein nicht-aktives Fenster (z. B. direkt nach dem Einblenden eines
-        // Sheets) nimmt zwar den First Responder an, bekommt aber keine
-        // Tastatur. Deshalb vorher ausdrücklich zum Key-Window machen.
-        if !window.isKeyWindow {
-            window.makeKey()
+        // Das Key-Window wird niemals gewaltsam gewechselt. `makeKey()` in
+        // einem Eingabefeld kann gerade präsentierte Sheets vom normalen
+        // UIKit-Responder-Ablauf abkoppeln. Stattdessen warten wir auf das
+        // echte `UIWindow.didBecomeKeyNotification` des Host-Fensters.
+        guard window.isKeyWindow else {
+            log(.windowNotKey)
+            return false
         }
 
         if view.isFirstResponder {
@@ -169,8 +141,28 @@ final class SystemKeyboardFocusRequester {
         return true
     }
 
+    /// Wartet genau bis zur nächsten Main-Loop-Iteration. Die Closure prüft
+    /// danach erneut `isPending`; ein abgebautes Feld kann daher nicht mehr
+    /// ungewollt zum First Responder werden.
+    private func scheduleNextRunLoopAttempt() {
+        guard isPending, !isAttemptScheduled else { return }
+        isAttemptScheduled = true
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.isAttemptScheduled = false
+            guard self.isPending else { return }
+
+            _ = self.attemptFocus()
+            if self.isPending {
+                self.installObservers()
+            }
+        }
+    }
+
     private func finish() {
         isPending = false
+        isAttemptScheduled = false
         removeObservers()
     }
 
@@ -187,7 +179,7 @@ final class SystemKeyboardFocusRequester {
         observerTokens = names.map { name in
             center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 guard let self, self.isPending else { return }
-                _ = self.attemptFocus()
+                self.scheduleNextRunLoopAttempt()
             }
         }
     }
@@ -218,7 +210,7 @@ enum KeyboardFocusDiagnostics {
     )
 
     /// Ob aktuell eine externe Hardware-Tastatur gekoppelt ist. In diesem Fall
-    /// blendet iPadOS die Bildschirmtastatur bewusst nicht ein.
+    /// blendet iPadOS die Bildschirmtastatur bewusst nicht automatisch ein.
     static var hasHardwareKeyboard: Bool {
         #if canImport(GameController)
         return GCKeyboard.coalesced != nil

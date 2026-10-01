@@ -1,29 +1,22 @@
 import SwiftUI
 import UIKit
 
-/// Zuverlässiges Textfeld für iPadOS & iOS mit voller Tastatur-Unterstützung.
+/// Einheitlich gestaltetes Texteingabefeld für die Einstellungen.
 ///
-/// Kern ist ein natives UIKit-`UITextField` (per `UIViewRepresentable`). Der
-/// Tipp auf das Feld wird vollständig von UIKit verarbeitet: UIKit erkennt ihn
-/// mit seinen eigenen Gesten-Erkennern, setzt den Cursor und macht das Feld
-/// zum First Responder – daraufhin blendet das System die Tastatur ein.
+/// Die vorherige `UIViewRepresentable`-Brücke hat einen zweiten,
+/// programmatischen Responder-Ablauf parallel zum bereits nativen SwiftUI-
+/// Textfeld betrieben. Besonders in einem Sheet konnte diese zweite Anfrage
+/// den vom System gestarteten Tastatur-Übergang wieder unterbrechen. Dieses
+/// Feld verwendet deshalb direkt `TextField` bzw. `SecureField`: SwiftUI
+/// verwaltet damit genau eine native UIKit-Eingabe und genau einen Responder.
 ///
-/// Bewusst **nicht** vorhanden (das waren die Ursachen des Fehlers
-/// „Cursor erscheint, Tastatur bleibt aus"):
-///
-/// * keine eigenen `touchesBegan`/`touchesEnded`-Overrides, die parallel zum
-///   UIKit-Gesten-Erkenner `becomeFirstResponder()` aufrufen,
-/// * keine wiederholten `reloadInputViews()`-Aufrufe per `asyncAfter`. Ein
-///   `reloadInputViews()` während der laufenden Einblend-Animation baut die
-///   Eingabeansicht neu auf und bricht die Animation ab; das Feld bleibt
-///   First Responder (Cursor blinkt), die Tastatur wird aber nie sichtbar.
-///
-/// Programmatische Fokus-Anfragen (Tipp auf die Kapsel neben dem Feld oder auf
-/// den Löschen-Knopf) laufen über ``SystemKeyboardFocusRequester`` und warten
-/// ereignisgesteuert, bis Fenster und Szene bereit sind.
+/// `@FocusState` wird nur für einen Tipp auf den sichtbaren Innenabstand und
+/// für den Löschen-Knopf verwendet. Ein direkter Tipp auf das Textfeld läuft
+/// vollständig über die Systemsteuerung und zeigt die Bildschirmtastatur auf
+/// dem normalen iPadOS-Weg an.
 public struct KeyboardTextField: View {
     @Binding private var text: String
-    @StateObject private var focusController = KeyboardTextFieldFocusController()
+    @FocusState private var isFocused: Bool
 
     private let placeholder: String
     private let isSecure: Bool
@@ -58,33 +51,22 @@ public struct KeyboardTextField: View {
 
     public var body: some View {
         HStack(spacing: 8) {
-            NativeTextField(
-                placeholder: placeholder,
-                text: $text,
-                isSecure: isSecure,
-                capitalization: capitalization,
-                autocorrection: autocorrection,
-                keyboardType: keyboardType,
-                contentType: contentType,
-                returnKeyType: returnKeyType,
-                focusRequestToken: focusController.requestToken,
-                onSubmit: onSubmit
-            )
-            .frame(maxWidth: .infinity)
-            .frame(minHeight: 24)
-            .fixedSize(horizontal: false, vertical: true)
+            inputField
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 24)
 
             if !text.isEmpty {
-                Button(action: {
+                Button {
                     text = ""
-                    focusController.requestKeyboard()
-                }) {
+                    isFocused = true
+                } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 14, weight: .regular, design: .default))
                         .foregroundColor(.secondary)
                 }
-                .buttonStyle(PlainButtonStyle())
+                .buttonStyle(.plain)
                 .hoverEffect(.lift)
+                .accessibilityLabel("Eingabe löschen")
             }
         }
         .padding(.horizontal, 12)
@@ -97,179 +79,106 @@ public struct KeyboardTextField: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
         )
-        // Auch ein Tipp auf den Innenabstand der sichtbaren Kapsel (also neben
-        // dem eigentlichen UITextField) soll fokussieren.
-        //
-        // `simultaneousGesture` ist hier wichtig: Eine normale `.onTapGesture`
-        // würde mit den UIKit-Gesten-Erkennern des Textfelds konkurrieren und
-        // den direkten Tipp auf das Feld verschlucken. Als simultane Geste
-        // bleibt der native UIKit-Fokusablauf vollständig erhalten.
+        // Auch ein Tipp auf den freien Platz in der sichtbaren Kapsel setzt
+        // den normalen SwiftUI-Fokus. `simultaneousGesture` lässt den
+        // direkten UIKit-Tipp auf dem Textfeld unangetastet.
         .contentShape(Rectangle())
         .simultaneousGesture(
             TapGesture().onEnded {
-                focusController.requestKeyboard()
+                isFocused = true
             }
         )
     }
-}
 
-private final class KeyboardTextFieldFocusController: ObservableObject {
-    /// Zähler statt `Bool`: Jede neue Anfrage ist eindeutig unterscheidbar,
-    /// auch wenn zwischendurch kein Zustand zurückgesetzt wurde.
-    @Published var requestToken: Int = 0
-
-    func requestKeyboard() {
-        requestToken = requestToken &+ 1
-    }
-}
-
-/// Die eigentliche UIKit-Brücke.
-private struct NativeTextField: UIViewRepresentable {
-    let placeholder: String
-    @Binding var text: String
-    let isSecure: Bool
-    let capitalization: UITextAutocapitalizationType
-    let autocorrection: UITextAutocorrectionType
-    let keyboardType: UIKeyboardType
-    let contentType: UITextContentType?
-    let returnKeyType: UIReturnKeyType
-    let focusRequestToken: Int
-    let onSubmit: () -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-
-    func makeUIView(context: Context) -> SystemKeyboardTextField {
-        let textField = SystemKeyboardTextField(frame: .zero)
-        textField.delegate = context.coordinator
-        textField.borderStyle = .none
-        textField.backgroundColor = .clear
-        textField.font = .systemFont(ofSize: 15)
-        textField.textColor = .label
-        textField.attributedPlaceholder = NSAttributedString(
-            string: placeholder,
-            attributes: [.foregroundColor: UIColor.placeholderText]
-        )
-        textField.autocapitalizationType = capitalization
-        textField.autocorrectionType = autocorrection
-        textField.keyboardType = keyboardType
-        textField.textContentType = contentType
-        textField.returnKeyType = returnKeyType
-        textField.enablesReturnKeyAutomatically = false
-        textField.clearButtonMode = .never
-        textField.isSecureTextEntry = isSecure
-        textField.adjustsFontForContentSizeCategory = true
-        // `inputView == nil` ist der Normalzustand und bedeutet „System-
-        // tastatur". Einmalig gesetzt zur Dokumentation der Absicht; danach
-        // wird der Wert nie wieder angefasst, damit kein `reloadInputViews()`
-        // nötig ist.
-        textField.inputView = nil
-        textField.text = text
-
-        textField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        textField.setContentHuggingPriority(.required, for: .vertical)
-
-        textField.addTarget(
-            context.coordinator,
-            action: #selector(Coordinator.editingChanged(_:)),
-            for: .editingChanged
-        )
-
-        return textField
-    }
-
-    func updateUIView(_ uiView: SystemKeyboardTextField, context: Context) {
-        context.coordinator.parent = self
-
-        uiView.autocapitalizationType = capitalization
-        uiView.autocorrectionType = autocorrection
-        uiView.keyboardType = keyboardType
-        uiView.textContentType = contentType
-        uiView.returnKeyType = returnKeyType
-        if uiView.isSecureTextEntry != isSecure {
-            uiView.isSecureTextEntry = isSecure
-        }
-        if uiView.attributedPlaceholder?.string != placeholder {
-            uiView.attributedPlaceholder = NSAttributedString(
-                string: placeholder,
-                attributes: [.foregroundColor: UIColor.placeholderText]
-            )
-        }
-
-        // Änderungen von außen (z. B. Lösch-Knopf, Zurücksetzen beim
-        // Bearbeiten-Sheet) übernehmen, aber nie mitten in einer laufenden
-        // IME-Eingabe greifen.
-        if uiView.text != text, uiView.markedTextRange == nil {
-            uiView.text = text
-        }
-
-        // Nur echte, neue Fokus-Anfragen ausführen – `updateUIView` läuft bei
-        // jeder Layout-Änderung des umgebenden ScrollView/LazyVStack.
-        if focusRequestToken != context.coordinator.lastHandledFocusRequestToken {
-            context.coordinator.lastHandledFocusRequestToken = focusRequestToken
-            uiView.requestSystemKeyboard()
-        }
-    }
-
-    static func dismantleUIView(_ uiView: SystemKeyboardTextField, coordinator: Coordinator) {
-        coordinator.isDismantled = true
-        uiView.cancelPendingKeyboardRequest()
-        uiView.delegate = nil
-        if uiView.isFirstResponder {
-            uiView.resignFirstResponder()
-        }
-    }
-
-    final class Coordinator: NSObject, UITextFieldDelegate {
-        var parent: NativeTextField
-        var lastHandledFocusRequestToken: Int = 0
-        var isDismantled = false
-
-        init(_ parent: NativeTextField) {
-            self.parent = parent
-        }
-
-        @objc func editingChanged(_ textField: UITextField) {
-            guard !isDismantled else { return }
-            parent.text = textField.text ?? ""
-        }
-
-        func textFieldDidBeginEditing(_ textField: UITextField) {
-            // Der Fokus ist da – eine evtl. noch offene programmatische
-            // Anfrage ist damit erledigt und darf nicht nachlaufen.
-            (textField as? SystemKeyboardTextField)?.cancelPendingKeyboardRequest()
-        }
-
-        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-            parent.onSubmit()
-            return true
+    @ViewBuilder
+    private var inputField: some View {
+        if isSecure {
+            SecureField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .focused($isFocused)
+                .keyboardConfiguration(
+                    capitalization: capitalization,
+                    autocorrection: autocorrection,
+                    keyboardType: keyboardType,
+                    contentType: contentType,
+                    returnKeyType: returnKeyType,
+                    onSubmit: onSubmit
+                )
+        } else {
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .focused($isFocused)
+                .keyboardConfiguration(
+                    capitalization: capitalization,
+                    autocorrection: autocorrection,
+                    keyboardType: keyboardType,
+                    contentType: contentType,
+                    returnKeyType: returnKeyType,
+                    onSubmit: onSubmit
+                )
         }
     }
 }
 
-/// `UITextField` mit ereignisgesteuerter, programmatischer Fokus-Anfrage.
-///
-/// Der direkte Tipp auf das Feld braucht hier **keinen** Sonderweg: Das
-/// übernimmt UIKit selbst. Die Klasse existiert nur, um eine programmatische
-/// Anfrage (Tipp auf die Kapsel, Löschen-Knopf) sauber zu vertagen, bis die
-/// View in einem aktiven Key-Window hängt.
-private final class SystemKeyboardTextField: UITextField {
-    private lazy var focusRequester = SystemKeyboardFocusRequester(
-        view: self,
-        debugLabel: "KeyboardTextField"
-    )
-
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        focusRequester.viewDidMoveToWindow()
+private extension View {
+    /// Überträgt die bisherigen UIKit-Optionen auf die native SwiftUI-
+    /// Texteingabe, ohne selbst mit `becomeFirstResponder()` einzugreifen.
+    func keyboardConfiguration(
+        capitalization: UITextAutocapitalizationType,
+        autocorrection: UITextAutocorrectionType,
+        keyboardType: UIKeyboardType,
+        contentType: UITextContentType?,
+        returnKeyType: UIReturnKeyType,
+        onSubmit: @escaping () -> Void
+    ) -> some View {
+        self
+            .textInputAutocapitalization(textInputCapitalization(for: capitalization))
+            .autocorrectionDisabled(autocorrection == .no)
+            .keyboardType(keyboardType)
+            .textContentType(contentType)
+            .submitLabel(submitLabel(for: returnKeyType))
+            .onSubmit(onSubmit)
     }
 
-    func requestSystemKeyboard() {
-        focusRequester.requestFocus()
+    private func textInputCapitalization(
+        for capitalization: UITextAutocapitalizationType
+    ) -> TextInputAutocapitalization {
+        switch capitalization {
+        case .none:
+            return .never
+        case .words:
+            return .words
+        case .allCharacters:
+            return .characters
+        case .sentences:
+            return .sentences
+        @unknown default:
+            return .sentences
+        }
     }
 
-    func cancelPendingKeyboardRequest() {
-        focusRequester.cancelPendingFocus()
+    private func submitLabel(for returnKeyType: UIReturnKeyType) -> SubmitLabel {
+        switch returnKeyType {
+        case .continue:
+            return .continue
+        case .done:
+            return .done
+        case .go:
+            return .go
+        case .join:
+            return .join
+        case .next:
+            return .next
+        case .route:
+            return .route
+        case .search:
+            return .search
+        case .send:
+            return .send
+        case .default, .emergencyCall, .google, .yahoo:
+            return .return
+        @unknown default:
+            return .done
+        }
     }
 }
