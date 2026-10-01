@@ -7,6 +7,30 @@ public final class TimetableStorageService {
     private let defaults = UserDefaults.standard
     private let fileManager = FileManager.default
 
+    // UserDefaults kann bei einem unerwarteten Beenden noch nicht auf die
+    // Plist geschrieben sein. Eine zweite, atomare Kopie verhindert dadurch
+    // den Eindruck eines "Reset" beim nächsten Start.
+    private var backupDirectory: URL {
+        let url = documentsDirectory.appendingPathComponent("PlanAppState", isDirectory: true)
+        try? fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    private func persist<T: Encodable>(_ value: T, key: String) {
+        guard let data = try? JSONEncoder().encode(value) else { return }
+        defaults.set(data, forKey: key)
+        defaults.synchronize()
+        let url = backupDirectory.appendingPathComponent(key).appendingPathExtension("json")
+        try? data.write(to: url, options: .atomic)
+    }
+
+    private func restore<T: Decodable>(_ type: T.Type, key: String) -> T? {
+        let data = defaults.data(forKey: key)
+            ?? (try? Data(contentsOf: backupDirectory.appendingPathComponent(key).appendingPathExtension("json")))
+        guard let data, let value = try? JSONDecoder().decode(type, from: data) else { return nil }
+        return value
+    }
+
     private enum Keys {
         static let credentials = "planapp_untis_credentials"
         static let customizations = "planapp_subject_customizations"
@@ -34,87 +58,57 @@ public final class TimetableStorageService {
     // MARK: - Credentials
 
     public func saveCredentials(_ creds: UntisCredentials) {
-        if let data = try? JSONEncoder().encode(creds) {
-            defaults.set(data, forKey: Keys.credentials)
-        }
+        persist(creds, key: Keys.credentials)
     }
 
     public func loadCredentials() -> UntisCredentials {
-        guard let data = defaults.data(forKey: Keys.credentials),
-              let creds = try? JSONDecoder().decode(UntisCredentials.self, from: data) else {
-            return UntisCredentials()
-        }
-        return creds
+        return restore(UntisCredentials.self, key: Keys.credentials) ?? UntisCredentials()
     }
 
     // MARK: - Subject Customizations
 
     public func saveCustomizations(_ list: [SubjectCustomization]) {
-        if let data = try? JSONEncoder().encode(list) {
-            defaults.set(data, forKey: Keys.customizations)
-        }
+        persist(list, key: Keys.customizations)
     }
 
     public func loadCustomizations() -> [SubjectCustomization] {
-        guard let data = defaults.data(forKey: Keys.customizations),
-              let list = try? JSONDecoder().decode([SubjectCustomization].self, from: data) else {
-            return []
-        }
-        return list
+        return restore([SubjectCustomization].self, key: Keys.customizations) ?? []
     }
 
     // MARK: - Teacher Name Customizations
 
     public func saveTeacherNameCustomizations(_ list: [TeacherNameCustomization]) {
-        if let data = try? JSONEncoder().encode(list) {
-            defaults.set(data, forKey: Keys.teacherNameCustomizations)
-        }
+        persist(list, key: Keys.teacherNameCustomizations)
     }
 
     public func loadTeacherNameCustomizations() -> [TeacherNameCustomization] {
-        guard let data = defaults.data(forKey: Keys.teacherNameCustomizations),
-              let list = try? JSONDecoder().decode([TeacherNameCustomization].self, from: data) else {
-            return []
-        }
-        return list
+        return restore([TeacherNameCustomization].self, key: Keys.teacherNameCustomizations) ?? []
     }
 
     // MARK: - Display Settings
 
     public func saveDisplaySettings(_ settings: BlockDisplaySettings) {
-        if let data = try? JSONEncoder().encode(settings) {
-            defaults.set(data, forKey: Keys.displaySettings)
-        }
+        persist(settings, key: Keys.displaySettings)
     }
 
     public func loadDisplaySettings() -> BlockDisplaySettings {
-        guard let data = defaults.data(forKey: Keys.displaySettings),
-              let settings = try? JSONDecoder().decode(BlockDisplaySettings.self, from: data) else {
-            return BlockDisplaySettings.default
-        }
-        return settings
+        return restore(BlockDisplaySettings.self, key: Keys.displaySettings) ?? BlockDisplaySettings.default
     }
 
     // MARK: - Drawing Settings
 
     public func saveDrawingSettings(_ settings: DrawingSettings) {
-        if let data = try? JSONEncoder().encode(settings) {
-            defaults.set(data, forKey: Keys.drawingSettings)
-        }
+        persist(settings, key: Keys.drawingSettings)
     }
 
     public func loadDrawingSettings() -> DrawingSettings {
-        guard let data = defaults.data(forKey: Keys.drawingSettings),
-              let settings = try? JSONDecoder().decode(DrawingSettings.self, from: data) else {
-            return DrawingSettings.default
-        }
-        return settings
+        return restore(DrawingSettings.self, key: Keys.drawingSettings) ?? DrawingSettings.default
     }
 
     // MARK: - Ansichts-Modus
 
     public func saveViewMode(_ mode: TimetableViewMode) {
-        defaults.set(mode.rawValue, forKey: Keys.viewMode)
+        persist(mode.rawValue, key: Keys.viewMode)
     }
 
     public func loadViewMode() -> TimetableViewMode {
@@ -128,33 +122,21 @@ public final class TimetableStorageService {
     // MARK: - Periods
 
     public func savePeriods(_ periods: [Period]) {
-        if let data = try? JSONEncoder().encode(periods) {
-            defaults.set(data, forKey: Keys.periods)
-        }
+        persist(periods, key: Keys.periods)
     }
 
     public func loadPeriods() -> [Period] {
-        guard let data = defaults.data(forKey: Keys.periods),
-              let periods = try? JSONDecoder().decode([Period].self, from: data) else {
-            return Period.defaultPeriods
-        }
-        return periods
+        return restore([Period].self, key: Keys.periods) ?? Period.defaultPeriods
     }
 
     // MARK: - Lessons
 
     public func saveLessons(_ lessons: [Lesson]) {
-        if let data = try? JSONEncoder().encode(lessons) {
-            defaults.set(data, forKey: Keys.lessons)
-        }
+        persist(lessons, key: Keys.lessons)
     }
 
     public func loadLessons() -> [Lesson] {
-        guard let data = defaults.data(forKey: Keys.lessons),
-              let lessons = try? JSONDecoder().decode([Lesson].self, from: data) else {
-            return []
-        }
-        return lessons
+        return restore([Lesson].self, key: Keys.lessons) ?? []
     }
 
     // MARK: - Lesson Notes (PencilKit Drawings & Images)
