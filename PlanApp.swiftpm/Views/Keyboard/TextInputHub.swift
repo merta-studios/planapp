@@ -286,14 +286,35 @@ public final class TextInputHub: ObservableObject {
     /// Ansichts-Hierarchie nicht mehrfach durchsucht.
     public func adoptCurrentFirstResponderIfNeeded() {
         guard AppKeyboardPreferences.shared.mode != .off else { return }
-        guard currentInputView == nil else { return }
         guard !isAdoptScheduled else { return }
 
         isAdoptScheduled = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.isAdoptScheduled = false
+            self.discardDetachedInputs()
+            guard self.currentInputView == nil else { return }
             self.performFirstResponderSearch()
+        }
+    }
+
+    /// Räumt Felder auf, die nicht mehr in einem Fenster hängen – z. B. nach
+    /// dem Schließen eines Blatts. Ohne diese Prüfung könnte die app-eigene
+    /// Tastatur ohne Eingabeziel stehen bleiben.
+    private func discardDetachedInputs() {
+        var didChange = false
+
+        if let view = focusedInput, view.window == nil {
+            focusedInput = nil
+            didChange = true
+        }
+        if let view = registeredInput, view.window == nil {
+            registeredInput = nil
+            didChange = true
+        }
+
+        if didChange {
+            refreshActiveState()
         }
     }
 
@@ -510,6 +531,13 @@ public final class TextInputHub: ObservableObject {
 
     public func keyboardHostDidDisappear() {
         keyboardHostCount = max(0, keyboardHostCount - 1)
+
+        // Nach dem Schließen eines Blatts (Einstellungen, Fach-/Lehrer-Blatt)
+        // kann ein Feld kurz „aktiv“ bleiben, obwohl es schon verschwindet.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.discardDetachedInputs()
+        }
+
         guard keyboardHostCount == 0 else { return }
         revealWorkItem?.cancel()
         isRevealSuppressed = false

@@ -345,6 +345,9 @@ private struct EditTeacherSheet: View {
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
+        // Dieses Blatt liegt über den Einstellungen – die app-eigene Tastatur
+        // muss deshalb auch hier eingebunden sein.
+        .appKeyboardHost()
     }
 
     private var canSave: Bool {
