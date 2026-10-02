@@ -21,9 +21,26 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     /// radiert, Undo/Redo im Canvas) – dient zum Zeitstempel der letzten
     /// Strich-Mutation für das kombinierte Undo (Zeichnung + Textfelder).
     public let onStrokeMutation: () -> Void
-    /// Zentrale Undo-Anfrage (Squeeze / Doppeltippen des Apple Pencil). Läuft
+    /// Zentrale Undo-Anfrage (Doppeltippen des Apple Pencil). Läuft
     /// über dasselbe kombinierte Undo wie der Toolbar-Button.
     public let onRequestUndo: () -> Void
+    /// Ob ausschließlich der Apple Pencil zeichnen darf. `false` = auch der
+    /// Finger (normaler Input) zeichnet.
+    public let pencilOnlyDrawing: Bool
+    /// Wird aufgerufen, sobald die App einen echten Apple-Pencil-Input bemerkt
+    /// (Hover, Strich oder Squeeze). Damit schaltet sich die Einstellung
+    /// „Nur Apple Pencil“ automatisch ein.
+    public let onPencilInputDetected: () -> Void
+    /// Squeeze des Apple Pencil Pro: Ankerpunkt der letzten Hover-Position in
+    /// **Fenster-Koordinaten** (nil, wenn keine Pose vorliegt) und die Richtung,
+    /// in die der Stift zeigt (Einheitsvektor im Fenster-Koordinatensystem).
+    public let onPencilSqueeze: (CGPoint?, CGVector) -> Void
+    /// Wird aufgerufen, sobald eine Zeichen- oder Radier-Geste auf der Fläche
+    /// beginnt (z. B. um die Squeeze-Palette zu schließen).
+    public let onCanvasGestureBegan: () -> Void
+    /// Wird aufgerufen, wenn eine Zeichen- oder Radier-Geste auf der Fläche
+    /// beendet wurde (z. B. um den Radierer automatisch abzuwählen).
+    public let onCanvasGestureEnded: () -> Void
 
     public init(
         drawing: Binding<PKDrawing>,
@@ -32,12 +49,17 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         markerWidth: CGFloat = 16,
         eraserWidth: CGFloat = 24,
         colorScheme: ColorScheme = .light,
+        pencilOnlyDrawing: Bool = true,
         onUndoAvailable: @escaping (Bool) -> Void = { _ in },
         onRedoAvailable: @escaping (Bool) -> Void = { _ in },
         onCanvasCreated: @escaping (PKCanvasView) -> Void = { _ in },
         onFingerPan: @escaping (CGSize) -> Void = { _ in },
         onStrokeMutation: @escaping () -> Void = {},
-        onRequestUndo: @escaping () -> Void = {}
+        onRequestUndo: @escaping () -> Void = {},
+        onPencilInputDetected: @escaping () -> Void = {},
+        onPencilSqueeze: @escaping (CGPoint?, CGVector) -> Void = { _, _ in },
+        onCanvasGestureBegan: @escaping () -> Void = {},
+        onCanvasGestureEnded: @escaping () -> Void = {}
     ) {
         self._drawing = drawing
         self.toolSelection = toolSelection
@@ -45,12 +67,17 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         self.markerWidth = markerWidth
         self.eraserWidth = eraserWidth
         self.colorScheme = colorScheme
+        self.pencilOnlyDrawing = pencilOnlyDrawing
         self.onUndoAvailable = onUndoAvailable
         self.onRedoAvailable = onRedoAvailable
         self.onCanvasCreated = onCanvasCreated
         self.onFingerPan = onFingerPan
         self.onStrokeMutation = onStrokeMutation
         self.onRequestUndo = onRequestUndo
+        self.onPencilInputDetected = onPencilInputDetected
+        self.onPencilSqueeze = onPencilSqueeze
+        self.onCanvasGestureBegan = onCanvasGestureBegan
+        self.onCanvasGestureEnded = onCanvasGestureEnded
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -64,9 +91,10 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         canvasView.drawing = drawing
         canvasView.delegate = context.coordinator
 
-        // Nur der Apple Pencil darf Striche erzeugen. Finger bleiben für
-        // UI-Bedienung und die eigene Zwei-Finger-Verschiebe-Geste reserviert.
-        canvasView.drawingPolicy = .pencilOnly
+        // Zeichen-Eingabe: standardmäßig nur der Apple Pencil. Ist die
+        // Einstellung „Apple Pencil“ aus, zeichnet auch der Finger (normaler
+        // Input) – die eigene Zwei-Finger-Geste verschiebt weiterhin die Notiz.
+        canvasView.drawingPolicy = pencilOnlyDrawing ? .pencilOnly : .anyInput
         canvasView.isScrollEnabled = false
         canvasView.bounces = false
         // Eigene Scroll-Gesten des CanvasView deaktivieren
@@ -84,6 +112,33 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         fingerPan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         fingerPan.delegate = context.coordinator
         canvasView.addGestureRecognizer(fingerPan)
+
+        // Nur Apple-Pencil-Berührungen beobachten: Damit erkennt die App
+        // zuverlässig, dass ein echter Apple Pencil benutzt wird. Der Erkenner
+        // bricht nichts ab (`cancelsTouchesInView = false`) und läuft parallel
+        // zu allen anderen Gesten – das Zeichnen bleibt völlig unberührt.
+        let pencilTouchDetector = UIPanGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handlePencilTouch(_:))
+        )
+        pencilTouchDetector.minimumNumberOfTouches = 1
+        pencilTouchDetector.maximumNumberOfTouches = 1
+        pencilTouchDetector.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        pencilTouchDetector.cancelsTouchesInView = false
+        pencilTouchDetector.delaysTouchesBegan = false
+        pencilTouchDetector.delaysTouchesEnded = false
+        pencilTouchDetector.delegate = context.coordinator
+        canvasView.addGestureRecognizer(pencilTouchDetector)
+
+        // Apple Pencil Hover: liefert die letzte Position und Blickrichtung des
+        // Stifts, damit der Squeeze-Kreis genau dort erscheint, wo der Stift
+        // hinzeigt.
+        let hoverRecognizer = UIHoverGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handlePencilHover(_:))
+        )
+        hoverRecognizer.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        canvasView.addGestureRecognizer(hoverRecognizer)
 
         // Apple Pencil Pro squeeze / Pencil double tap
         let pencilInteraction = UIPencilInteraction()
@@ -110,6 +165,20 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
     private func applyTool(to canvasView: PKCanvasView) {
         var isTextTool = false
+
+        // Zeichen-Eingabe an die Einstellung „Apple Pencil“ anpassen. Nur bei
+        // echter Änderung schreiben: Ein Wechsel mitten in einer Berührung
+        // würde laufende Gesten abbrechen.
+        let policy: PKCanvasViewDrawingPolicy = pencilOnlyDrawing ? .pencilOnly : .anyInput
+        if canvasView.drawingPolicy != policy {
+            canvasView.drawingPolicy = policy
+            // Beim Zeichnen mit dem Finger dürfen die internen Scroll-/Zoom-
+            // Gesten des Canvas nicht dazwischenfunken. (Beim Umschalten der
+            // Policy kann PencilKit sie wieder aktivieren.)
+            canvasView.isScrollEnabled = false
+            canvasView.panGestureRecognizer.isEnabled = false
+            canvasView.pinchGestureRecognizer?.isEnabled = false
+        }
 
         switch toolSelection {
         case .pen(let color):
@@ -174,9 +243,52 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     public final class Coordinator: NSObject, PKCanvasViewDelegate, UIPencilInteractionDelegate, UIGestureRecognizerDelegate {
         var parent: PencilKitCanvasRepresentable
         weak var canvasView: PKCanvasView?
+        /// Letzte Hover-Position des Apple Pencil in Fenster-Koordinaten.
+        private var lastHoverLocation: CGPoint?
+        /// Richtung, in die der Stift zuletzt gezeigt hat (Fenster-Koordinaten).
+        /// Standard „nach oben“, wenn das Gerät keine Azimut-Werte liefert.
+        private var lastHoverDirection = CGVector(dx: 0, dy: -1)
 
         init(_ parent: PencilKitCanvasRepresentable) {
             self.parent = parent
+        }
+
+        // MARK: - Apple Pencil erkennen & verfolgen
+
+        /// Eine echte Stylus-Berührung: Damit ist sicher ein Apple Pencil im
+        /// Spiel – die App schaltet „Nur Apple Pencil“ automatisch ein.
+        @objc func handlePencilTouch(_ recognizer: UIPanGestureRecognizer) {
+            switch recognizer.state {
+            case .began, .changed:
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.onPencilInputDetected()
+                }
+            default:
+                break
+            }
+        }
+
+        /// Hover des Apple Pencil: Position und Blickrichtung merken – ganz
+        /// ohne SwiftUI-State, damit die vielen Hover-Ereignisse keine
+        /// Neuzeichnung auslösen.
+        @objc func handlePencilHover(_ recognizer: UIHoverGestureRecognizer) {
+            guard let view = recognizer.view else { return }
+
+            let windowLocation = recognizer.location(in: view.window)
+            if windowLocation.x.isFinite, windowLocation.y.isFinite {
+                lastHoverLocation = windowLocation
+            }
+
+            let vector = recognizer.azimuthUnitVector(in: view)
+            if vector.dx.isFinite, vector.dy.isFinite, vector.dx != 0 || vector.dy != 0 {
+                lastHoverDirection = vector
+            }
+
+            if recognizer.state == .began || recognizer.state == .changed {
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.onPencilInputDetected()
+                }
+            }
         }
 
         @objc func handleFingerPan(_ recognizer: UIPanGestureRecognizer) {
@@ -206,17 +318,54 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             }
         }
 
-        // Apple Pencil Pro squeeze -> kombiniertes Undo (Zeichnung + Textfelder)
+        /// Zeichen- oder Radier-Geste begonnen. Wird u. a. genutzt, um die
+        /// Squeeze-Palette zu schließen, sobald wieder geschrieben wird.
+        public func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.onCanvasGestureBegan()
+            }
+        }
+
+        /// Zeichen- oder Radier-Geste beendet (z. B. Radierer automatisch
+        /// abwählen, sobald der Stift losgelassen wird).
+        public func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.onCanvasGestureEnded()
+            }
+        }
+
+        /// Apple Pencil Pro Squeeze → Viertelkreis-Werkzeugpalette an der
+        /// letzten Hover-Position, ausgerichtet in Blickrichtung des Stifts.
         @available(iOS 17.5, *)
         public func pencilInteraction(
             _ interaction: UIPencilInteraction,
             didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze
         ) {
-            if squeeze.phase == .ended {
-                DispatchQueue.main.async { [weak self] in
-                    Haptics.tap()
-                    self?.parent.onRequestUndo()
+            guard squeeze.phase == .ended else { return }
+
+            var anchor = lastHoverLocation
+            var direction = lastHoverDirection
+
+            if let pose = squeeze.hoverPose, let canvasView {
+                let windowPoint = canvasView.convert(pose.location, to: nil)
+                if windowPoint.x.isFinite, windowPoint.y.isFinite {
+                    anchor = windowPoint
+                    lastHoverLocation = windowPoint
                 }
+                // `azimuthUnitVector` zeigt in die Richtung, in die die
+                // Stiftspitze deutet (0 rad = +X, im Uhrzeigersinn).
+                let azimuth = Double(pose.azimuthAngle)
+                let vector = CGVector(dx: CGFloat(cos(azimuth)), dy: CGFloat(sin(azimuth)))
+                if vector.dx.isFinite, vector.dy.isFinite, vector.dx != 0 || vector.dy != 0 {
+                    direction = vector
+                    lastHoverDirection = vector
+                }
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.parent.onPencilInputDetected()
+                self.parent.onPencilSqueeze(anchor, direction)
             }
         }
 

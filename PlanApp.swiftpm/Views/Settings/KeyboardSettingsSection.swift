@@ -16,6 +16,7 @@ struct KeyboardSettingsSection: View {
         VStack(alignment: .leading, spacing: 16) {
             header
             modeCard
+            feedbackCard
             statusCard
             helpCard
         }
@@ -80,6 +81,59 @@ struct KeyboardSettingsSection: View {
                     Image(systemName: "keyboard.badge.eye")
                         .font(.system(size: 14, weight: .regular))
                     Text("App-Tastatur jetzt einblenden")
+                        .font(.system(size: 14, weight: .regular, design: .default))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+            }
+            .lightButton(cornerRadius: 10, tint: .blue)
+            .foregroundColor(.blue)
+            .padding(.top, 2)
+        }
+        .padding(14)
+        .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
+    }
+
+    // MARK: - Feedback
+
+    /// Feedback beim Tippen – nach dem Vorbild der Apple-Tastatur.
+    private var feedbackCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Feedback beim Tippen")
+                .font(.system(size: 14, weight: .medium, design: .default))
+                .foregroundColor(.primary)
+
+            Toggle(isOn: Binding(
+                get: { preferences.feedbackEnabled },
+                set: { newValue in
+                    preferences.feedbackEnabled = newValue
+                    // Beim Einschalten einmal vorspielen, damit sofort klar ist,
+                    // wie sich das Feedback anhört.
+                    if newValue { KeyboardFeedback.preview() }
+                }
+            )) {
+                HStack(spacing: 8) {
+                    Image(systemName: "hand.tap")
+                        .font(.system(size: 14, weight: .regular, design: .default))
+                        .foregroundColor(.blue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Klang & Haptik")
+                            .font(.system(size: 14, weight: .regular, design: .default))
+                        Text("Bei jedem Tastendruck ein leises Klickgeräusch wie bei Apples Tastatur und eine feine Haptik (auf dem iPhone spürbar). Das iPad hat keinen Taptic Engine – dort ist der Klang das Feedback.")
+                            .font(.system(size: 12, weight: .regular, design: .default))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+
+            Button {
+                KeyboardFeedback.preview()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "speaker.wave.2")
+                        .font(.system(size: 14, weight: .regular, design: .default))
+                    Text("Feedback ausprobieren")
                         .font(.system(size: 14, weight: .regular, design: .default))
                 }
                 .frame(maxWidth: .infinity)

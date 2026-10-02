@@ -10,10 +10,14 @@ import UIKit
 /// vorhandene Notizen. Eine grüne Linie markiert den aktuellen Moment (davor
 /// liegen die abgelaufenen Einträge).
 ///
-/// Das Raster ist auf dem iPad im **Querformat zweispaltig** – so ist die
-/// ganze Übersicht auf einen Blick erfassbar. Hochformat, Split View und
-/// schmale Fenster bleiben einspaltig; Tagesüberschriften und die grüne Linie
-/// laufen immer über die volle Breite.
+/// Das Raster ist auf dem iPad (quer **und** hoch) zweispaltig, sobald beide
+/// Spalten breit genug sind – so ist die ganze Übersicht auf einen Blick
+/// erfassbar. Nur sehr schmale Fenster (Split View) bleiben einspaltig;
+/// Tagesüberschriften und die grüne Linie laufen immer über die volle Breite.
+///
+/// Gedrückt halten öffnet die Optionen, darunter „Im Standard-Modus anzeigen“:
+/// Damit wechselt die App in den Standard-Modus und wischt automatisch zur
+/// Woche dieser Stunde.
 public struct NotesOverviewListView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
 
@@ -103,15 +107,20 @@ public struct NotesOverviewListView: View {
     private let rowSpacing: CGFloat = 14
     /// Kleinste Breite, die eine Notiz-Karte im Raster noch angenehm lesbar
     /// macht. Daraus ergibt sich, ob eine oder zwei Spalten sinnvoll sind.
-    private let minimumCardWidth: CGFloat = 460
+    ///
+    /// Der Wert ist bewusst so klein, dass auch das **iPad im Hochformat**
+    /// (und im geteilten Bildschirm mit halber Breite) echte zwei Spalten
+    /// bekommt – erst sehr schmale Fenster werden einspaltig.
+    private let minimumCardWidth: CGFloat = 330
 
-    /// Spalten des Rasters: **zwei**, sobald das iPad seitlich liegt und beide
-    /// Spalten breit genug sind. Hochformat, Split View und schmale Fenster
-    /// bleiben einspaltig – dann ist das Raster eine Liste.
+    /// Spalten des Rasters: **zwei**, sobald beide Spalten breit genug sind –
+    /// unabhängig davon, ob das Gerät quer oder hoch gehalten wird. Nur in
+    /// wirklich schmalen Fenstern (z. B. Split View mit einem schmalen Streifen)
+    /// bleibt die Übersicht einspaltig.
     private func columnCount(for size: CGSize) -> Int {
-        guard size.width > size.height else { return 1 }
         let usableWidth = size.width - horizontalPadding * 2 - columnSpacing
-        return usableWidth / 2 >= minimumCardWidth ? 2 : 1
+        guard usableWidth >= minimumCardWidth * 2 else { return 1 }
+        return 2
     }
 
     /// Die komplette Übersicht als Raster: Tagesüberschriften und die grüne
@@ -479,6 +488,12 @@ private struct NoteOverviewCard: View {
     @ViewBuilder
     private var noteActionButtons: some View {
         Button {
+            showInStandardMode()
+        } label: {
+            Label("Im Standard-Modus anzeigen", systemImage: "rectangle.grid.3x2")
+        }
+
+        Button {
             openNote()
         } label: {
             Label("Notiz bearbeiten", systemImage: "square.and.pencil")
@@ -503,6 +518,16 @@ private struct NoteOverviewCard: View {
     private func openNote() {
         Haptics.tap()
         viewModel.openNote(for: lesson, sourceFrame: .zero)
+    }
+
+    /// Wechselt in den Standard-Modus und wischt automatisch zu der Woche,
+    /// in der diese Stunde liegt.
+    ///
+    /// Der `confirmationDialog`/das Kontextmenü schließt sich dabei von selbst,
+    /// weil der Ansichts-Modus gewechselt wird.
+    private func showInStandardMode() {
+        Haptics.tap()
+        viewModel.revealLessonInStandardMode(lesson)
     }
 
     private func requestDeleteConfirmation() {

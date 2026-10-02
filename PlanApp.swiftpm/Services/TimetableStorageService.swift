@@ -41,6 +41,7 @@ public final class TimetableStorageService {
         static let notesMetadata = "planapp_notes_metadata"
         static let drawingSettings = "planapp_drawing_settings"
         static let viewMode = "planapp_timetable_view_mode"
+        static let appearance = "planapp_app_appearance"
     }
 
     private var documentsDirectory: URL {
@@ -117,6 +118,20 @@ public final class TimetableStorageService {
             return .fallback
         }
         return mode
+    }
+
+    // MARK: - Erscheinungsbild
+
+    public func saveAppearance(_ appearance: AppAppearance) {
+        persist(appearance.rawValue, key: Keys.appearance)
+    }
+
+    public func loadAppearance() -> AppAppearance {
+        guard let raw = restore(String.self, key: Keys.appearance),
+              let appearance = AppAppearance(rawValue: raw) else {
+            return .fallback
+        }
+        return appearance
     }
 
     // MARK: - Periods

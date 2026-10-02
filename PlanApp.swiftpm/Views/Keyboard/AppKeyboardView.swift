@@ -880,7 +880,9 @@ private struct KeyboardKeyButton<Label: View>: View {
 
     private func beginPress() {
         isPressed = true
-        Haptics.select()
+        // Wie bei Apples Tastatur: Klang (auf dem iPad das eigentliche
+        // Feedback, weil kein Taptic Engine vorhanden ist) und feine Haptik.
+        KeyboardFeedback.keyPress()
 
         guard !repeats else {
             // Löschen wirkt sofort und wiederholt sich beim Halten.

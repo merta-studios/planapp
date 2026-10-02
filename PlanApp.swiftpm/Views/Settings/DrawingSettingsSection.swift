@@ -115,7 +115,58 @@ public struct DrawingSettingsSection: View {
             .padding(14)
             .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
 
-            // 4. AUTOMATISCHES AUFRÄUMEN & ALLES LÖSCHEN
+            // 4. EINGABE & RADIERER
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle(isOn: Binding(
+                    get: { draftSettings.applePencilOnly },
+                    set: { newValue in
+                        draftSettings.applePencilOnly = newValue
+                        commitDraftSettings()
+                    }
+                )) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "pencil.tip")
+                            .font(.system(size: 14, weight: .regular, design: .default))
+                            .foregroundColor(.orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Apple Pencil")
+                                .font(.system(size: 14, weight: .regular, design: .default))
+                            Text("Aus: Zeichnen mit Finger und Apple Pencil. An: Nur mit dem Apple Pencil zeichnen. Schaltet sich automatisch ein, sobald ein Apple Pencil erkannt wird.")
+                                .font(.system(size: 12, weight: .regular, design: .default))
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+
+                Divider()
+
+                Toggle(isOn: Binding(
+                    get: { draftSettings.autoDeselectEraser },
+                    set: { newValue in
+                        draftSettings.autoDeselectEraser = newValue
+                        commitDraftSettings()
+                    }
+                )) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "eraser")
+                            .font(.system(size: 14, weight: .regular, design: .default))
+                            .foregroundColor(.blue)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Radierer automatisch abwählen")
+                                .font(.system(size: 14, weight: .regular, design: .default))
+                            Text("Sobald du radiert hast und den Stift loslässt, wechselt das Werkzeug automatisch zum zuletzt benutzten Werkzeug – Fallback: Stift.")
+                                .font(.system(size: 12, weight: .regular, design: .default))
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .padding(14)
+            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
+
+            // 5. AUTOMATISCHES AUFRÄUMEN & ALLES LÖSCHEN
             VStack(alignment: .leading, spacing: 12) {
                 Toggle(isOn: Binding(
                     get: { draftSettings.autoDeletePastNotes },
