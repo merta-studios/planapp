@@ -190,12 +190,13 @@ struct PencilSqueezePaletteView: View {
         let selectedHex = activeInkingColorHex
 
         return ForEach(Array(slots.enumerated()), id: \.offset) { index, hex in
-            let angle: CGFloat
-            if count == 1 {
-                angle = directionAngle
-            } else {
-                angle = directionAngle - span / 2 + span * CGFloat(index) / CGFloat(count - 1)
-            }
+            // Der Winkel wird hier bewusst in einer einzigen `let`-Deklaration
+            // berechnet: Zuweisungen sind in einem ViewBuilder-Block keine
+            // gültigen Bausteine (sie liefern `()`, wofür es kein
+            // `buildExpression` gibt) und würden den Build abbrechen lassen.
+            let angle: CGFloat = count == 1
+                ? directionAngle
+                : directionAngle - span / 2 + span * CGFloat(index) / CGFloat(count - 1)
             let isSelected = selectedHex?.caseInsensitiveCompare(hex) == .orderedSame
             let swatch = Color(hex: hex)
 
