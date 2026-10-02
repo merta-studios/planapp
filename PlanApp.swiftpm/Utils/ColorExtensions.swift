@@ -63,8 +63,9 @@ extension Color {
         )
     }
 
-    /// Textfarbe für Stundenblöcke und Notizkarten: Die Schriftfarbe bleibt
-    /// immer fest schwarz (und wechselt im Dark Mode niemals zu weiß).
+    /// Textfarbe für pastellfarbene Stundenblöcke und Notizkarten: fest schwarz.
+    /// Der dunkle Rahmen einer geöffneten Notiz verwendet dagegen `.primary`,
+    /// damit dessen Schriftfarbe dem System-Farbschema folgt.
     public var contrastingTextColor: Color {
         Color.black
     }

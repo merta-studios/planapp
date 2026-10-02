@@ -8,6 +8,7 @@ struct PlanApp: App {
         WindowGroup {
             TimetableView()
                 .environmentObject(viewModel)
+                .appKeyboardHost(monitorsTaps: !viewModel.isDrawingOverlayPresented)
         }
     }
 }

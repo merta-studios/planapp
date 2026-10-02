@@ -111,7 +111,9 @@ planapp/
 │   │   ├── Keyboard/
 │   │   │   ├── TextInputHub.swift            # Eingabe-Hub, Tastatur-Erkennung & Diagnose
 │   │   │   ├── AppKeyboardView.swift         # App-eigene Bildschirmtastatur
-│   │   │   └── AppKeyboardHost.swift         # Einbindung (safeAreaInset + Tipp-Überwachung)
+│   │   │   ├── AppKeyboardWindow.swift       # Gemeinsame Tastaturebene über allen Sheets
+│   │   │   ├── AppKeyboardLayout.swift       # Fensterbezogene Größe & Überlappung
+│   │   │   └── AppKeyboardHost.swift         # App-Root-Einbindung, Inhaltsabstand & Tipp-Überwachung
 │   │   ├── Settings/
 │   │   │   ├── SettingsView.swift            # Einstellungen-Übersicht (Kategorien)
 │   │   │   ├── SettingsCategory.swift        # Kategorien & Detailseiten
@@ -183,6 +185,17 @@ Sie ist eine normale SwiftUI-Ansicht innerhalb der App, braucht also weder die
 Systemtastatur noch Tastenereignisse von iPadOS – sie funktioniert immer, weil
 sie nur Tipps benötigt.
 
+Die Tastatur liegt **fensterweit über allen Ansichten und Sheets**, nicht im
+Einstellungen-Formular. Sie füllt die **untere Hälfte des aktuellen App-Fensters
+über die volle Breite** aus und bleibt unten angedockt. Bei Rotation, Split View
+und Stage Manager richtet sie sich nach der App-Fenstergröße. Die zusätzliche
+Tastaturebene wird nicht zum Key-Window; das bearbeitete Feld behält den Fokus.
+Einstellungen und Notiz halten nur den tatsächlich verdeckten Inhaltsbereich
+frei, auch bei einem weiteren Fach-/Lehrer-Bearbeiten-Sheet. Falls ein nativer
+Hardware-Kurzbefehlsstreifen oder im Modus **Immer anzeigen** zusätzlich die
+Systemtastatur erscheint, dockt die App-Tastatur direkt darüber im verbleibenden
+Fensterbereich an, damit keine Tasten verdeckt werden.
+
 Der Ablauf:
 
 1. `TextInputHub` beobachtet die Bearbeitung aller Textfelder
@@ -226,6 +239,14 @@ tut – statt nur zu vermuten, dass etwas „repariert“ sei.
 
 ### Technische Randnotizen
 
+- `appKeyboardHost()` wird einmal am App-Root installiert. Eingabeansichten
+  verwenden nur `appKeyboardAvoidance()` für den benötigten Inhaltsabstand –
+  dadurch entstehen auch in verschachtelten Sheets keine weiteren Tastaturen.
+- Die Kopfzeile der geöffneten Notiz verwendet die adaptive System-Textfarbe:
+  **weiß im Dark Mode, dunkel im Light Mode**. Das weiße Papier und die dort
+  gewählten Text-/Stiftfarben ändern sich dadurch nicht.
+- Layout-Checks und die iPad-Testschritte stehen unter
+  [`Tests/KeyboardAndDarkMode.md`](Tests/KeyboardAndDarkMode.md).
 - Die Zeichenflächen-Textfelder (`NoteTextEditor`/`CustomNoteTextView`) melden
   sich zusätzlich ausdrücklich beim Hub an – so funktioniert das Text-Werkzeug
   auch dann, wenn der programmatische Fokus in der Playgrounds-Umgebung nicht

@@ -106,6 +106,18 @@ public final class TextInputHub: ObservableObject {
     @Published public private(set) var isAppKeyboardVisible = false
     /// Ob das System eine vollständige Bildschirmtastatur zeigt.
     @Published public private(set) var isSystemKeyboardVisible = false
+    /// Systemtastatur in Bildschirm-Koordinaten, inklusive des schmalen
+    /// Hardware-Kurzbefehlsstreifens. Die App-Tasten dürfen nicht darunter liegen.
+    @Published private(set) var systemKeyboardFrame: CGRect = .zero
+    /// Sichtbare Tastaturfläche in den Koordinaten des zugehörigen App-Fensters.
+    /// Eingabeansichten halten nur ihre tatsächliche Überlappung damit frei.
+    @Published private(set) var appKeyboardFrame: CGRect = .zero
+    private(set) weak var appKeyboardSourceWindow: UIWindow?
+    /// Das Fenster des Eingabeziels, nicht das zusätzliche Tastaturfenster.
+    private var activeInputWindow: UIWindow? { currentInputView?.window }
+    /// Auch „App-Tastatur jetzt einblenden“ ohne aktives Feld unterstützen.
+    var keyboardPresentationWindow: UIWindow? { activeInputWindow ?? manualKeyboardWindow }
+
     /// Ob aktuell ein Textfeld aktiv ist (Fokus oder app-eigene Bearbeitung).
     @Published public private(set) var hasActiveInput = false
     /// Zählt jeden Wechsel des aktiven Felds. Die Tastatur richtet damit ihre
@@ -132,6 +144,8 @@ public final class TextInputHub: ObservableObject {
 
     private weak var focusedInput: UIView?
     private weak var registeredInput: UIView?
+    private weak var manualKeyboardWindow: UIWindow?
+    private var preferencesObservation: AnyCancellable?
     private var observers: [NSObjectProtocol] = []
     private var revealWorkItem: DispatchWorkItem?
     private var didAttemptKeyWindowRepair = false
@@ -175,6 +189,18 @@ public final class TextInputHub: ObservableObject {
 
     private init() {
         installObservers()
+        preferencesObservation = AppKeyboardPreferences.shared.$mode
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] mode in
+                guard let self else { return }
+                self.revealWorkItem?.cancel()
+                if mode == .off {
+                    self.hideAppKeyboard()
+                } else if self.currentInputView != nil {
+                    self.performAutomaticReveal()
+                }
+            }
     }
 
     // MARK: - Beobachtung
@@ -228,6 +254,7 @@ public final class TextInputHub: ObservableObject {
         guard view is UIKeyInput else { return }
 
         let isNewInput = focusedInput !== view
+        manualKeyboardWindow = nil
         focusedInput = view
         if let existing = registeredInput, existing !== view { registeredInput = nil }
 
@@ -249,6 +276,7 @@ public final class TextInputHub: ObservableObject {
     public func registerInput(_ view: UIView) {
         guard view is UIKeyInput else { return }
         guard registeredInput !== view else { return }
+        manualKeyboardWindow = nil
         registeredInput = view
         hasActiveInput = true
         activeInputKind = Self.kind(of: view)
@@ -275,7 +303,9 @@ public final class TextInputHub: ObservableObject {
         if hasActiveInput != isActive { hasActiveInput = isActive }
         if !isActive {
             revealWorkItem?.cancel()
-            hideAppKeyboard()
+            // Die ausdrücklich angeforderte Tastatur-Vorschau darf ohne Feld
+            // sichtbar bleiben. Verwaiste normale Eingaben dagegen aufräumen.
+            if manualKeyboardWindow == nil { hideAppKeyboard() }
         }
     }
 
@@ -302,20 +332,20 @@ public final class TextInputHub: ObservableObject {
     /// dem Schließen eines Blatts. Ohne diese Prüfung könnte die app-eigene
     /// Tastatur ohne Eingabeziel stehen bleiben.
     private func discardDetachedInputs() {
-        var didChange = false
-
         if let view = focusedInput, view.window == nil {
             focusedInput = nil
-            didChange = true
         }
         if let view = registeredInput, view.window == nil {
             registeredInput = nil
-            didChange = true
         }
 
-        if didChange {
-            refreshActiveState()
+        // Auch bereits freigegebene weak-Referenzen berücksichtigen. Der
+        // globale Tastatur-Host bleibt beim Schließen der Einstellungen aktiv;
+        // die Tastatur darf deshalb nicht auf einen verschwundenen Host warten.
+        if currentInputView == nil {
+            activeInputKind = "–"
         }
+        refreshActiveState()
     }
 
     private func performFirstResponderSearch() {
@@ -395,9 +425,36 @@ public final class TextInputHub: ObservableObject {
 
     // MARK: - Tastatur ein-/ausblenden
 
+    /// Die fensterweite Ebene meldet ihre Fläche. Ein anderes App-Fenster
+    /// darf die Fläche der aktuell sichtbaren Tastatur nicht zurücksetzen.
+    func updateAppKeyboardFrame(_ frame: CGRect, in window: UIWindow) {
+        if frame.isEmpty {
+            guard appKeyboardSourceWindow === window else { return }
+            appKeyboardSourceWindow = nil
+            appKeyboardFrame = .zero
+        } else {
+            guard appKeyboardSourceWindow !== window || appKeyboardFrame != frame else { return }
+            appKeyboardSourceWindow = window
+            appKeyboardFrame = frame
+        }
+    }
+
+    /// Nach dem Safe-Area-Update (auch bei Rotation) das aktive Feld wieder
+    /// in den nun sichtbaren Bereich der jeweiligen ScrollView schieben.
+    func keyboardHostLayoutDidChange() {
+        revealActiveInputInScrollView()
+    }
+
     public func showAppKeyboard() {
         guard AppKeyboardPreferences.shared.mode != .off else { return }
         isRevealSuppressed = false
+        if currentInputView == nil {
+            manualKeyboardWindow = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .filter { $0.activationState == .foregroundActive }
+                .flatMap { $0.windows }
+                .first { $0.isKeyWindow }
+        }
         guard !isAppKeyboardVisible else { return }
         withAnimation(.easeOut(duration: 0.22)) {
             isAppKeyboardVisible = true
@@ -412,6 +469,7 @@ public final class TextInputHub: ObservableObject {
     }
 
     public func hideAppKeyboard() {
+        manualKeyboardWindow = nil
         guard isAppKeyboardVisible else { return }
         withAnimation(.easeOut(duration: 0.18)) {
             isAppKeyboardVisible = false
@@ -466,13 +524,15 @@ public final class TextInputHub: ObservableObject {
 
         if name == UIResponder.keyboardWillHideNotification || name == UIResponder.keyboardDidHideNotification {
             isSystemKeyboardVisible = false
+            systemKeyboardFrame = .zero
         } else {
             let frame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue ?? .zero
             isSystemKeyboardVisible = frame.height >= Self.minimumSystemKeyboardHeight
+            systemKeyboardFrame = frame
         }
 
-        // Bei „Immer anzeigen“ bleibt die app-eigene Tastatur bewusst stehen:
-        // sie sitzt dann direkt über der Systemtastatur.
+        // Bei „Immer anzeigen“ bleibt die fensterweite App-Tastatur bewusst
+        // eingeblendet, direkt oberhalb einer angedockten Systemtastatur.
         guard AppKeyboardPreferences.shared.mode != .always else { return }
 
         if isSystemKeyboardVisible {
@@ -538,6 +598,7 @@ public final class TextInputHub: ObservableObject {
 
     public func keyboardHostDidDisappear() {
         keyboardHostCount = max(0, keyboardHostCount - 1)
+        if manualKeyboardWindow != nil { hideAppKeyboard() }
 
         // Nach dem Schließen eines Blatts (Einstellungen, Fach-/Lehrer-Blatt)
         // kann ein Feld kurz „aktiv“ bleiben, obwohl es schon verschwindet.

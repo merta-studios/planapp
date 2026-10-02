@@ -351,108 +351,109 @@ struct EditSubjectSheet: View {
             ZStack {
                 Color(UIColor.systemBackground).ignoresSafeArea()
 
-                VStack(spacing: 20) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("Passe die Einstellungen für dieses Schulfach an.")
-                            .font(.system(size: 14, weight: .regular, design: .default))
-                            .foregroundColor(.secondary)
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Name von Untis:")
-                                .font(.system(size: 12, weight: .regular, design: .default))
+                ScrollView(.vertical, showsIndicators: true) {
+                    VStack(spacing: 20) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("Passe die Einstellungen für dieses Schulfach an.")
+                                .font(.system(size: 14, weight: .regular, design: .default))
                                 .foregroundColor(.secondary)
-                            KeyboardTextField(
-                                "z.B. M",
-                                text: $originalSubject,
-                                capitalization: .allCharacters,
-                                autocorrection: .no
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Name von Untis:")
+                                    .font(.system(size: 12, weight: .regular, design: .default))
+                                    .foregroundColor(.secondary)
+                                KeyboardTextField(
+                                    "z.B. M",
+                                    text: $originalSubject,
+                                    capitalization: .allCharacters,
+                                    autocorrection: .no
+                                )
+                            }
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Neuer Name im Stundenplan:")
+                                    .font(.system(size: 12, weight: .regular, design: .default))
+                                    .foregroundColor(.secondary)
+                                KeyboardTextField(
+                                    "z.B. Mathematik",
+                                    text: $customName,
+                                    returnKeyType: .done,
+                                    onSubmit: saveChanges
+                                )
+                            }
+
+                            ColorPickerPresets(
+                                selectedHex: $colorHex,
+                                title: useGradient ? "Obere Anfangs-Farbe wählen:" : "Fach-Farbe wählen:"
                             )
-                        }
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Neuer Name im Stundenplan:")
-                                .font(.system(size: 12, weight: .regular, design: .default))
-                                .foregroundColor(.secondary)
-                            KeyboardTextField(
-                                "z.B. Mathematik",
-                                text: $customName,
-                                returnKeyType: .done,
-                                onSubmit: saveChanges
-                            )
-                        }
+                            Toggle(isOn: $useGradient.animation(.spring(response: 0.3, dampingFraction: 0.8))) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "square.bottomhalf.filled")
+                                        .font(.system(size: 14, weight: .regular, design: .default))
+                                        .foregroundColor(.blue)
+                                    Text("Farbverlauf (obere → untere Farbe)")
+                                        .font(.system(size: 14, weight: .regular, design: .default))
+                                }
+                            }
 
-                        ColorPickerPresets(
-                            selectedHex: $colorHex,
-                            title: useGradient ? "Obere Anfangs-Farbe wählen:" : "Fach-Farbe wählen:"
-                        )
+                            if useGradient {
+                                ColorPickerPresets(
+                                    selectedHex: $gradientEndHex,
+                                    title: "Untere End-Farbe wählen:"
+                                )
 
-                        Toggle(isOn: $useGradient.animation(.spring(response: 0.3, dampingFraction: 0.8))) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "square.bottomhalf.filled")
-                                    .font(.system(size: 14, weight: .regular, design: .default))
-                                    .foregroundColor(.blue)
-                                Text("Farbverlauf (obere → untere Farbe)")
-                                    .font(.system(size: 14, weight: .regular, design: .default))
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                Color(hex: colorHex).pastel,
+                                                Color(hex: gradientEndHex).pastel
+                                            ],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    )
+                                    .frame(height: 44)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                                    )
                             }
                         }
+                        .padding(16)
+                        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
 
-                        if useGradient {
-                            ColorPickerPresets(
-                                selectedHex: $gradientEndHex,
-                                title: "Untere End-Farbe wählen:"
-                            )
+                        HStack(spacing: 12) {
+                            Button(action: {
+                                Haptics.tap()
+                                onCancel()
+                            }) {
+                                Text("Abbrechen")
+                                    .font(.system(size: 15, weight: .regular, design: .default))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                            }
+                            .lightButton(cornerRadius: 12)
+                            .foregroundColor(.secondary)
 
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [
-                                            Color(hex: colorHex).pastel,
-                                            Color(hex: gradientEndHex).pastel
-                                        ],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    )
-                                )
-                                .frame(height: 44)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-                                )
+                            Button(action: {
+                                Haptics.tap()
+                                saveChanges()
+                            }) {
+                                Text("Speichern")
+                                    .font(.system(size: 15, weight: .regular, design: .default))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                            }
+                            .lightButton(cornerRadius: 12, tint: .blue, isFilled: true)
+                            .foregroundColor(.white)
+                            .disabled(originalSubject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
                     }
-                    .padding(16)
-                    .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
-
-                    Spacer()
-
-                    HStack(spacing: 12) {
-                        Button(action: {
-                            Haptics.tap()
-                            onCancel()
-                        }) {
-                            Text("Abbrechen")
-                                .font(.system(size: 15, weight: .regular, design: .default))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                        }
-                        .lightButton(cornerRadius: 12)
-                        .foregroundColor(.secondary)
-
-                        Button(action: {
-                            Haptics.tap()
-                            saveChanges()
-                        }) {
-                            Text("Speichern")
-                                .font(.system(size: 15, weight: .regular, design: .default))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                        }
-                        .lightButton(cornerRadius: 12, tint: .blue, isFilled: true)
-                        .foregroundColor(.white)
-                        .disabled(originalSubject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
+                    .padding(20)
                 }
-                .padding(20)
+                .scrollDismissesKeyboard(.never)
             }
             .navigationTitle("Fach bearbeiten")
             .navigationBarTitleDisplayMode(.inline)
@@ -468,9 +469,8 @@ struct EditSubjectSheet: View {
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
-        // Dieses Blatt liegt über den Einstellungen – die app-eigene Tastatur
-        // muss deshalb auch hier eingebunden sein.
-        .appKeyboardHost()
+        // Auch verschachtelte Sheets verwenden dieselbe fensterweite Tastatur.
+        .appKeyboardAvoidance()
     }
 
     private func saveChanges() {
