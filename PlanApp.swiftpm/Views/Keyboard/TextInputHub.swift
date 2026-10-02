@@ -518,7 +518,14 @@ public final class TextInputHub: ObservableObject {
             guard let view = self?.currentInputView,
                   let scrollView = Self.enclosingScrollView(of: view) else { return }
             let rect = view.convert(view.bounds, to: scrollView).insetBy(dx: 0, dy: -24)
-            guard rect.isFinite, rect.width > 0, rect.height > 0 else { return }
+            guard !rect.isNull,
+                  !rect.isInfinite,
+                  rect.origin.x.isFinite,
+                  rect.origin.y.isFinite,
+                  rect.size.width.isFinite,
+                  rect.size.height.isFinite,
+                  rect.width > 0,
+                  rect.height > 0 else { return }
             scrollView.scrollRectToVisible(rect, animated: true)
         }
     }
