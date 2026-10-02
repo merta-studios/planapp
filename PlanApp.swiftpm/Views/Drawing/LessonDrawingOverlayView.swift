@@ -225,6 +225,11 @@ public struct LessonDrawingOverlayView: View {
                 Text(exportAlertMessage ?? "")
             }
         }
+        // App-eigene Tastatur für das Text-Werkzeug: Sie erscheint unten auf
+        // der Zeichenfläche, wenn iPadOS keine Systemtastatur einblendet.
+        // Ohne Tipp-Überwachung, damit die PencilKit-Eingabe völlig unberührt
+        // bleibt – das Textfeld meldet sich hier ausdrücklich selbst an.
+        .appKeyboardHost(monitorsTaps: false)
     }
 
     // MARK: - Editor panel

@@ -69,6 +69,10 @@ struct NoteTextEditor: UIViewRepresentable {
         if isEditing {
             // Wird automatisch nachgeholt, sobald die View im Fenster hängt.
             textView.requestSystemKeyboard()
+            // Zusätzlich beim Eingabe-Hub anmelden: Er blendet die app-eigene
+            // Tastatur ein, wenn iPadOS (z. B. in Swift Playgrounds) weder
+            // Systemtastatur noch Tastenereignisse an die App liefert.
+            TextInputHub.shared.registerInput(textView)
         }
 
         return textView
@@ -105,10 +109,12 @@ struct NoteTextEditor: UIViewRepresentable {
         }
 
         if isEditing {
+            TextInputHub.shared.registerInput(uiView)
             if !uiView.isFirstResponder {
                 uiView.requestSystemKeyboard()
             }
         } else {
+            TextInputHub.shared.deactivate(uiView, reason: "Textfeld geschlossen")
             uiView.cancelPendingKeyboardRequest()
             if uiView.isFirstResponder {
                 uiView.resignFirstResponder()
@@ -121,6 +127,7 @@ struct NoteTextEditor: UIViewRepresentable {
     /// Entfernen weiterwirken.
     static func dismantleUIView(_ uiView: CustomNoteTextView, coordinator: Coordinator) {
         coordinator.isDismantled = true
+        TextInputHub.shared.deactivate(uiView, reason: "Textfeld entfernt")
         uiView.cancelPendingKeyboardRequest()
         uiView.delegate = nil
         if uiView.isFirstResponder {

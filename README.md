@@ -108,14 +108,22 @@ planapp/
 │   │   │   ├── LinedPaperBackground.swift    # Linierter Zettel mit rotem Rand
 │   │   │   ├── PencilKitCanvasRepresentable.swift # PencilKit Wrapper & Apple Pencil Pro Squeeze
 │   │   │   └── DrawingToolbarView.swift      # Vorgegebene Stift-, Textmarker- & Radier-Tools
+│   │   ├── Keyboard/
+│   │   │   ├── TextInputHub.swift            # Eingabe-Hub, Tastatur-Erkennung & Diagnose
+│   │   │   ├── AppKeyboardView.swift         # App-eigene Bildschirmtastatur
+│   │   │   └── AppKeyboardHost.swift         # Einbindung (safeAreaInset + Tipp-Überwachung)
 │   │   ├── Settings/
-│   │   │   ├── SettingsView.swift            # Einstellungen-Hauptmenü
+│   │   │   ├── SettingsView.swift            # Einstellungen-Übersicht (Kategorien)
+│   │   │   ├── SettingsCategory.swift        # Kategorien & Detailseiten
+│   │   │   ├── KeyboardSettingsSection.swift # Tastatur-Modus & Live-Status
+│   │   │   ├── PencilGesturesSection.swift   # Bedienhinweise (Pencil & Gesten)
 │   │   │   ├── UntisConfigSection.swift      # WebUntis Zugangsdaten & Sync-Test
 │   │   │   ├── SubjectCustomizationSection.swift # Fächer anlegen & Farben wählen
 │   │   │   ├── BlockDisplaySettingsSection.swift # Block-Inhalte anpassen
 │   │   │   └── PeriodConfigSection.swift     # Stundenzeiten anzeigen & bearbeiten
 │   │   └── Components/
 │   │       ├── HoverButton.swift             # Apple Pencil Hover Buttons
+│   │       ├── KeyboardTextField.swift       # Einheitliches Eingabefeld der Einstellungen
 │   │       ├── ColorPickerPresets.swift      # Farbpaletten-Auswahl
 │   │       └── StatusBadge.swift             # Status-Badges (Entfall, Vertretung, Heute)
 │   └── Utils/
@@ -147,27 +155,84 @@ let url  = AppResources.url(forResource: "AppLogo", withExtensions: ["png"])
 
 ---
 
-## ⌨️ Hinweise zur Bildschirmtastatur (iPadOS / iOS)
+## ⌨️ Bildschirmtastatur: warum es so lange nicht ging – und wie es jetzt läuft
 
-Die Felder in den **Einstellungen** (`KeyboardTextField`) verwenden direkt
-`TextField` bzw. `SecureField` von SwiftUI. Damit übernimmt iPadOS den Fokus-
-und Tastaturablauf selbst; die App startet keinen zweiten UIKit-Responder-Ablauf
-mehr. Die Textfelder auf der **Zeichenfläche** (`NoteTextEditor` /
-`CustomNoteTextView`) benötigen wegen ihrer frei positionierbaren PencilKit-
-Ebene weiterhin eine UIKit-Brücke. Deren Fokus-Anfrage wartet auf ein aktives
-Key-Window und wird einmal nach Abschluss der SwiftUI-Hosting-Transaktion
-nachgeholt (`Utils/SystemKeyboardFocus.swift`).
+### Das eigentliche Problem
 
-Es gibt dabei keine `reloadInputViews()`-Aufrufe und keine Timer-/Retry-
-Schleifen: Beides kann einen bereits begonnenen Tastaturübergang abbrechen.
-Beim Beenden oder Entfernen eines Zeichenflächen-Felds wird eine offene
-Fokus-Anfrage ausdrücklich verworfen.
+**In Apps, die in Swift Playgrounds auf dem iPad laufen, liefert iPadOS die
+Texteingabe nicht an die App.** Ein Tippen setzt den Cursor, aber:
 
-**Externe Hardware-Tastatur:** Ist ein Magic Keyboard, Smart Keyboard Folio
-oder eine Bluetooth-Tastatur gekoppelt, **unterdrückt iPadOS die
-Bildschirmtastatur absichtlich** – sichtbar ist dann nur die schmale
-Kurzbefehlleiste am unteren Rand. Das ist Systemverhalten und lässt sich mit
-öffentlichen APIs nicht übersteuern. Zum Prüfen der Bildschirmtastatur die
-externe Tastatur abtrennen (oder im Simulator unter *I/O → Keyboard →
-„Connect Hardware Keyboard“* deaktivieren). In Debug-Builds protokolliert
-`KeyboardFocusDiagnostics` zusätzlich, ob eine Hardware-Tastatur erkannt wurde.
+- die Bildschirmtastatur erscheint nicht,
+- es kommt auch kein Zeichen einer angeschlossenen Hardware-Tastatur an,
+- nur „Einsetzen“ aus der Zwischenablage funktioniert.
+
+Das ist **kein Fehler dieser App** und auch kein Fokus-Problem. Es ist ein seit
+**iPadOS 16.1** dokumentierter Fehler von Swift Playgrounds (Apple Developer
+Forums, [Thread 715614 – „iPad OS 16.1, Playgrounds and input fields“](https://developer.apple.com/forums/thread/715614)),
+der in Berichten bis **iPadOS 18** und **iPadOS 26** (Playgrounds 4.6.4)
+auftritt. Genau deshalb konnten alle früheren Versuche nichts bewirken:
+`becomeFirstResponder()`, `@FocusState`, Wartezeiten, `reloadInputViews()`,
+Key-Window-Prüfungen oder Diagnose-Logs kommen alle nicht dagegen an – sie
+reparieren den Fokusablauf einer Umgebung, die die Tastatur gar nicht erst
+herausgibt.
+
+### Die Lösung in dieser App
+
+Die App bringt eine **eigene Bildschirmtastatur** mit (`Views/Keyboard/`).
+Sie ist eine normale SwiftUI-Ansicht innerhalb der App, braucht also weder die
+Systemtastatur noch Tastenereignisse von iPadOS – sie funktioniert immer, weil
+sie nur Tipps benötigt.
+
+Der Ablauf:
+
+1. `TextInputHub` beobachtet die Bearbeitung aller Textfelder
+   (`UITextField`/`UITextView`-Benachrichtigungen, dazu gehört auch das
+   SwiftUI-`TextField`) und zusätzlich das First-Responder-Feld nach jedem Tipp.
+2. Bleibt die Systemtastatur aus (oder zeigt iPadOS nur den ca. 44 pt hohen
+   Kurzbefehl-Streifen einer Hardware-Tastatur), blendet die App ihre eigene
+   Tastatur ein (`Views/Keyboard/AppKeyboardView.swift`).
+3. Getippt wird über die öffentliche `UIKeyInput`-Schnittstelle
+   (`insertText(_:)` / `deleteBackward()`) direkt in das fokussierte Feld –
+   also über denselben Weg, den auch die echte Tastatur nimmt. Cursorposition,
+   Sicherheitsfeld (Passwort) und die SwiftUI-Bindungen bleiben dadurch
+   korrekt; anschließend wird das Feld zusätzlich über die Textänderung
+   informiert.
+
+Erscheint die Systemtastatur doch (z. B. in Xcode oder wenn keine
+Hardware-Tastatur gekoppelt ist), tritt die App-Tastatur automatisch zurück.
+
+**Einstellbar** unter *Einstellungen → Tastatur & Eingabe*:
+
+| Modus | Verhalten |
+| --- | --- |
+| **Automatisch** (Standard) | App-Tastatur nur, wenn das System keine vollständige Tastatur zeigt |
+| **Immer anzeigen** | App-Tastatur bei jedem Textfeld, auch zusätzlich zur Systemtastatur |
+| **Nur Systemtastatur** | App-Tastatur aus |
+
+Dort gibt es außerdem eine **Live-Statusanzeige** (Systemtastatur sichtbar?,
+App-Tastatur aktiv?, Textfeld erkannt?, Hardware-Tastatur erkannt?,
+Key-Window?, letztes Ereignis). Damit ist sofort sichtbar, was iPadOS gerade
+tut – statt nur zu vermuten, dass etwas „repariert“ sei.
+
+### Wenn zusätzlich die Systemtastatur erscheinen soll
+
+1. Hardware-Tastatur (Magic Keyboard, Bluetooth) abtrennen.
+2. Swift Playgrounds vollständig schließen und **mit abgetrennter Tastatur**
+   neu öffnen (der Fehler tritt danach oft wieder auf, sobald der
+   Playgrounds-Editor den Fokus hatte).
+3. Ggf. den iPad neu starten.
+4. Hilfreich sein kann: *Einstellungen → Bedienungshilfen → Tippen →
+   AssistiveTouch → „Bildschirmtastatur einblenden“*.
+
+### Technische Randnotizen
+
+- Die Zeichenflächen-Textfelder (`NoteTextEditor`/`CustomNoteTextView`) melden
+  sich zusätzlich ausdrücklich beim Hub an – so funktioniert das Text-Werkzeug
+  auch dann, wenn der programmatische Fokus in der Playgrounds-Umgebung nicht
+  greift.
+- Es gibt weiterhin keine `reloadInputViews()`-Aufrufe: Sie können laufende
+  Tastaturübergänge abbrechen.
+- Eine Key-Window-Reparatur (`window.makeKey()`) läuft höchstens einmal pro
+  App-Start und nur, wenn kein Systemfenster (z. B. ein Alert) oberhalb liegt.
+  Sie kann in manchen Konfigurationen die Systemtastatur zurückholen, ist aber
+  nicht die eigentliche Lösung – das ist die App-Tastatur.
