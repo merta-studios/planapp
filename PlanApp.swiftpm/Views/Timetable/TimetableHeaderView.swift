@@ -114,6 +114,32 @@ public struct TimetableHeaderView: View {
         .accessibilityHint("Öffnet die Auswahl des Ansichts-Modus")
     }
 
+    /// Stiftname erscheint erst nach echtem Pencil-Input. Das verhindert ein
+    /// leeres/irreführendes Feld, wenn kein Pencil verwendet wurde.
+    @ViewBuilder
+    private var applePencilStatus: some View {
+        if let pencilName = viewModel.detectedApplePencilName {
+            Text(pencilName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(Color(UIColor.secondarySystemBackground).opacity(0.78))
+                )
+                .overlay(
+                    Capsule()
+                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                )
+                .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel(pencilName)
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+        }
+    }
+
     /// Kompakte Variante des Modus-Buttons (nur Symbol) für schmale Breiten.
     private var compactViewModeMenu: some View {
         Menu {
@@ -146,6 +172,7 @@ public struct TimetableHeaderView: View {
         return HStack(spacing: 14) {
             appTitle
             viewModeMenu
+            applePencilStatus
 
             Spacer(minLength: 12)
 
@@ -179,6 +206,7 @@ public struct TimetableHeaderView: View {
         return HStack(spacing: 8) {
             appLogo
             compactViewModeMenu
+            applePencilStatus
 
             weekCard
                 .layoutPriority(2)

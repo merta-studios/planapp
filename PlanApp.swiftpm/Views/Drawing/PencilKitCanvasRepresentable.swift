@@ -334,8 +334,8 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             }
         }
 
-        /// Apple Pencil Pro Squeeze → Viertelkreis-Werkzeugpalette an der
-        /// letzten Hover-Position, ausgerichtet in Blickrichtung des Stifts.
+        /// Apple Pencil Pro Squeeze → Bogen-Werkzeugpalette an der letzten
+        /// Hover-Position, mit korrigierter Orientierung.
         @available(iOS 17.5, *)
         public func pencilInteraction(
             _ interaction: UIPencilInteraction,
@@ -373,6 +373,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         public func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
             DispatchQueue.main.async { [weak self] in
                 Haptics.tap()
+                self?.parent.onPencilInputDetected()
                 self?.parent.onRequestUndo()
             }
         }

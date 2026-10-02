@@ -36,6 +36,11 @@ public final class TimetableViewModel: ObservableObject {
     /// Wird persistent gespeichert und beim Start wiederhergestellt.
     @Published public var viewMode: TimetableViewMode = .standard
 
+    /// Modellhinweis aus tatsächlich beobachtetem Pencil-Input. iPadOS stellt
+    /// keine öffentliche Abfrage für den gekoppelten Pencil-Akku oder für die
+    /// genaue Modellgeneration bereit; ein Squeeze identifiziert Pro dagegen.
+    @Published public private(set) var detectedApplePencilName: String? = nil
+
     /// Erscheinungsbild der App. Standard ist **hell** (siehe ``AppAppearance``),
     /// damit weißes Papier niemals weiße Schrift bekommt.
     @Published public var appearance: AppAppearance = .fallback
@@ -304,6 +309,23 @@ public final class TimetableViewModel: ObservableObject {
         guard !drawingSettings.applePencilOnly else { return }
         drawingSettings.applePencilOnly = true
         storage.saveDrawingSettings(drawingSettings)
+    }
+
+    /// Öffentliche UIKit/PencilKit-Callbacks bestätigen aktiven Pencil-Input,
+    /// aber nicht die konkrete Modellgeneration. Deshalb erscheint zunächst
+    /// nur die sichere, allgemeine Bezeichnung.
+    public func registerObservedApplePencilInput() {
+        if detectedApplePencilName == nil {
+            detectedApplePencilName = "Apple Pencil"
+        }
+        registerApplePencilUsage()
+    }
+
+    /// Squeeze ist nur beim Apple Pencil Pro verfügbar und identifiziert ihn
+    /// daher zuverlässig.
+    public func registerApplePencilSqueeze() {
+        detectedApplePencilName = "Apple Pencil Pro"
+        registerApplePencilUsage()
     }
 
     /// Merkt sich, dass der letzte API-Abgleich fehlgeschlagen ist.
