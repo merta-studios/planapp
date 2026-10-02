@@ -31,13 +31,23 @@ Hardware-Kurzbefehlsstreifen und ungültige Maße.
 
 ## App-Tastatur
 
-Die Tastatur ist Teil der normalen Ansichts-Hierarchie (`safeAreaInset` unten
-an der jeweiligen Eingabeansicht) – **nicht** ein eigenes Overlay-Fenster.
-Dadurch erscheint sie immer am unteren Rand der Ansicht, in der getippt wird
-(Zeichenfläche: unterer Bildschirmrand; Einstellungen und Bearbeiten-Sheets:
-unten im Sheet), ihre Tasten funktionieren zuverlässig, und Tipps auf die
-Tastatur können keine Gesten dahinterliegender Ebenen auslösen (Notiz oder
-Sheet schließen sich nicht ungewollt).
+Die Tastatur ist Teil der normalen Ansichts-Hierarchie – **nicht** ein eigenes
+Overlay-Fenster. Dadurch erscheint sie immer am unteren Rand der Ansicht, in
+der getippt wird (Zeichenfläche: unterer Bildschirmrand; Einstellungen und
+Bearbeiten-Sheets: unten im Sheet), ihre Tasten funktionieren zuverlässig, und
+Tipps auf die Tastatur können keine Gesten dahinterliegender Ebenen auslösen
+(Notiz oder Sheet schließen sich nicht ungewollt).
+
+Sie kennt zwei Darstellungen (`AppKeyboardPresentation`):
+
+- **Eingebettet** (`safeAreaInset`, Standards in Einstellungen und Sheets):
+  Der Inhalt weicht der Tastatur aus.
+- **Schwebend** (Zeichenfläche): Die Tastatur liegt als abgerundete,
+  durchscheinende Fläche **über** der Notiz. Die Notiz darf dabei **weder
+  verkleinert noch verschoben** werden – sie bleibt beim Tippen genau dort,
+  wo sie ist. Nur wenn das bearbeitete Textfeld sonst hinter der Tastatur
+  läge, rückt die Notiz so weit hoch, dass das Feld sichtbar wird (ohne
+  Skalierung, ohne Zoom).
 
 In Swift Playgrounds testen, wenn die Systemtastatur ausbleibt. Alternativ im
 Simulator eine Hardware-Tastatur verbinden, damit keine vollständige
@@ -60,19 +70,30 @@ Systemtastatur angezeigt wird. Unter *Einstellungen → Tastatur & Eingabe*
    Speichern/Abbrechen bleiben durch Scrollen erreichbar; der Cursor wird über
    der Tastatur sichtbar gehalten.
 4. Im Notiz-Overlay das Text-Werkzeug aktivieren, ein Textfeld anlegen und
-   schreiben. Die Tastatur erscheint am unteren Bildschirmrand; die Notiz
-   passt sich an den verfügbaren Bereich oberhalb der Tastatur an.
+   schreiben. Die Tastatur erscheint **schwebend** über der Notiz.
+   **Wichtig:** Die Notiz darf sich dabei weder verkleinern noch nach oben
+   rutschen – sie bleibt exakt an ihrer Stelle (nur das bearbeitete Textfeld
+   wird bei Bedarf ohne Zoom sichtbar gehalten, wenn es sonst hinter der
+   Tastatur läge).
 5. Mit offener Tastatur drehen und die Fenstergröße in **Split View / Stage
    Manager** ändern. Die Tastaturhöhe skaliert mit der Ansicht (höchstens
    ~42 % der Höhe, mindestens 240 pt) und bleibt am unteren Rand.
 6. Bei geöffneter Tastatur Light/Dark Mode wechseln. Tasten bleiben lesbar.
 7. **Wichtig:** Mit offener Tastatur mehrfach auf Tasten tippen – die Notiz
    bzw. das Einstellungen-Sheet darf sich dadurch **nicht** schließen.
-   *Ausblenden* und *Fertig* auf der Tastatur sowie Schließen der
-   Einstellungen und der Notiz testen: Die Tastatur verschwindet und
-   blockiert keine Tipps. Erneutes Fokussieren eines Felds blendet sie wieder
-   ein. Notizen mit dem Pencil zeichnen/verschieben; diese Gesten bleiben
-   ungestört.
+   Die Chevron-Taste unten rechts in der Kurzbefehl-Leiste („Tastatur
+   ausblenden“) sowie Schließen der Einstellungen und der Notiz testen: Die
+   Tastatur verschwindet und blockiert keine Tipps. Erneutes Fokussieren eines
+   Felds blendet sie wieder ein. Notizen mit dem Pencil zeichnen/verschieben;
+   diese Gesten bleiben ungestört.
+7a. **Tastatur im Apple-Stil prüfen:** Ebenen `123`/`#+=`/`ABC` und die
+   Emoji-Taste; Umschalten (gefüllter Pfeil) und Doppeltipp auf die
+   Umschalttaste (Feststelltaste `capslock.fill`); langes Drücken auf `a`,
+   `o`, `s`, `.`, `0` öffnet das Akzent-Popup, seitliches Ziehen wählt aus;
+   Leertaste zweimal tippen ergibt „. “ (im Passwortfeld nicht); die
+   Eingabetaste zeigt die Feld-Aktion („Fertig“, „Weiter“, „Suchen“, …) oder
+   ⏎ und fügt in mehrzeiligen Feldern einen Zeilenumbruch ein; die Löschtaste
+   wirkt sofort und wiederholt sich beim Halten.
 8. **Nur Systemtastatur** wählen: Keine App-Tastatur und kein leerer unterer
    Platzhalter. In **Automatisch** mit einer tatsächlich sichtbaren
    Systemtastatur prüfen, dass die App-Tastatur zurücktritt.
@@ -84,3 +105,24 @@ Systemtastatur angezeigt wird. Unter *Einstellungen → Tastatur & Eingabe*
     Textfeld antippen: Die Tastatur erscheint unten im Einstellungen-Sheet.
     *Ausblenden*, Wechsel zu **Nur Systemtastatur** oder Schließen der
     Einstellungen entfernt sie samt Inhaltsabstand.
+
+## Ansichts-Modus „Nur Notizen“ (Raster)
+
+Die Übersicht ist ein Raster: Tage und die grüne „Jetzt“-Linie laufen über die
+volle Breite, die Notizen stehen als gleich breite Karten darunter.
+
+1. Demostundenplan laden und über die Modus-Taste in der Kopfzeile
+   **Nur Notizen** wählen. Mehrere Stunden mit Notizen befüllen
+   (auch über mehrere Tage).
+2. iPad **quer** halten (bzw. Fenster breit ziehen): Die Notizen stehen in
+   **zwei Spalten**, die Karten einer Zeile sind gleich hoch und die Spalten
+   gleich breit. Die Reihenfolge bleibt chronologisch (zeilenweise von links
+   nach rechts), Tagesüberschriften und die grüne Linie trennen die
+   Abschnitte über die volle Breite.
+3. iPad **hoch** halten, in **Split View** oder ein schmales Fenster: Die
+   Übersicht wird einspaltig, jede Karte nutzt die volle Breite.
+4. Bei Rotation (quer ↔ hoch) muss das Raster sofort mitwechseln, ohne dass
+   Einträge verschwinden oder doppelt erscheinen.
+5. Eine Karte antippen: Die Notiz öffnet sich zum Bearbeiten wie im
+   Stundenplan. Zurück – die Karte steht weiter an derselben Stelle.
+6. Dark Mode prüfen: Karten, Überschriften und die grüne Linie bleiben lesbar.

@@ -174,11 +174,22 @@ public struct LessonDrawingOverlayView: View {
                 guard didInitialize else { return }
                 normalizeTransform(in: viewport)
             }
-            .onChange(of: geometry.safeAreaInsets) { _, _ in
-                // Die globale Tastatur ändert die Safe Area, nicht zwingend
-                // die äußere Größe. Die Notiz muss trotzdem oberhalb bleiben.
-                guard didInitialize else { return }
-                normalizeTransform(in: viewport)
+            // Die Tastatur ist auf der Zeichenfläche **schwebend** (siehe
+            // `appKeyboardHost(presentation: .floating)`): Sie verändert weder
+            // Safe Area noch Größe der Zeichenfläche. Deshalb gibt es hier
+            // bewusst keine Reaktion auf `safeAreaInsets` mehr – die Notiz
+            // behält beim Tippen Größe und Position.
+            .onReceive(TextInputHub.shared.$isAppKeyboardVisible) { isVisible in
+                // Einzige Ausnahme: Steht das gerade bearbeitete Textfeld
+                // hinter der Tastatur, wird die Notiz so weit nach oben
+                // geschoben, dass das Feld sichtbar ist – ohne Skalierung.
+                guard isVisible, didInitialize else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    revealEditingTextBox(in: viewport)
+                }
+            }
+            .onChange(of: editingTextBoxID) { _, _ in
+                revealEditingTextBox(in: viewport)
             }
             .onChange(of: isTextToolActive) { _, nowActive in
                 if !nowActive {
@@ -234,11 +245,16 @@ public struct LessonDrawingOverlayView: View {
                 Text(exportAlertMessage ?? "")
             }
         }
+        // Kein Platz für die Systemtastatur reservieren: Auch sie darf die
+        // Zeichenfläche nicht verkleinern oder verschieben.
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         // App-eigene Tastatur für das Text-Werkzeug: Sie erscheint unten auf
         // der Zeichenfläche, wenn iPadOS keine Systemtastatur einblendet.
-        // Ohne Tipp-Überwachung, damit die PencilKit-Eingabe völlig unberührt
-        // bleibt – das Textfeld meldet sich hier ausdrücklich selbst an.
-        .appKeyboardHost(monitorsTaps: false)
+        // **Schwebend**, damit die Notiz beim Tippen genau dort bleibt, wo sie
+        // ist, und ihre Größe nicht ändert. Ohne Tipp-Überwachung, damit die
+        // PencilKit-Eingabe völlig unberührt bleibt – das Textfeld meldet sich
+        // hier ausdrücklich selbst an.
+        .appKeyboardHost(monitorsTaps: false, presentation: .floating)
     }
 
     // MARK: - Editor panel
@@ -589,6 +605,47 @@ public struct LessonDrawingOverlayView: View {
             width: offset.width + delta.width,
             height: offset.height + delta.height
         )
+        offset = clampedOffset(candidate, scale: scale, height: canvasHeight, in: viewport)
+    }
+
+    // MARK: - Textfeld über der schwebenden Tastatur sichtbar halten
+
+    /// Höhe, die die schwebende App-Tastatur am unteren Rand verdeckt.
+    /// Sie wird nur benutzt, um ein Textfeld sichtbar zu halten – die Notiz
+    /// selbst wird dadurch nicht skaliert.
+    private func keyboardCoveredHeight(in viewport: DrawingViewport) -> CGFloat {
+        guard TextInputHub.shared.isAppKeyboardVisible,
+              AppKeyboardPreferences.shared.mode != .off else { return 0 }
+        return AppKeyboardLayout.floatingHeight(
+            windowHeight: viewport.size.height,
+            bottomInset: viewport.safeAreaInsets.bottom
+        ) + AppKeyboardLayout.floatingBottomMargin
+    }
+
+    /// Schiebt die Notiz so weit nach oben, dass das bearbeitete Textfeld
+    /// oberhalb der schwebenden Tastatur liegt – ohne Zoom, ohne Skalierung.
+    ///
+    /// Die Notiz behält damit ihre Größe und ihre Position; nur wenn das
+    /// beschriebene Feld sonst hinter der Tastatur läge, rückt sie gerade so
+    /// weit hoch, bis das Feld sichtbar ist.
+    private func revealEditingTextBox(in viewport: DrawingViewport) {
+        guard showsEditor else { return }
+        guard let id = editingTextBoxID ?? selectedTextBoxID,
+              let box = textBoxes.first(where: { $0.id == id }) else { return }
+
+        let covered = keyboardCoveredHeight(in: viewport)
+        guard covered > 0 else { return }
+
+        let keyboardTop = viewport.size.height - covered
+        let panelTop = renderCenter(in: viewport).y - (panelHeight * scale / 2)
+        let canvasTop = panelTop + headerHeight * scale
+        let boxBottom = canvasTop + (CGFloat(box.y) + estimatedTextBoxHeight(box)) * scale
+
+        let limit = keyboardTop - 16
+        guard boxBottom > limit else { return }
+
+        var candidate = offset
+        candidate.height = offset.height - (boxBottom - limit)
         offset = clampedOffset(candidate, scale: scale, height: canvasHeight, in: viewport)
     }
 

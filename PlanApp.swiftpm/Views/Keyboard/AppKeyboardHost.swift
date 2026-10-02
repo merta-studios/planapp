@@ -1,12 +1,25 @@
 import SwiftUI
 import UIKit
 
+/// Wie die app-eigene Tastatur an eine Ansicht angebunden wird.
+enum AppKeyboardPresentation: Equatable {
+    /// Unten in die Ansicht **eingebettet** (`safeAreaInset`). Der Inhalt
+    /// weicht der Tastatur aus. Passt für Einstellungen, Bearbeiten-Sheets und
+    /// jede Liste, in der das aktive Feld sichtbar bleiben soll.
+    case embedded
+    /// **Schwebend** über dem Inhalt. Die Tastatur liegt als eigene Ebene über
+    /// der Ansicht und verändert deren Layout nicht: Kein Safe-Area-Sprung,
+    /// kein Verkleinern, kein Verschieben. Wird auf der Zeichenfläche benutzt,
+    /// damit die Notiz genau dort bleibt, wo sie ist, wenn getippt wird.
+    case floating
+}
+
 /// Hängt die app-eigene Tastatur unten an eine Ansicht an.
 ///
-/// Die Tastatur ist Teil der **normalen Ansichts-Hierarchie** (`safeAreaInset`)
-/// und erscheint dadurch zuverlässig am unteren Rand der jeweiligen Ansicht:
-/// auf der Zeichenfläche am unteren Bildschirmrand, in Einstellungen und
-/// verschachtelten Bearbeiten-Sheets unten im Sheet.
+/// Die Tastatur ist Teil der **normalen Ansichts-Hierarchie** und erscheint
+/// dadurch zuverlässig am unteren Rand der jeweiligen Ansicht: eingebettet in
+/// Einstellungen und verschachtelten Bearbeiten-Sheets, schwebend über der
+/// Zeichenfläche.
 ///
 /// Warum kein eigenes Overlay-Fenster: Eine zusätzliche `UIWindow`-Ebene über
 /// der App liegt auf echten Geräten unter bzw. über präsentierten Sheets und
@@ -28,6 +41,8 @@ struct AppKeyboardHostModifier: ViewModifier {
     /// Zeichenfläche bleibt das aus, damit die PencilKit-Eingabe völlig
     /// unberührt bleibt.
     let monitorsTaps: Bool
+    /// Ob die Tastatur eingebettet oder schwebend dargestellt wird.
+    let presentation: AppKeyboardPresentation
 
     private var showsKeyboard: Bool {
         hub.isAppKeyboardVisible && hub.activeKeyboardHostID == hostID
@@ -40,13 +55,25 @@ struct AppKeyboardHostModifier: ViewModifier {
         )
     }
 
+    private var floatingHeight: CGFloat {
+        AppKeyboardLayout.floatingHeight(
+            windowHeight: metrics.windowHeight,
+            bottomInset: metrics.safeInsets.bottom
+        )
+    }
+
     func body(content: Content) -> some View {
         content
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if showsKeyboard {
+                if showsKeyboard, presentation == .embedded {
                     AppKeyboardView(safeAreaInsets: metrics.safeInsets)
                         .frame(height: keyboardHeight)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if showsKeyboard, presentation == .floating {
+                    floatingKeyboard
                 }
             }
             .background(
@@ -68,15 +95,54 @@ struct AppKeyboardHostModifier: ViewModifier {
             .onAppear { hub.keyboardHostDidAppear(hostID) }
             .onDisappear { hub.keyboardHostDidDisappear(hostID) }
     }
+
+    /// Die schwebende Tastatur: eine abgerundete, leicht durchscheinende
+    /// Fläche über dem Inhalt – wie die freigestellte Tastatur von iPadOS.
+    /// Sie liegt **über** der Notiz, ohne deren Größe oder Position zu ändern;
+    /// die Tasten bleiben dabei oberhalb des Home-Indikators.
+    private var floatingKeyboard: some View {
+        AppKeyboardView(safeAreaInsets: metrics.safeInsets, isFloating: true)
+            .frame(height: floatingHeight)
+            .background(.ultraThinMaterial)
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: AppKeyboardLayout.floatingCornerRadius,
+                    style: .continuous
+                )
+            )
+            .overlay(
+                RoundedRectangle(
+                    cornerRadius: AppKeyboardLayout.floatingCornerRadius,
+                    style: .continuous
+                )
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+            )
+            .shadow(color: Color.black.opacity(0.30), radius: 20, x: 0, y: 8)
+            .padding(.horizontal, AppKeyboardLayout.floatingHorizontalMargin)
+            .padding(.bottom, AppKeyboardLayout.floatingBottomMargin)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
 }
 
 extension View {
-    /// Blendet bei Bedarf die app-eigene Bildschirmtastatur unten an dieser
-    /// Ansicht ein. Wird auf jeder Ansicht verwendet, die Textfelder enthält
+    /// Blendet bei Bedarf die app-eigene Bildschirmtastatur an dieser Ansicht
+    /// ein. Wird auf jeder Ansicht verwendet, die Textfelder enthält
     /// (Einstellungen, Bearbeiten-Sheets, Zeichenfläche); sichtbar ist immer
     /// nur die Tastatur des obersten Hosts.
-    func appKeyboardHost(monitorsTaps: Bool = true) -> some View {
-        modifier(AppKeyboardHostModifier(monitorsTaps: monitorsTaps))
+    ///
+    /// - Parameter presentation: `.embedded` (Standard) schiebt den Inhalt nach
+    ///   oben, `.floating` legt die Tastatur über den Inhalt, ohne ihn zu
+    ///   verändern (Zeichenfläche).
+    func appKeyboardHost(
+        monitorsTaps: Bool = true,
+        presentation: AppKeyboardPresentation = .embedded
+    ) -> some View {
+        modifier(
+            AppKeyboardHostModifier(
+                monitorsTaps: monitorsTaps,
+                presentation: presentation
+            )
+        )
     }
 }
 

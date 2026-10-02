@@ -1,14 +1,19 @@
 import SwiftUI
 import UIKit
 
-/// Ansichts-Modus "Nur Notizen": chronologische, scrollbare Übersicht aller
-/// Stunden, die eine Notiz enthalten (Hausaufgaben, Tests, ...). Der Titel
-/// jeder Zeile sieht exakt so aus wie die Kopfzeile über der Zeichenfläche;
+/// Ansichts-Modus "Nur Notizen": chronologische, scrollbare **Raster**-Übersicht
+/// aller Stunden, die eine Notiz enthalten (Hausaufgaben, Tests, ...). Der Titel
+/// jeder Karte sieht exakt so aus wie die Kopfzeile über der Zeichenfläche;
 /// darunter steht die Notiz selbst. Antippen öffnet die Notiz zum Bearbeiten
 /// – genau wie im Stundenplan. Tage/Stunden ohne Notiz erscheinen hier nicht
-/// und können auch nicht neu befüllt werden: Die Liste ist eine reine
-/// Übersicht. Eine grüne Linie markiert den aktuellen Moment (davor liegen
-/// die abgelaufenen Einträge).
+/// und können auch nicht neu befüllt werden: Die Übersicht zeigt nur
+/// vorhandene Notizen. Eine grüne Linie markiert den aktuellen Moment (davor
+/// liegen die abgelaufenen Einträge).
+///
+/// Das Raster ist auf dem iPad im **Querformat zweispaltig** – so ist die
+/// ganze Übersicht auf einen Blick erfassbar. Hochformat, Split View und
+/// schmale Fenster bleiben einspaltig; Tagesüberschriften und die grüne Linie
+/// laufen immer über die volle Breite.
 public struct NotesOverviewListView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
 
@@ -70,17 +75,19 @@ public struct NotesOverviewListView: View {
         GeometryReader { geometry in
             TimelineView(.periodic(from: .now, by: 60)) { timeline in
                 let items = buildListItems(relativeTo: timeline.date)
-                let usesTwoColumnGrid = shouldUseTwoColumnGrid(in: geometry.size)
+                let columns = columnCount(for: geometry.size)
 
                 ScrollView(.vertical, showsIndicators: true) {
                     if items.isEmpty {
                         emptyState
                             .frame(maxWidth: .infinity)
                             .padding(.top, 60)
-                    } else if usesTwoColumnGrid {
-                        twoColumnOverview(items: items, relativeTo: timeline.date)
                     } else {
-                        listOverview(items: items, relativeTo: timeline.date)
+                        gridOverview(
+                            items: items,
+                            columnCount: columns,
+                            relativeTo: timeline.date
+                        )
                     }
                 }
             }
@@ -89,62 +96,81 @@ public struct NotesOverviewListView: View {
         .background(Color(UIColor.systemBackground))
     }
 
-    private func shouldUseTwoColumnGrid(in size: CGSize) -> Bool {
-        UIDevice.current.userInterfaceIdiom == .pad && size.width > size.height && size.width >= 760
+    // MARK: - Raster
+
+    private let horizontalPadding: CGFloat = 18
+    private let columnSpacing: CGFloat = 14
+    private let rowSpacing: CGFloat = 14
+    /// Kleinste Breite, die eine Notiz-Karte im Raster noch angenehm lesbar
+    /// macht. Daraus ergibt sich, ob eine oder zwei Spalten sinnvoll sind.
+    private let minimumCardWidth: CGFloat = 460
+
+    /// Spalten des Rasters: **zwei**, sobald das iPad seitlich liegt und beide
+    /// Spalten breit genug sind. Hochformat, Split View und schmale Fenster
+    /// bleiben einspaltig – dann ist das Raster eine Liste.
+    private func columnCount(for size: CGSize) -> Int {
+        guard size.width > size.height else { return 1 }
+        let usableWidth = size.width - horizontalPadding * 2 - columnSpacing
+        return usableWidth / 2 >= minimumCardWidth ? 2 : 1
     }
 
-    private func listOverview(items: [ListItem], relativeTo date: Date) -> some View {
-        LazyVStack(alignment: .leading, spacing: 12) {
-            ForEach(items) { item in
-                switch item {
-                case .nowLine:
-                    nowLine(relativeTo: date)
-                        .padding(.vertical, 4)
-                case .dayHeader(let date):
-                    dayHeader(for: date)
-                        .padding(.top, 8)
-                case .row(let entry):
-                    noteRow(entry: entry, compact: true)
-                }
-            }
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 10)
-    }
+    /// Die komplette Übersicht als Raster: Tagesüberschriften und die grüne
+    /// „Jetzt“-Linie laufen über die volle Breite, die Notizen selbst stehen
+    /// als gleich breite Karten in ein oder zwei Spalten.
+    private func gridOverview(
+        items: [ListItem],
+        columnCount: Int,
+        relativeTo date: Date
+    ) -> some View {
+        let columns = Array(
+            repeating: GridItem(.flexible(), spacing: columnSpacing, alignment: .top),
+            count: max(1, columnCount)
+        )
 
-    private func twoColumnOverview(items: [ListItem], relativeTo date: Date) -> some View {
-        LazyVStack(alignment: .leading, spacing: 12) {
+        return LazyVStack(alignment: .leading, spacing: rowSpacing) {
             ForEach(buildOverviewRows(from: items)) { row in
                 switch row {
                 case .full(let item):
-                    switch item {
-                    case .nowLine:
-                        nowLine(relativeTo: date)
-                            .padding(.vertical, 4)
-                    case .dayHeader(let headerDate):
-                        dayHeader(for: headerDate)
-                            .padding(.top, 8)
-                    case .row(let entry):
-                        noteRow(entry: entry, compact: true)
-                    }
+                    fullWidthItem(item, relativeTo: date)
                 case .cards(let entries):
-                    HStack(alignment: .top, spacing: 12) {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: rowSpacing) {
                         ForEach(entries) { entry in
-                            noteRow(entry: entry, compact: true)
-                                .frame(maxWidth: .infinity, alignment: .topLeading)
-                        }
-                        if entries.count == 1 {
-                            Spacer(minLength: 0)
-                                .frame(maxWidth: .infinity)
+                            noteRow(entry: entry, compact: columnCount > 1)
+                                .frame(
+                                    maxWidth: .infinity,
+                                    maxHeight: .infinity,
+                                    alignment: .topLeading
+                                )
                         }
                     }
                 }
             }
         }
-        .padding(.horizontal, 18)
+        .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 10)
     }
 
+    /// Ein Element über die volle Rasterbreite (Tagesüberschrift oder
+    /// „Jetzt“-Linie).
+    @ViewBuilder
+    private func fullWidthItem(_ item: ListItem, relativeTo date: Date) -> some View {
+        switch item {
+        case .nowLine:
+            nowLine(relativeTo: date)
+                .padding(.vertical, 2)
+        case .dayHeader(let headerDate):
+            dayHeader(for: headerDate)
+                .padding(.top, 6)
+        case .row(let entry):
+            // Kann nur auftreten, wenn Reihen nicht gruppiert wurden.
+            noteRow(entry: entry, compact: false)
+        }
+    }
+
+    /// Gruppiert die flache Liste in Rasterabschnitte: Alle Notizen zwischen
+    /// zwei Tagesüberschriften bilden ein Raster, das die Spalten des
+    /// jeweiligen Geräts füllt. Die Reihenfolge bleibt dabei chronologisch
+    /// (zeilenweise von links nach rechts).
     private func buildOverviewRows(from items: [ListItem]) -> [OverviewLayoutRow] {
         var rows: [OverviewLayoutRow] = []
         var pendingCards: [NotedLesson] = []
@@ -159,9 +185,6 @@ public struct NotesOverviewListView: View {
             switch item {
             case .row(let entry):
                 pendingCards.append(entry)
-                if pendingCards.count == 2 {
-                    flushPendingCards()
-                }
             case .dayHeader, .nowLine:
                 flushPendingCards()
                 rows.append(.full(item))
@@ -500,8 +523,10 @@ private struct NoteOverviewCard: View {
                 .resizable()
                 .scaledToFit()
                 .frame(
-                    maxWidth: compact ? 360 : 460,
-                    maxHeight: compact ? 150 : 190,
+                    // Im Raster (zwei Spalten im Querformat) darf die Vorschau
+                    // die Kartenbreite ausnutzen.
+                    maxWidth: compact ? 560 : 460,
+                    maxHeight: 200,
                     alignment: .leading
                 )
                 .padding(compact ? 4 : 6)
