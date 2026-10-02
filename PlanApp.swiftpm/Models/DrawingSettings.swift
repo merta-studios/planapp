@@ -12,6 +12,14 @@ public struct DrawingSettings: Codable, Equatable {
     public var defaultBackgroundStyle: NoteBackgroundStyle // Standard-Hintergrund neuer Notizen
     public var penColorSlots: [String]       // Farb-Slots für den Stift in der Werkzeugleiste
     public var markerColorSlots: [String]    // Farb-Slots für den Textmarker in der Werkzeugleiste
+    /// Nur mit dem Apple Pencil zeichnen. Standardmäßig **aus**: Dann zeichnet
+    /// auch der Finger (normaler Input). Sobald die App irgendwo einen echten
+    /// Apple-Pencil-Input bemerkt, wird die Einstellung automatisch aktiviert.
+    public var applePencilOnly: Bool
+    /// Radierer nach dem Radieren automatisch abwählen: Beim Loslassen wechselt
+    /// das Werkzeug zurück zum zuletzt benutzten Werkzeug (Fallback: Stift).
+    /// Standardmäßig **an**.
+    public var autoDeselectEraser: Bool
 
     public static let defaultPenColorSlots: [String] = [
         "#1E1E1E", // Schwarz
@@ -36,7 +44,9 @@ public struct DrawingSettings: Codable, Equatable {
         autoDeletePastNotes: Bool = false,
         defaultBackgroundStyle: NoteBackgroundStyle = .blank,
         penColorSlots: [String] = DrawingSettings.defaultPenColorSlots,
-        markerColorSlots: [String] = DrawingSettings.defaultMarkerColorSlots
+        markerColorSlots: [String] = DrawingSettings.defaultMarkerColorSlots,
+        applePencilOnly: Bool = false,
+        autoDeselectEraser: Bool = true
     ) {
         self.penWidth = penWidth
         self.markerWidth = markerWidth
@@ -46,12 +56,15 @@ public struct DrawingSettings: Codable, Equatable {
         self.defaultBackgroundStyle = defaultBackgroundStyle
         self.penColorSlots = penColorSlots.isEmpty ? DrawingSettings.defaultPenColorSlots : penColorSlots
         self.markerColorSlots = markerColorSlots.isEmpty ? DrawingSettings.defaultMarkerColorSlots : markerColorSlots
+        self.applePencilOnly = applePencilOnly
+        self.autoDeselectEraser = autoDeselectEraser
     }
 
     enum CodingKeys: String, CodingKey {
         case penWidth, markerWidth, eraserWidth, defaultCanvasHeight, autoDeletePastNotes
         case defaultBackgroundStyle
         case penColorSlots, markerColorSlots
+        case applePencilOnly, autoDeselectEraser
         case defaultPenColorHex, defaultMarkerColorHex, defaultTool
     }
 
@@ -83,6 +96,12 @@ public struct DrawingSettings: Codable, Equatable {
         } else {
             self.markerColorSlots = DrawingSettings.defaultMarkerColorSlots
         }
+
+        // Beide Schalter sind neuer als die ersten gespeicherten Einstellungen.
+        // Ohne die Defaults würden alte Speicherstände die Zeichenfläche
+        // (fälschlich) auf „nur Apple Pencil“ stellen.
+        self.applePencilOnly = try container.decodeIfPresent(Bool.self, forKey: .applePencilOnly) ?? false
+        self.autoDeselectEraser = try container.decodeIfPresent(Bool.self, forKey: .autoDeselectEraser) ?? true
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -95,6 +114,8 @@ public struct DrawingSettings: Codable, Equatable {
         try container.encode(defaultBackgroundStyle, forKey: .defaultBackgroundStyle)
         try container.encode(penColorSlots, forKey: .penColorSlots)
         try container.encode(markerColorSlots, forKey: .markerColorSlots)
+        try container.encode(applePencilOnly, forKey: .applePencilOnly)
+        try container.encode(autoDeselectEraser, forKey: .autoDeselectEraser)
     }
 
     public static var `default`: DrawingSettings {

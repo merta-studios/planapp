@@ -44,6 +44,7 @@ public final class AppKeyboardPreferences: ObservableObject {
     public static let shared = AppKeyboardPreferences()
 
     private static let storageKey = "planapp.appKeyboard.mode"
+    private static let feedbackStorageKey = "planapp.appKeyboard.feedback"
 
     @Published public var mode: AppKeyboardMode {
         didSet {
@@ -52,9 +53,24 @@ public final class AppKeyboardPreferences: ObservableObject {
         }
     }
 
+    /// Hörbares und spürbares Feedback bei jedem Tastendruck (Standard: an).
+    /// Auf dem iPad ist der Klang das eigentliche Feedback, weil es dort
+    /// keinen Taptic Engine gibt.
+    @Published public var feedbackEnabled: Bool {
+        didSet {
+            guard oldValue != feedbackEnabled else { return }
+            UserDefaults.standard.set(feedbackEnabled, forKey: Self.feedbackStorageKey)
+        }
+    }
+
     private init() {
         let stored = UserDefaults.standard.string(forKey: Self.storageKey)
         self.mode = stored.flatMap(AppKeyboardMode.init(rawValue:)) ?? .automatic
+
+        // Standard ist „an“: Nur wenn der Wert ausdrücklich auf `false` steht,
+        // bleibt das Feedback stumm.
+        let storedFeedback = UserDefaults.standard.object(forKey: Self.feedbackStorageKey) as? Bool
+        self.feedbackEnabled = storedFeedback ?? true
     }
 }
 

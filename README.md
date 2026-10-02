@@ -26,6 +26,8 @@ Das Repository enthält das fertige App-Package **`PlanApp.swiftpm`**, welches a
 - **Hervorhebung des aktuellen Tages**: Der heutige Tag wird automatisch mit einem blauen „HEUTE“-Badge, kräftiger Schrift und Akzentlinien hervorgehoben.
 - **Dynamische Zeilenhöhe**: Passt sich automatisch der Bildschirmgröße und der Anzahl der Schulstunden an.
 - **Wochen-Navigation**: Startet standardmäßig in der aktuellen Kalenderwoche. Durch **Wischen nach links oder rechts** wechselt man flüssig zwischen den Wochen.
+- **Lade-Anzeige beim Wischen**: Wird eine Woche geöffnet, für die noch keine Daten vom Server geladen wurden, dreht sich in der Bildschirmmitte ein Lade-Symbol – es bleibt sichtbar, bis die API-Antwort (oder ein Fehler) da ist.
+- **„Kein Unterricht“**: Tage ganz ohne Stunde werden in der Spalte mit einem um 90° gedrehten, grauen Hinweis markiert – im Standard- und im Notizen-hervorgehoben-Modus.
 
 ### 🔄 2. WebUntis API JSON-RPC Integration
 - Vollständige Integration der offiziellen **WebUntis JSON-RPC 2.0 API** (`/WebUntis/jsonrpc.do`).
@@ -33,6 +35,7 @@ Das Repository enthält das fertige App-Package **`PlanApp.swiftpm`**, welches a
   - **Stundenzeiten (Timegrid Units)** zur automatischen Zeilen-Konfiguration.
   - **Stundenplandaten** für jede Kalenderwoche.
 - **Offline- & Demo-Modus**: Enthält einen integrierten Generator für realistische Beispieldaten (Doppelstunden, Entfall, Vertretung), um alle Features ohne aktiven Schul-Account sofort testen zu können.
+- **Einrichtungs-Guide statt leerem Stundenplan**: Fehlen die API-Daten (oder sind sie unvollständig/ungültig), steht in der Bildschirmmitte ein Guide-Fenster: Der Plan lässt sich automatisch von Untis laden – dafür ist nur **ein Schritt in den Einstellungen** nötig. Der Knopf **„Zu den Einstellungen“** springt direkt auf die Seite *WebUntis & Sync* mit den API-Feldern.
 
 ### 🎨 3. Fach-Ersetzungen & Farb-Anpassungen
 - **Automatische Farberkennung**: Sobald der Fachname von der API mit einer eingestellten Regel übereinstimmt, färbt sich der Stundenblock in der konfigurierten Wunschfarbe.
@@ -59,25 +62,33 @@ Das Repository enthält das fertige App-Package **`PlanApp.swiftpm`**, welches a
 - **Linierter Zettel**: Authentisches Notizpapier mit roter Randlinie und horizontalen Schreiblinien.
 - **Zeilen erweitern**: Über den Button „＋ Zeile hinzufügen (Erweitern)“ können flexibel bis zu **maximal 10 Zeilen** hinzugefügt werden.
 - **Gesten auf dem Zettel**:
-  - **1 Finger**: Verschiebt den Zettel frei über den Bildschirm.
+  - **Zettelkopf ziehen**: Verschiebt den Zettel frei über den Bildschirm.
   - **2 Finger**: Stufenloses Zoomen und Verschieben gleichzeitig.
   - **Apple Pencil**: Schreibt und zeichnet direkt.
-- **Restriktive System-Werkzeuge**:
-  - **Buntstift / Stift**: Schwarz (Standard), Rot, Blau, Grün.
-  - **Textmarker**: Gelb, Orange, Grün, Blau, Lila.
-  - **Radierer**: Einfacher Vektor-Radierer.
-  - **Rückgängig & Vorwärts (Undo/Redo)**.
-- **Apple Pencil Pro Squeeze-Unterstützung**: Durch leichtes Zusammendrücken des Apple Pencil Pro wird der letzte Strich sofort rückgängig gemacht (`UIPencilInteraction`).
+  - **1 Finger**: Zeichnet ebenfalls – solange die Einstellung „Apple Pencil“ aus ist (Standard). Ist sie an, bleibt der Finger außen vor.
+- **Werkzeuge**:
+  - **Stift / Textmarker / Radierer / Lasso / Text** – mit frei wählbaren Farben aus den Farb-Slots und eigener Dicke je Werkzeug.
+  - **Rückgängig & Vorwärts (Undo/Redo)** über die Werkzeugleiste, die Text-Werkzeuge und den **Doppeltipp** des Apple Pencil.
+- **Squeeze-Werkzeugpalette im Viertelkreis**: Ein Zusammendrücken des Apple Pencil Pro öffnet an der **letzten Hover-Position** einen Viertelkreis **in Blickrichtung des Stifts**. Darin ist alles einstellbar: Werkzeug, Farbe und Dicke (Bogen-Regler am äußeren Rand) sowie Rückgängig, Wiederholen und Schließen. Sobald wieder geschrieben wird, verschwindet die Palette von selbst.
+- **Radierer mit automatischer Rückkehr**: Nach dem Radieren und Loslassen wechselt das Werkzeug automatisch zum zuletzt benutzten Werkzeug zurück (Fallback: Stift). Der Schalter *„Radierer automatisch abwählen“* (Standard: an) sitzt unter *Zeichnen & Apple Pencil*.
+- **Apple-Pencil-Einstellung**: Standardmäßig **aus**, das heißt Finger und Pencil dürfen zeichnen. Sobald die App irgendwo einen echten Apple Pencil bemerkt (Hover, Strich oder Squeeze), schaltet sie „Nur Apple Pencil“ automatisch ein und merkt sich das.
 - **Apple Pencil Hover**: Alle Buttons und Karten unterstützen iPadOS Pointer- & Hover-Effekte (`.hoverEffect(.lift)`).
 - **Automatischer Rand-Zuschnitt**: Beim Schließen wird die Zeichnung exakt an den Rändern der geschriebenen Striche zugeschnitten und als gestochen scharfe Vorschau direkt im Stundenplan-Block angezeigt!
 - **Tastatur ändert die Notiz nicht**: Das Text-Werkzeug öffnet die app-eigene Tastatur **schwebend über** dem Zettel. Der Zettel behält beim Tippen seine Größe und seine Position – nichts rutscht nach oben und nichts wird klein gerechnet. Nur wenn das bearbeitete Textfeld sonst hinter der Tastatur läge, rückt der Zettel gerade so weit hoch, dass das Feld sichtbar bleibt (ohne Zoom).
 
 ### 🗒️ 6. Ansichts-Modus „Nur Notizen“ als Raster
 
-- **Raster statt Liste**: Die Notiz-Übersicht ist ein echtes Raster. Liegt das iPad **seitlich** (Querformat und genug Breite), stehen die Notizen **zweispaltig** nebeneinander; im Hochformat, in Split View und in schmalen Fenstern bleibt es einspaltig, damit jede Karte lesbar bleibt.
+- **Raster statt Liste**: Die Notiz-Übersicht ist ein echtes Raster. Auf dem iPad stehen die Notizen **zweispaltig** nebeneinander – **quer und hoch**, sobald beide Spalten breit genug sind. Nur in sehr schmalen Fenstern (Split View) bleibt es einspaltig, damit jede Karte lesbar bleibt.
+- **„Im Standard-Modus anzeigen“**: Karte gedrückt halten und die Option wählen – die App wechselt in den Standard-Modus **und** wischt automatisch zu der Woche, in der die Stunde liegt.
 - **Gleiche Kartenbreiten**: Alle Karten eines Abschnitts haben dieselbe Breite, und die Karten einer Zeile dieselbe Höhe – die Übersicht wirkt wie eine Tafel, nicht wie eine lose Liste.
 - **Volle Breite für Struktur**: Tagesüberschriften und die grüne „Jetzt“-Linie laufen über die volle Breite und trennen die Rasterabschnitte.
 - **Chronologie bleibt**: Gelesen wird zeilenweise von links nach rechts – vergangene Einträge oben, kommende unterhalb der grünen Linie.
+
+### 🌙 7. Darstellung & Dark Mode (Schrift bleibt schwarz)
+
+- **Papier bleibt Papier**: Alle Notiz- und Zeichenflächen sind – wie ein echter Notizblock – **immer weiß**, und die Schrift darauf ist und bleibt **schwarz**. Das gilt für Blockschrift, Textfelder, Vorschauen und gerenderte Notizbilder.
+- **Einstellbare Darstellung**: Unter *Einstellungen → Darstellung* lässt sich **Hell** (Standard), **Dunkel** oder **Automatisch** (folgt dem iPad) wählen. Standard ist **Hell**, damit ein dunkles System-Design nirgends weiße Schrift auf weißem Papier erzeugen kann.
+- **Umgebung folgt der Wahl**: Menüs, Werkzeugleisten und Glasflächen passen sich an das gewählte Erscheinungsbild an – das Papier nie.
 
 ---
 
@@ -96,6 +107,8 @@ planapp/
 │   │   ├── SubjectCustomization.swift        # Fächer-Ersetzungen & Farbkonfiguration
 │   │   ├── BlockDisplaySettings.swift        # Sichtbare Block-Elemente
 │   │   ├── LessonNote.swift                  # Handschriftliche Notizen & Bilddaten
+│   │   ├── DrawingSettings.swift             # Pencil-Einstellungen (u. a. Nur-Pencil, Radierer-Rückkehr)
+│   │   ├── AppAppearance.swift               # Erscheinungsbild (hell/dunkel/automatisch)
 │   │   └── UntisCredentials.swift            # WebUntis JSON-RPC Zugangsdaten
 │   ├── Services/
 │   │   ├── WebUntisService.swift             # WebUntis JSON-RPC 2.0 API Client
@@ -110,11 +123,14 @@ planapp/
 │   │   │   ├── PeriodColumnView.swift        # 1. Spalte: Stundennummern & Uhrzeiten
 │   │   │   ├── DayColumnView.swift           # Wochentagsspalten mit Zebra-Muster
 │   │   │   ├── LessonBlockView.swift         # Stunden-Karten mit Status & Notiz-Vorschau
+│   │   │   ├── NotesOverviewListView.swift   # „Nur Notizen“-Raster mit Kontext-Optionen
+│   │   │   ├── UntisSetupGuideView.swift     # Guide-Fenster für fehlende API-Daten
 │   │   │   └── EmptyTimetableView.swift      # Willkommens-Ansicht bei leerem Plan
 │   │   ├── Drawing/
 │   │   │   ├── LessonDrawingOverlayView.swift# Fullscreen-Overlay mit Zettel & Gesten
 │   │   │   ├── LinedPaperBackground.swift    # Linierter Zettel mit rotem Rand
-│   │   │   ├── PencilKitCanvasRepresentable.swift # PencilKit Wrapper & Apple Pencil Pro Squeeze
+│   │   │   ├── PencilKitCanvasRepresentable.swift # PencilKit Wrapper, Pencil-Erkennung & Squeeze
+│   │   │   ├── PencilSqueezePaletteView.swift# Viertelkreis-Werkzeugpalette (Dicke, Tool, Farbe)
 │   │   │   └── DrawingToolbarView.swift      # Vorgegebene Stift-, Textmarker- & Radier-Tools
 │   │   ├── Keyboard/
 │   │   │   ├── TextInputHub.swift            # Eingabe-Hub, Tastatur-Erkennung & Diagnose
@@ -124,7 +140,9 @@ planapp/
 │   │   ├── Settings/
 │   │   │   ├── SettingsView.swift            # Einstellungen-Übersicht (Kategorien)
 │   │   │   ├── SettingsCategory.swift        # Kategorien & Detailseiten
-│   │   │   ├── KeyboardSettingsSection.swift # Tastatur-Modus & Live-Status
+│   │   │   ├── KeyboardSettingsSection.swift # Tastatur-Modus, Tipp-Feedback & Live-Status
+│   │   │   ├── AppearanceSettingsSection.swift # Hell/Dunkel/Automatisch
+│   │   │   ├── DrawingSettingsSection.swift  # Stiftdicken, Pencil-Einstellungen & Radierer
 │   │   │   ├── PencilGesturesSection.swift   # Bedienhinweise (Pencil & Gesten)
 │   │   │   ├── UntisConfigSection.swift      # WebUntis Zugangsdaten & Sync-Test
 │   │   │   ├── SubjectCustomizationSection.swift # Fächer anlegen & Farben wählen
@@ -139,6 +157,9 @@ planapp/
 │       ├── AppResources.swift                # Bundle-/Ressourcen-Suche (Playgrounds-kompatibel)
 │       ├── ColorExtensions.swift             # Hex-Konvertierung & Kontrastfarben
 │       ├── DateExtensions.swift              # Kalenderwochen & Tagesberechnungen
+│       ├── GlobalCoordinateSpace.swift       # Gemeinsamer Koordinatenraum für Hover-Positionen
+│       ├── KeyboardFeedback.swift            # Klang & Haptik bei jedem Tastendruck
+│       ├── Haptics.swift                     # Zentrale Haptik-Helfer
 │       └── PencilInteractions.swift          # Apple Pencil Pro Squeeze- & Hover-Handler
 ├── README.md
 └── .gitignore
@@ -262,6 +283,11 @@ in den Farben und in der Bedienung:
 - **Tasten lösen beim Loslassen aus**; die Löschtaste wirkt sofort und
   wiederholt sich beim Halten (mit fester Obergrenze, damit nichts
   „durchläuft“).
+- **Feedback beim Tippen wie bei Apple**: Jeder Tastendruck gibt ein leises
+  Klickgeräusch und eine feine Haptik aus. Weil das iPad (außer dem Apple
+  Pencil Pro) keinen Taptic Engine hat, ist dort der **Klang** das
+  eigentliche Feedback – genau wie bei der iPad-Tastatur, deren Lautstärke
+  und Stummschalter mitgelten.
 - **Aussehen**: helle Tasten auf grauem Grund im Light Mode, graue Tasten auf
   dunklem Grund im Dark Mode, flache Tasten mit 1 pt Schattenkante, abgerundete
   Ecken – dazu eine schmale Kurzbefehl-Leiste mit Cursor-Pfeilen, Einfügen und
@@ -275,7 +301,8 @@ in den Farben und in der Bedienung:
 | **Immer anzeigen** | App-Tastatur bei jedem Textfeld, auch zusätzlich zur Systemtastatur |
 | **Nur Systemtastatur** | App-Tastatur aus |
 
-Dort gibt es außerdem eine **Live-Statusanzeige** (Systemtastatur sichtbar?,
+Dort gibt es außerdem den Schalter **Feedback beim Tippen** („Klang & Haptik“,
+Standard: an, mit Hörprobe) und eine **Live-Statusanzeige** (Systemtastatur sichtbar?,
 App-Tastatur aktiv?, Textfeld erkannt?, Hardware-Tastatur erkannt?,
 Key-Window?, letztes Ereignis). Damit ist sofort sichtbar, was iPadOS gerade
 tut – statt nur zu vermuten, dass etwas „repariert“ sei.

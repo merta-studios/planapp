@@ -34,6 +34,18 @@ public struct TimetableView: View {
         return Calendar.germanCalendar.date(byAdding: .day, value: 7, to: viewModel.selectedWeekStart) ?? viewModel.selectedWeekStart
     }
 
+    /// Ob statt des (leeren) Stundenplans der Einrichtungs-Guide erscheint.
+    ///
+    /// Im Standard- und Notizen-hervorgehoben-Modus gilt das für die gerade
+    /// sichtbare Woche; in „Nur Notizen“ für die App insgesamt (ohne Stunden
+    /// gibt es dort auch keine Notizen).
+    private var showsUntisSetupGuide: Bool {
+        if viewModel.viewMode == .notesOnly {
+            return viewModel.shouldShowUntisSetupGuideWithoutData
+        }
+        return viewModel.shouldShowUntisSetupGuide(for: viewModel.selectedWeekStart)
+    }
+
     public var body: some View {
         GeometryReader { geometry in
             let availableWidth = geometry.size.width
@@ -55,13 +67,28 @@ public struct TimetableView: View {
 
                     // 2. HAUPTBILDSCHIRM: je nach Ansichts-Modus das
                     // 3-Wochen-Karussell oder die reine Notiz-Übersicht.
-                    if viewModel.viewMode == .notesOnly {
+                    // Ohne (vollständige) API-Daten zeigt die Wochenansicht
+                    // stattdessen den Einrichtungs-Guide – sie bleibt also nie
+                    // einfach leer.
+                    if showsUntisSetupGuide {
+                        UntisSetupGuideView()
+                            .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                    } else if viewModel.viewMode == .notesOnly {
                         NotesOverviewListView(noteNamespace: noteNamespace)
                             .transition(.opacity.combined(with: .scale(scale: 0.985)))
                     } else {
                         weekCarousel(availableWidth: availableWidth, calculatedRowHeight: calculatedRowHeight)
                             .transition(.opacity.combined(with: .scale(scale: 0.985)))
                     }
+                }
+
+                // 2b. LADE-ANZEIGE: Wird eine Woche zum ersten Mal von der API
+                // geladen, dreht sich in der Mitte des Bildschirms ein
+                // Lade-Symbol, bis die Daten (oder ein Fehler) da sind.
+                if viewModel.isWeekPendingInitialLoad(viewModel.selectedWeekStart) {
+                    WeekLoadingOverlay()
+                        .transition(.opacity)
+                        .zIndex(60)
                 }
 
                 // 3. TOAST-BENACHRICHTIGUNGEN
@@ -297,6 +324,40 @@ public struct TimetableView: View {
                 }
             }
         }
+    }
+}
+
+/// Drehendes Lade-Symbol in der Mitte des Bildschirms.
+///
+/// Es erscheint, sobald zu einer Woche noch keine Daten von der API geladen
+/// wurden, und bleibt sichtbar, bis der Abgleich abgeschlossen ist. Tipps
+/// gehen weiter an den Stundenplan durch (der Nutzer darf weiterwischen).
+struct WeekLoadingOverlay: View {
+    var body: some View {
+        VStack(spacing: 14) {
+            ProgressView()
+                .progressViewStyle(.circular)
+                .scaleEffect(1.4)
+
+            Text("Stundenplan wird geladen …")
+                .font(.system(size: 14, weight: .medium, design: .default))
+                .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 26)
+        .padding(.vertical, 22)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.15), radius: 14, x: 0, y: 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Stundenplan wird geladen")
     }
 }
 

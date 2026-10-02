@@ -11,6 +11,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
     case drawing
     case untis
     case keyboard
+    case appearance
     case data
 
     var id: String { rawValue }
@@ -23,6 +24,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
         case .drawing: return "Zeichnen & Apple Pencil"
         case .untis: return "WebUntis & Sync"
         case .keyboard: return "Tastatur & Eingabe"
+        case .appearance: return "Darstellung"
         case .data: return "Daten & Zurücksetzen"
         }
     }
@@ -34,7 +36,8 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
         case .teachers: return "Kürzel durch Klarnamen ersetzen"
         case .drawing: return "Stiftdicken, Notizgröße und Pencil-Gesten"
         case .untis: return "Zugangsdaten und Synchronisation"
-        case .keyboard: return "Bildschirmtastatur und Eingabe prüfen"
+        case .keyboard: return "Bildschirmtastatur, Feedback und Eingabe prüfen"
+        case .appearance: return "Erscheinungsbild (hell, dunkel, automatisch)"
         case .data: return "Stundenplan und gespeicherte Daten"
         }
     }
@@ -47,6 +50,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
         case .drawing: return "pencil.and.outline"
         case .untis: return "network"
         case .keyboard: return "keyboard"
+        case .appearance: return "circle.lefthalf.filled"
         case .data: return "trash"
         }
     }
@@ -59,6 +63,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
         case .drawing: return .orange
         case .untis: return .green
         case .keyboard: return .indigo
+        case .appearance: return .cyan
         case .data: return .red
         }
     }
@@ -93,6 +98,9 @@ struct SettingsCategoryDetailView: View {
 
                 case .keyboard:
                     KeyboardSettingsSection()
+
+                case .appearance:
+                    AppearanceSettingsSection()
 
                 case .data:
                     clearTimetableCard

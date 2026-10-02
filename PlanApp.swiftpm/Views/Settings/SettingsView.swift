@@ -6,11 +6,15 @@ import SwiftUI
 /// Kategorie – dadurch ist die Eingangsliste kurz und übersichtlich.
 public struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var viewModel: TimetableViewModel
+    /// Navigationspfad – erlaubt es, die Einstellungen direkt auf einer
+    /// bestimmten Seite zu öffnen (z. B. „WebUntis & Sync“ aus dem Guide).
+    @State private var path: [SettingsCategory] = []
 
     public init() {}
 
     public var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ZStack {
                 Color(UIColor.systemBackground).ignoresSafeArea()
 
@@ -56,9 +60,18 @@ public struct SettingsView: View {
                 SettingsCategoryDetailView(category: category)
             }
         }
+        .onAppear(perform: applyLaunchCategoryIfNeeded)
         // Die app-eigene Tastatur liegt über der gesamten Navigation, damit
         // sie auch auf den Unterseiten unten im Sheet erscheint.
         .appKeyboardHost()
+    }
+
+    /// Springt beim Öffnen direkt auf die gewünschte Kategorie, wenn eine
+    /// angefragt wurde (z. B. über „Zu den Einstellungen“ aus dem Guide).
+    private func applyLaunchCategoryIfNeeded() {
+        guard let target = viewModel.settingsLaunchCategory else { return }
+        viewModel.settingsLaunchCategory = nil
+        path = [target]
     }
 }
 

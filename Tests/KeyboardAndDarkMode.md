@@ -22,8 +22,11 @@ Hardware-Kurzbefehlsstreifen und ungültige Maße.
 1. Demostundenplan laden und eine Stunde im **Light Mode** öffnen.
 2. Fachname, Lehrkraft, Raum, Stunde und Datum im aufgeklappten Rahmen müssen
    dunkel lesbar sein.
-3. Bei geöffneter Notiz das iPad auf **Dark Mode** umstellen: Die Texte und
-   zugehörigen Symbole müssen hell/weiß werden, der Rahmen bleibt dunkel.
+3. Bei geöffneter Notiz das iPad auf **Dark Mode** umstellen: Die App bleibt
+   standardmäßig **hell** (Einstellungen → Darstellung), Papier und Schrift
+   ändern sich also nicht. Erst wenn dort **Automatisch** oder **Dunkel**
+   gewählt wird, passen sich Rahmen, Menüs und Werkzeugleisten an – Texte auf
+   dem weißen Papier bleiben aber **immer schwarz**.
 4. Notiz schließen und erneut öffnen. Auch während/nach der Aufklapp-Animation
    prüfen. Die pastellfarbenen Stundenkarten behalten dunklen Text.
 5. Das weiße Notizpapier bleibt weiß. Handschrift und Textfelder auf dem Papier
@@ -126,3 +129,98 @@ volle Breite, die Notizen stehen als gleich breite Karten darunter.
 5. Eine Karte antippen: Die Notiz öffnet sich zum Bearbeiten wie im
    Stundenplan. Zurück – die Karte steht weiter an derselben Stelle.
 6. Dark Mode prüfen: Karten, Überschriften und die grüne Linie bleiben lesbar.
+7. Eine Karte gedrückt halten → **„Im Standard-Modus anzeigen“**. Die App
+   wechselt in den Standard-Modus **und** wischt automatisch zu der Woche, in
+   der die Stunde liegt (Woche in der Kopfzeile prüfen). Bei einer Stunde aus
+   einer anderen Woche muss zuerst die richtige Woche erscheinen, danach erst
+   die Karte.
+
+## Darstellung (Hell/Dunkel/Automatisch)
+
+1. *Einstellungen → Darstellung* öffnen. Standard ist **Hell**; das iPad auf
+   **Dark Mode** stellen: Die App bleibt hell, die Schrift auf dem weißen
+   Papier bleibt schwarz (Stundenblöcke, Notizkarten, Notizrahmen, Textfelder,
+   gerenderte Notizbilder).
+2. **Dunkel** wählen: Umgebung (Menüs, Kopfzeile, Werkzeugleisten) wird
+   dunkel. Werkzeugleisten-Symbole und Beschriftungen bleiben auf ihren
+   Glas-/Materialflächen lesbar; Texte **auf dem weißen Papier** bleiben
+   weiterhin schwarz.
+3. **Automatisch** wählen und das iPad zwischen Hell und Dunkel umschalten:
+   Die App folgt, das Papier bleibt weiß.
+4. App beenden und neu starten: Die gewählte Darstellung ist erhalten.
+
+## Lade-Anzeige beim Wischen (Punkt 6)
+
+1. WebUntis-Zugangsdaten (Server, Schule, Benutzer, Passwort) eintragen.
+2. Zu einer Woche wischen, für die noch nichts geladen wurde (z. B. mehrere
+   Wochen voraus). In der Bildschirmmitte muss ein drehendes Lade-Symbol
+   erscheinen und **so lange sichtbar bleiben, bis die API-Antwort da ist**.
+3. Ohne Netz/Flugmodus: Das Symbol verschwindet nach dem Fehler, die
+   Fehlermeldung erscheint.
+4. Zurück zu einer bereits geladenen Woche wischen: kein Lade-Symbol.
+5. Eine Woche mit Ferien (keine Stunden, aber erfolgreich geladen): kein
+   dauerhaftes Symbol, aber „Kein Unterricht“ in jeder Spalte.
+
+## Einrichtungs-Guide statt leerem Stundenplan (Punkt 7)
+
+1. *Einstellungen → Daten & Zurücksetzen* → Stundenplan löschen und die
+   WebUntis-Zugangsdaten leeren (oder unvollständig lassen: z. B. nur Server
+   und Schule).
+2. Zum Stundenplan zurückkehren: Statt einer leeren Woche steht in der Mitte
+   ein Guide-Fenster („Stundenplan automatisch laden“, Schritt 1 und 2).
+3. **„Zu den Einstellungen“** antippen: Die Einstellungen öffnen sich **direkt
+   auf der Seite „WebUntis & Sync“**, nicht auf der Kategorien-Übersicht.
+4. „Beispieldaten laden“ antippen: Der Guide verschwindet, der
+   Demo-Stundenplan erscheint.
+5. Mit gültigen Zugangsdaten synchronisieren: Guide bleibt verschwunden, auch
+   nachdem die App neu gestartet wurde.
+
+## Freie Tage: „Kein Unterricht“ (Punkt 5)
+
+1. Eine Woche mit mindestens einem freien Tag anzeigen (z. B. Ferien oder
+   unterrichtsfreier Tag).
+2. In der Spalte des freien Tages steht mittig ein um **90° gedrehter, grauer**
+   Text „Kein Unterricht“ – in **Standard** und in **Notizen hervorgehoben**.
+3. Tage mit mindestens einer Stunde zeigen den Hinweis nicht.
+4. In „Nur Notizen“ gibt es den Hinweis nicht (die Übersicht zeigt nur
+   Notizen).
+
+## Apple-Pencil-Einstellungen (Punkte 8 & 9)
+
+1. *Einstellungen → Zeichnen & Apple Pencil*: „Apple Pencil“ ist **aus**,
+   „Radierer automatisch abwählen“ ist **an**.
+2. Bei ausgeschaltetem „Apple Pencil“ im Notiz-Overlay mit **einem Finger**
+   zeichnen: Es entsteht ein Strich.
+3. Den Apple Pencil benutzen: Danach muss „Apple Pencil“ automatisch **an**
+   sein (Einstellungen prüfen). Mit dem Finger zeichnen geht jetzt nicht mehr;
+   Zwei-Finger-Zoom/Verschieben und der Kopf-Griff funktionieren weiter.
+4. „Radierer automatisch abwählen“ einschalten, Radierer wählen, radieren und
+   den Stift loslassen: Das Werkzeug wechselt automatisch zurück zum zuletzt
+   benutzten Werkzeug (bzw. zum Stift, wenn vorher keins aktiv war).
+5. Schalter ausschalten und wiederholen: Der Radierer bleibt aktiv.
+
+## Squeeze-Werkzeugpalette (Punkt 10)
+
+Nur mit Apple Pencil Pro (iOS/iPadOS 17.5+) prüfbar.
+
+1. Notiz öffnen, den Stift in der Nähe des Zettels schweben lassen und
+   **zusammendrücken**. An der letzten Hover-Position öffnet sich ein
+   **Viertelkreis** – in der Richtung, in die der Stift zeigt.
+2. Im inneren Ring Werkzeug, im mittleren Ring Farbe und am äußeren Bogen die
+   **Dicke** ändern (Ziehen am Bogen). Die Anzeige in der Mitte zeigt Werkzeug
+   und Wert.
+3. Rückgängig/Wiederholen im Kreis und Schließen (✕) prüfen.
+4. Mit dem Stift schreiben: Die Palette verschwindet automatisch.
+5. Der alte Undo-auf-Squeeze darf **nicht** mehr passieren; der Doppeltipp des
+   Pencil löst weiterhin Rückgängig aus.
+6. Palette nahe am Bildschirmrand öffnen: Sie wird so verschoben/verkleinert,
+   dass der komplette Viertelkreis sichtbar bleibt.
+
+## Tipp-Feedback der App-Tastatur (Punkt 3)
+
+1. *Einstellungen → Tastatur & Eingabe → Feedback beim Tippen*: Schalter auf
+   **an** (Standard). „Feedback ausprobieren“ und Tippen auf der App-Tastatur
+   müssen ein leises Klickgeräusch geben (Lautstärke aufdrehen, Stummschalter
+   aus).
+2. Schalter **aus**: Tippen bleibt stumm.
+3. Beim Einschalten ertönt automatisch eine Hörprobe.

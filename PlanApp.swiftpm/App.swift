@@ -8,6 +8,8 @@ struct PlanApp: App {
         WindowGroup {
             TimetableView()
                 .environmentObject(viewModel)
+                .preferredColorScheme(viewModel.appearance.colorScheme)
+                .coordinateSpace(name: GlobalCoordinateSpace.name)
         }
     }
 }

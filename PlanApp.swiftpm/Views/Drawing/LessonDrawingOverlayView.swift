@@ -45,6 +45,15 @@ public struct LessonDrawingOverlayView: View {
     @State private var eraserWidth: CGFloat = 24
     @State private var canvasView: PKCanvasView?
     @State private var noteBackgroundStyle: NoteBackgroundStyle = .blank
+
+    // Squeeze-Palette (Apple Pencil Pro): Viertelkreis-Werkzeugpalette an der
+    // letzten Hover-Position des Stifts, ausgerichtet in Blickrichtung.
+    @State private var isSqueezePaletteVisible = false
+    @State private var squeezeAnchor: CGPoint? = nil
+    @State private var squeezeDirection = CGVector(dx: 0, dy: -1)
+    /// Zuletzt benutztes Werkzeug außer dem Radierer – dorthin wechselt die
+    /// App nach dem Radieren automatisch zurück (Fallback: Stift).
+    @State private var lastInkingTool: DrawingToolSelection? = nil
     @State private var isConvertingHandwriting = false
     @State private var recognitionAlertMessage: String? = nil
     @State private var exportAlertTitle: String = "Export"
@@ -142,6 +151,40 @@ public struct LessonDrawingOverlayView: View {
                     .opacity(showsEditor ? 1 : 0)
                     .allowsHitTesting(showsEditor)
                     .zIndex(20)
+
+                // Squeeze des Apple Pencil Pro: Viertelkreis-Palette an der
+                // letzten Hover-Position, geöffnet in Blickrichtung des Stifts.
+                if isSqueezePaletteVisible, let anchor = squeezeAnchor {
+                    PencilSqueezePaletteView(
+                        anchor: anchor,
+                        direction: squeezeDirection,
+                        containerSize: geometry.size,
+                        containerOrigin: geometry.frame(in: .named(GlobalCoordinateSpace.name)).origin,
+                        toolSelection: $toolSelection,
+                        penWidth: $penWidth,
+                        markerWidth: $markerWidth,
+                        eraserWidth: $eraserWidth,
+                        penColorSlots: Binding(
+                            get: { viewModel.drawingSettings.penColorSlots },
+                            set: { newSlots in
+                                viewModel.drawingSettings.penColorSlots = newSlots
+                                viewModel.saveDrawingSettings()
+                            }
+                        ),
+                        markerColorSlots: Binding(
+                            get: { viewModel.drawingSettings.markerColorSlots },
+                            set: { newSlots in
+                                viewModel.drawingSettings.markerColorSlots = newSlots
+                                viewModel.saveDrawingSettings()
+                            }
+                        ),
+                        onUndo: { performUndo() },
+                        onRedo: { performRedo() },
+                        onClose: { dismissSqueezePalette() }
+                    )
+                    .zIndex(30)
+                    .transition(.opacity)
+                }
             }
             .onAppear {
                 configureTextUndo()
@@ -190,6 +233,15 @@ public struct LessonDrawingOverlayView: View {
             }
             .onChange(of: editingTextBoxID) { _, _ in
                 revealEditingTextBox(in: viewport)
+            }
+            .onChange(of: toolSelection) { _, newTool in
+                // Letztes Nicht-Radierer-Werkzeug merken – dorthin wechselt die
+                // App nach dem Radieren automatisch zurück.
+                if case .eraser = newTool {
+                    // Radierer selbst ist kein „Rückkehr-Werkzeug“.
+                } else {
+                    lastInkingTool = newTool
+                }
             }
             .onChange(of: isTextToolActive) { _, nowActive in
                 if !nowActive {
@@ -299,6 +351,7 @@ public struct LessonDrawingOverlayView: View {
                     markerWidth: markerWidth,
                     eraserWidth: eraserWidth,
                     colorScheme: colorScheme,
+                    pencilOnlyDrawing: viewModel.drawingSettings.applePencilOnly,
                     onCanvasCreated: { createdCanvas in
                         canvasView = createdCanvas
                     },
@@ -310,6 +363,24 @@ public struct LessonDrawingOverlayView: View {
                     },
                     onRequestUndo: {
                         performUndo()
+                    },
+                    onPencilInputDetected: {
+                        // Sobald irgendwo ein Apple Pencil bemerkt wird, schaltet
+                        // sich „Nur Apple Pencil“ automatisch ein.
+                        viewModel.registerApplePencilUsage()
+                    },
+                    onPencilSqueeze: { anchor, direction in
+                        presentSqueezePalette(anchor: anchor, direction: direction)
+                    },
+                    onCanvasGestureBegan: {
+                        // Sobald wieder geschrieben wird, verschwindet die
+                        // Palette – wie bei Apples eigener Kontext-Palette.
+                        if isSqueezePaletteVisible {
+                            dismissSqueezePalette()
+                        }
+                    },
+                    onCanvasGestureEnded: {
+                        handleCanvasGestureEnded()
                     }
                 )
                 .frame(
@@ -1053,13 +1124,69 @@ public struct LessonDrawingOverlayView: View {
         // Immer standardmäßig Stift mit der ersten Farbe aus dem Slot
         let initialHex = settings.penColorSlots.first ?? "#1E1E1E"
         toolSelection = .pen(color: UIColor(hex: initialHex))
+        lastInkingTool = toolSelection
         noteBackgroundStyle = settings.defaultBackgroundStyle
+
+        // Entspricht die System-Einstellung „Nur mit Apple Pencil zeichnen“,
+        // gilt das als bemerkener Pencil-Input und der Schalter wird – wie vom
+        // Nutzer gewünscht – automatisch aktiviert.
+        if UIPencilInteraction.prefersPencilOnlyDrawing {
+            viewModel.registerApplePencilUsage()
+            toolSelection = .pen(color: UIColor(hex: initialHex))
+            lastInkingTool = toolSelection
+        }
 
         canvasHeight = min(
             maximumCanvasHeight,
             max(minimumCanvasHeight, CGFloat(settings.defaultCanvasHeight))
         )
         resizeStartHeight = canvasHeight
+    }
+
+    // MARK: - Squeeze-Palette & Radierer-Verhalten
+
+    /// Zeigt die Viertelkreis-Palette an der letzten Hover-Position des Stifts,
+    /// geöffnet in die Richtung, in die der Stift zeigt.
+    private func presentSqueezePalette(anchor: CGPoint?, direction: CGVector) {
+        var resolvedAnchor = anchor
+
+        if resolvedAnchor == nil, let canvasView {
+            // Keine Hover-Pose verfügbar (älterer Pencil): Bezugspunkt ist der
+            // Mittelpunkt der Zeichenfläche.
+            let center = CGPoint(x: canvasView.bounds.midX, y: canvasView.bounds.midY)
+            resolvedAnchor = canvasView.convert(center, to: nil)
+        }
+
+        guard let resolvedAnchor else { return }
+
+        squeezeAnchor = resolvedAnchor
+        squeezeDirection = direction
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            isSqueezePaletteVisible = true
+        }
+        Haptics.tap()
+    }
+
+    private func dismissSqueezePalette() {
+        withAnimation(.easeOut(duration: 0.16)) {
+            isSqueezePaletteVisible = false
+        }
+    }
+
+    /// Nach dem Loslassen des Stifts: Ist der Radierer aktiv und die Einstellung
+    /// eingeschaltet, wechselt die App automatisch zurück zum zuletzt benutzten
+    /// Werkzeug (Fallback: Stift).
+    private func handleCanvasGestureEnded() {
+        // Nach dem Zeichnen/Radieren ist die Palette nicht mehr nötig.
+        if isSqueezePaletteVisible {
+            dismissSqueezePalette()
+        }
+
+        guard viewModel.drawingSettings.autoDeselectEraser else { return }
+        guard case .eraser = toolSelection else { return }
+
+        let fallbackHex = viewModel.drawingSettings.penColorSlots.first ?? "#1E1E1E"
+        toolSelection = lastInkingTool ?? .pen(color: UIColor(hex: fallbackHex))
     }
 
     private func loadExistingNote() {

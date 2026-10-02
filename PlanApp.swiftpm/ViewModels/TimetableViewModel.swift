@@ -36,6 +36,23 @@ public final class TimetableViewModel: ObservableObject {
     /// Wird persistent gespeichert und beim Start wiederhergestellt.
     @Published public var viewMode: TimetableViewMode = .standard
 
+    /// Erscheinungsbild der App. Standard ist **hell** (siehe ``AppAppearance``),
+    /// damit weißes Papier niemals weiße Schrift bekommt.
+    @Published public var appearance: AppAppearance = .fallback
+
+    /// Wochen (Schlüssel `yyyy-MM-dd` des Montags), die gerade von der API
+    /// geladen werden. Solange eine noch nie geladene Woche lädt, zeigt der
+    /// Stundenplan ein drehendes Lade-Symbol in der Mitte.
+    @Published public var loadingWeekKeys: Set<String> = []
+
+    /// Fehlermeldung des letzten API-Abgleichs (`nil` = kein Fehler). Wird für
+    /// den Einrichtungs-Guide ausgewertet, wenn die Daten offenbar ungültig sind.
+    @Published public var lastSyncFailure: String? = nil
+
+    /// Kategorie, die beim nächsten Öffnen der Einstellungen direkt angezeigt
+    /// wird (z. B. „WebUntis & Sync“ aus dem Einrichtungs-Guide).
+    @Published var settingsLaunchCategory: SettingsCategory? = nil
+
     // Letzter Synchronisationszeitpunkt für die Statusanzeige
     @Published public var lastSyncDate: Date? = Date()
 
@@ -59,6 +76,10 @@ public final class TimetableViewModel: ObservableObject {
     @Published public var weekJumpRequest: Date? = nil
 
     private var activeSyncCount: Int = 0
+    /// Wochen, die in dieser Sitzung schon erfolgreich von der API geladen
+    /// wurden – auch wenn sie (z. B. in den Ferien) keine Stunden enthalten.
+    /// So erscheint das Lade-Symbol beim erneuten Hineinwischen nicht wieder.
+    private var loadedWeekKeys: Set<String> = []
     /// Cache sichtbarer Notiz-Keys. Das vermeidet wiederholtes Decodieren großer
     /// PKDrawing-Daten während SwiftUI den Stundenplan neu rendert.
     private var visibleNoteKeys: Set<String> = []
@@ -85,6 +106,7 @@ public final class TimetableViewModel: ObservableObject {
         self.lessons = storage.loadLessons()
         self.lessonNotes = storage.loadAllLessonNotes()
         self.viewMode = storage.loadViewMode()
+        self.appearance = storage.loadAppearance()
         self.lastSyncDate = untisCredentials.lastSyncDate ?? Date()
 
         // Alte, versehentlich leer gespeicherte Notizen (PKDrawing-Daten ohne
@@ -193,6 +215,100 @@ public final class TimetableViewModel: ObservableObject {
         Task {
             await syncWeek(startingAt: normalizedStart, showsSuccessMessage: false)
         }
+    }
+
+    /// Sets the appearance and persists it immediately.
+    public func setAppearance(_ newAppearance: AppAppearance) {
+        guard appearance != newAppearance else { return }
+        appearance = newAppearance
+        storage.saveAppearance(newAppearance)
+    }
+
+    /// Öffnet die Einstellungen – optional direkt auf einer bestimmten Seite
+    /// (z. B. „WebUntis & Sync“ aus dem Einrichtungs-Guide).
+    ///
+    /// Bewusst `internal`: `SettingsCategory` ist ein Typ der Settings-Ansicht
+    /// und soll nicht Teil der öffentlichen ViewModel-Schnittstelle sein.
+    func openSettings(category: SettingsCategory? = nil) {
+        settingsLaunchCategory = category
+        isSettingsPresented = true
+    }
+
+    // MARK: - Ladefortschritt der API-Wochen
+
+    /// Schlüssel einer Woche (`yyyy-MM-dd` des Montags).
+    public func weekKey(for date: Date) -> String {
+        return date.startOfWeek().yyyyMMddString
+    }
+
+    /// Ob überhaupt irgendeine Stunde gespeichert ist – egal in welcher Woche.
+    public var hasAnyLessons: Bool { !lessons.isEmpty }
+
+    /// Für „Nur Notizen“: Ohne jede Stunde (und damit ohne jede Notiz) sowie
+    /// mit unvollständigen API-Daten zeigt auch diese Übersicht den Guide.
+    public var shouldShowUntisSetupGuideWithoutData: Bool {
+        !hasAnyLessons && !untisCredentials.hasCompleteCredentials && !isLoading
+    }
+
+    /// Ob es in der angegebenen Woche überhaupt gespeicherte Stunden gibt.
+    public func hasLessons(inWeekStarting weekStart: Date) -> Bool {
+        let dayKeys = Set(weekStart.schoolWeekDays().map { $0.yyyyMMddString })
+        return lessons.contains { dayKeys.contains($0.dateString) }
+    }
+
+    /// Ob für diese Woche gerade Daten von der API geholt werden.
+    public func isLoadingWeek(_ weekStart: Date) -> Bool {
+        return loadingWeekKeys.contains(weekKey(for: weekStart))
+    }
+
+    /// Ob eine Woche gerade zum **ersten Mal** geladen wird: Dann bleibt das
+    /// drehende Lade-Symbol so lange sichtbar, bis die API geantwortet hat.
+    public func isWeekPendingInitialLoad(_ weekStart: Date) -> Bool {
+        let key = weekKey(for: weekStart)
+        guard loadingWeekKeys.contains(key) else { return false }
+        return !loadedWeekKeys.contains(key) && !hasLessons(inWeekStarting: weekStart)
+    }
+
+    /// Ob statt des (leeren) Stundenplans der Einrichtungs-Guide erscheinen
+    /// soll: Es gibt keine Stunden und die API-Daten fehlen, sind unvollständig
+    /// oder der letzte Abgleich ist fehlgeschlagen.
+    public func shouldShowUntisSetupGuide(for weekStart: Date) -> Bool {
+        guard !isWeekPendingInitialLoad(weekStart) else { return false }
+        guard !hasLessons(inWeekStarting: weekStart) else { return false }
+        if !untisCredentials.hasCompleteCredentials { return true }
+        return lastSyncFailure != nil
+    }
+
+    /// Zeigt eine Stunde aus der „Nur Notizen“-Übersicht im Standard-Modus:
+    /// Der Ansichts-Modus wechselt und die App wischt automatisch zur Woche
+    /// der Stunde (inkl. Nachladen von der API, falls nötig).
+    public func revealLessonInStandardMode(_ lesson: Lesson) {
+        guard let date = Date.fromYyyyMMdd(lesson.dateString) else { return }
+        let targetWeek = date.startOfWeek()
+
+        if viewMode != .standard {
+            setViewMode(.standard)
+        }
+
+        guard targetWeek != selectedWeekStart else { return }
+        weekNavigationDirection = targetWeek > selectedWeekStart ? 1 : -1
+        selectWeek(targetWeek)
+    }
+
+    // MARK: - Apple Pencil
+
+    /// Wird aufgerufen, sobald die App irgendwo einen echten Apple-Pencil-Input
+    /// bemerkt (Hover, Strich oder Doppeltipp). Dann wird „Nur Apple Pencil“
+    /// automatisch eingeschaltet und gespeichert.
+    public func registerApplePencilUsage() {
+        guard !drawingSettings.applePencilOnly else { return }
+        drawingSettings.applePencilOnly = true
+        storage.saveDrawingSettings(drawingSettings)
+    }
+
+    /// Merkt sich, dass der letzte API-Abgleich fehlgeschlagen ist.
+    private func noteSyncFailure(_ message: String) {
+        lastSyncFailure = message
     }
 
     // MARK: - Timetable Queries & Lesson Merging
@@ -635,13 +751,17 @@ public final class TimetableViewModel: ObservableObject {
             return
         }
 
+        let normalizedWeekStart = weekStart.startOfWeek()
+        let weekKey = normalizedWeekStart.yyyyMMddString
         activeSyncCount += 1
+        loadingWeekKeys.insert(weekKey)
         self.isLoading = true
         self.errorMessage = nil
         if showsSuccessMessage { self.successMessage = nil }
         defer {
             activeSyncCount -= 1
             self.isLoading = activeSyncCount > 0
+            self.loadingWeekKeys.remove(weekKey)
         }
 
         do {
@@ -653,7 +773,7 @@ public final class TimetableViewModel: ObservableObject {
                 storage.savePeriods(fetchedPeriods)
             }
 
-            let weekDays = weekStart.schoolWeekDays()
+            let weekDays = normalizedWeekStart.schoolWeekDays()
             guard let startDay = weekDays.first, let endDay = weekDays.last else { return }
 
             let fetchedLessons = try await untis.fetchTimetable(
@@ -678,10 +798,17 @@ public final class TimetableViewModel: ObservableObject {
             storage.saveCredentials(untisCredentials)
             await untis.logout(credentials: untisCredentials, sessionId: auth.sessionId)
 
+            // Die Woche gilt jetzt als geladen – auch wenn sie keine Stunden
+            // enthält (z. B. Ferien). Dadurch verschwindet das Lade-Symbol und
+            // erscheint beim erneuten Hineinwischen nicht wieder.
+            loadedWeekKeys.insert(weekKey)
+            lastSyncFailure = nil
+
             // Bewusst keine "synchronisiert"-Erfolgsmeldung mehr – die
             // Live-Anzeige im Header zeigt den Sync-Status bereits an.
         } catch {
             self.errorMessage = error.localizedDescription
+            noteSyncFailure(error.localizedDescription)
         }
     }
 
@@ -700,6 +827,10 @@ public final class TimetableViewModel: ObservableObject {
         self.lastSyncDate = now
         self.untisCredentials.lastSyncDate = now
         storage.saveCredentials(untisCredentials)
+        // Demo-Daten gelten als "geladen": kein Lade-Symbol und kein
+        // Einrichtungs-Guide mehr für diese Woche.
+        loadedWeekKeys.insert(selectedWeekStart.startOfWeek().yyyyMMddString)
+        lastSyncFailure = nil
         self.successMessage = "Beispiel-Stundenplan für die Woche geladen!"
     }
 

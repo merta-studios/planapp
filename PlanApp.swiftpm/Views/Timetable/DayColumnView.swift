@@ -100,7 +100,28 @@ public struct DayColumnView: View {
             periodBackground
             todayColumnAccent
             lessonBlocks
+            freeDayPlaceholder
             currentTimeIndicator
+        }
+    }
+
+    /// Freier Tag (keine einzige Stunde): In der Spalte steht ein um 90°
+    /// gedrehter, grauer Hinweis „Kein Unterricht“.
+    ///
+    /// Während eine Woche gerade zum ersten Mal geladen wird, bleibt der
+    /// Hinweis ausgeblendet – dort dreht sich stattdessen das Lade-Symbol.
+    @ViewBuilder
+    private var freeDayPlaceholder: some View {
+        if viewModel.lessonsFor(day: day).isEmpty,
+           !viewModel.isWeekPendingInitialLoad(day.startOfWeek()) {
+            Text("Kein Unterricht")
+                .font(.system(size: 15, weight: .semibold, design: .default))
+                .foregroundColor(Color(UIColor.systemGray))
+                .fixedSize()
+                .rotationEffect(.degrees(-90))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+                .accessibilityLabel("Kein Unterricht")
         }
     }
 

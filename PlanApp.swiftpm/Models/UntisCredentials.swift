@@ -30,6 +30,13 @@ public struct UntisCredentials: Codable, Equatable {
         return !cleanServer.isEmpty && !cleanSchool.isEmpty
     }
 
+    /// Prüft, ob die Zugangsdaten wirklich vollständig sind. Fehlt eines der
+    /// vier Felder, kann die WebUntis-API nicht sinnvoll abgefragt werden – die
+    /// App zeigt dann den Einrichtungs-Guide statt eines leeren Stundenplans.
+    public var hasCompleteCredentials: Bool {
+        return isConfigured && !cleanUser.isEmpty && !cleanPassword.isEmpty
+    }
+
     /// Bereinigt den Server-String (entfernt https://, Schrägstriche etc.)
     public var cleanServer: String {
         var s = server.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -50,6 +57,16 @@ public struct UntisCredentials: Codable, Equatable {
     /// Bereinigt den Schulnamen
     public var cleanSchool: String {
         return school.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Bereinigt den Benutzernamen
+    public var cleanUser: String {
+        return user.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Bereinigt das Passwort
+    public var cleanPassword: String {
+        return password.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Erstellt die vollständige JSON-RPC 2.0 URL
