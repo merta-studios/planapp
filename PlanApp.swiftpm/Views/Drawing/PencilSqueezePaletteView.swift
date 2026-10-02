@@ -1,25 +1,13 @@
 import SwiftUI
 import UIKit
 
-/// Werkzeug-Palette im **Viertelkreis**, die beim Squeeze des Apple Pencil Pro
-/// erscheint.
-///
-/// Sie liegt um die letzte Hover-Position des Stifts herum und öffnet sich in
-/// die Richtung, in die der Stift zeigt (Azimut des Pencil). In ihr ist alles
-/// einstellbar:
-/// - **Werkzeug** (Stift, Textmarker, Radierer, Lasso, Text)
-/// - **Farbe** (die Farb-Slots des aktiven Werkzeugs)
-/// - **Dicke** (Regler entlang des äußeren Bogens)
-/// - **Rückgängig / Wiederholen** und Schließen
-///
-/// Die Palette ist bewusst eine reine Anzeige: Sie bekommt Anker und Richtung
-/// von außen und meldet Änderungen über Bindings/Callbacks zurück.
+/// Abgerundete, viertelkreisförmige Werkzeugleiste für den Apple-Pencil-Squeeze.
+/// Die Bedienung sitzt auf einem schmalen Kreisbogen statt in einem gefüllten
+/// Tortenstück; die Mitte bleibt frei.
 struct PencilSqueezePaletteView: View {
-    /// Ankerpunkt der letzten Hover-Position in **Fenster-Koordinaten**.
+    /// Hover-Anker und Fensterkoordinaten werden vom PencilKit-Wrapper geliefert.
     let anchor: CGPoint
-    /// Richtung, in die der Stift zeigt (Fenster-Koordinaten, y nach unten).
     let direction: CGVector
-    /// Größe und globale Position des Overlays, in dem die Palette liegt.
     let containerSize: CGSize
     let containerOrigin: CGPoint
 
@@ -31,56 +19,132 @@ struct PencilSqueezePaletteView: View {
     @Binding var markerColorSlots: [String]
 
     let onUndo: () -> Void
-    let onRedo: () -> Void
-    let onClose: () -> Void
 
-    // MARK: Geometrie (unskalierte Punkte)
-
-    /// Größter Radius inklusive Beschriftung – bestimmt die Skalierung.
-    private let maximumRadius: CGFloat = 292
-    private let wedgeRadius: CGFloat = 262
-    private let wedgeHalfAngle: CGFloat = 45 * .pi / 180
-    private let toolRingRadius: CGFloat = 112
-    private let colorRingRadius: CGFloat = 162
-    private let sliderTrackRadius: CGFloat = 227
-    private let sliderTrackWidth: CGFloat = 26
-    private let sliderHalfAngle: CGFloat = 36 * .pi / 180
-
-    private let itemSize: CGFloat = 38
-    private let smallItemSize: CGFloat = 34
+    @State private var isColorPickerVisible = false
+    @State private var pointerHoverTargets: Set<String> = []
+    @State private var continuousHoverTargets: Set<String> = []
+    @State private var colorPickerHideWorkItem: DispatchWorkItem?
 
     @State private var isAdjustingWidth = false
+    @State private var widthDragStartRadius: CGFloat = 0
+    @State private var widthDragStartValue: CGFloat = 0
 
-    // MARK: Abgeleitete Werte
+    // MARK: - Geometrie
 
-    /// Position des Ankers in der lokalen Fläche des Overlays.
+    private let arcRadius: CGFloat = 244
+    private let arcBandWidth: CGFloat = 76
+    private let arcHalfAngle: CGFloat = .pi / 4
+    private let buttonSize: CGFloat = 40
+
+    private let colorArcBandWidth: CGFloat = 50
+    private let colorSwatchSize: CGFloat = 30
+    private let colorArcHalfAngle: CGFloat = 27 * .pi / 180
+
     private var localAnchor: CGPoint {
         CGPoint(x: anchor.x - containerOrigin.x, y: anchor.y - containerOrigin.y)
     }
 
-    /// Skalierung: Auf kleinen Flächen (Split View) wird die Palette kleiner,
-    /// damit der Viertelkreis immer vollständig sichtbar bleibt.
+    /// Der Pencil-Azimut wurde in der bisherigen Palette um 180 Grad verkehrt
+    /// interpretiert. Die Bedienelemente öffnen nun auf der gegenüberliegenden,
+    /// zur Stiftspitze passenden Seite.
+    private var openingAngle: CGFloat {
+        guard direction.dx.isFinite, direction.dy.isFinite,
+              direction.dx != 0 || direction.dy != 0 else {
+            return .pi / 2
+        }
+        return atan2(direction.dy, direction.dx) + .pi
+    }
+
+    private var arcStartAngle: CGFloat { openingAngle - arcHalfAngle }
+    private var arcEndAngle: CGFloat { openingAngle + arcHalfAngle }
+
+    private var paletteElements: [SqueezePaletteElement] {
+        [.undo, .divider]
+            + SqueezePaletteTool.allCases.map { .tool($0) }
+            + [.divider, .color, .thickness]
+    }
+
+    private var colorButtonAngle: CGFloat {
+        for (index, element) in paletteElements.enumerated() {
+            if case .color = element {
+                return angleForElement(at: index)
+            }
+        }
+        return openingAngle
+    }
+
+    private var colorArcRadius: CGFloat {
+        arcRadius + arcBandWidth / 2 + colorArcBandWidth / 2 + 10
+    }
+
+    /// Die Palette wird auf kleinen Fenstern skaliert. Für die Berechnung wird
+    /// auch die nach außen aufklappende Farbkurve berücksichtigt, damit beim
+    /// Öffnen nichts am Bildschirmrand abgeschnitten wird.
     private var paletteScale: CGFloat {
-        let available = min(containerSize.width, containerSize.height) / 2 - 16
-        guard available > 0 else { return 0.6 }
-        return min(1, max(0.55, available / maximumRadius))
+        let bounds = unscaledPaletteBounds()
+        let availableWidth = max(1, containerSize.width - 28)
+        let availableHeight = max(1, containerSize.height - 28)
+        let scaleX = availableWidth / max(1, bounds.width)
+        let scaleY = availableHeight / max(1, bounds.height)
+        return min(1, max(0.48, min(scaleX, scaleY)))
     }
 
-    /// Anker, so verschoben, dass der komplette Viertelkreis auf dem Bildschirm
-    /// liegt.
+    /// Umriss der gesamten Palette relativ zum Squeeze-Anker.
+    private func unscaledPaletteBounds() -> CGRect {
+        var minX: CGFloat = 0
+        var maxX: CGFloat = 0
+        var minY: CGFloat = 0
+        var maxY: CGFloat = 0
+
+        func include(_ point: CGPoint, padding: CGFloat) {
+            minX = min(minX, point.x - padding)
+            maxX = max(maxX, point.x + padding)
+            minY = min(minY, point.y - padding)
+            maxY = max(maxY, point.y + padding)
+        }
+
+        // Hauptbogen inklusive Buttons und Schatten.
+        for step in 0...64 {
+            let fraction = CGFloat(step) / 64
+            let angle = arcStartAngle + (arcEndAngle - arcStartAngle) * fraction
+            let radius = arcRadius + arcBandWidth / 2
+            include(offsetPoint(radius: radius, angle: angle), padding: buttonSize / 2 + 12)
+        }
+
+        // Außenliegender Farbbogen (wird beim Hover aufgeklappt).
+        let paletteColors = colorSlotsForActiveTool.isEmpty
+            ? [currentColorHex]
+            : colorSlotsForActiveTool
+        let colorHalfSpan = colorArcHalfAngle
+        for step in 0...max(16, paletteColors.count * 8) {
+            let fraction = CGFloat(step) / CGFloat(max(16, paletteColors.count * 8))
+            let angle = colorButtonAngle - colorHalfSpan + 2 * colorHalfSpan * fraction
+            include(
+                offsetPoint(radius: colorArcRadius, angle: angle),
+                padding: colorSwatchSize / 2 + 10
+            )
+        }
+
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
     private var clampedAnchor: CGPoint {
-        let radius = maximumRadius * paletteScale + 6
-        let minX = min(radius, containerSize.width / 2)
-        let minY = min(radius, containerSize.height / 2)
-        let x = min(max(localAnchor.x, minX), max(minX, containerSize.width - minX))
-        let y = min(max(localAnchor.y, minY), max(minY, containerSize.height - minY))
-        return CGPoint(x: x, y: y)
-    }
+        let bounds = unscaledPaletteBounds()
+        let margin: CGFloat = 14
+        let scaledMinX = bounds.minX * paletteScale
+        let scaledMaxX = bounds.maxX * paletteScale
+        let scaledMinY = bounds.minY * paletteScale
+        let scaledMaxY = bounds.maxY * paletteScale
 
-    /// Blickrichtung des Stifts in Radiant (0 = +X, im Uhrzeigersinn).
-    private var directionAngle: CGFloat {
-        guard direction.dx != 0 || direction.dy != 0 else { return -.pi / 2 }
-        return atan2(direction.dy, direction.dx)
+        let lowerX = max(margin, -scaledMinX + margin)
+        let upperX = max(lowerX, containerSize.width - scaledMaxX - margin)
+        let lowerY = max(margin, -scaledMinY + margin)
+        let upperY = max(lowerY, containerSize.height - scaledMaxY - margin)
+
+        return CGPoint(
+            x: min(max(localAnchor.x, lowerX), upperX),
+            y: min(max(localAnchor.y, lowerY), upperY)
+        )
     }
 
     private var scaleAnchor: UnitPoint {
@@ -90,300 +154,377 @@ struct PencilSqueezePaletteView: View {
         )
     }
 
-    private func point(radius: CGFloat, angle: CGFloat) -> CGPoint {
-        CGPoint(
-            x: clampedAnchor.x + radius * cos(angle),
-            y: clampedAnchor.y + radius * sin(angle)
-        )
+    private func offsetPoint(radius: CGFloat, angle: CGFloat) -> CGPoint {
+        CGPoint(x: radius * cos(angle), y: radius * sin(angle))
     }
 
-    // MARK: Inhalt
+    private func point(radius: CGFloat, angle: CGFloat) -> CGPoint {
+        let offset = offsetPoint(radius: radius, angle: angle)
+        return CGPoint(x: clampedAnchor.x + offset.x, y: clampedAnchor.y + offset.y)
+    }
+
+    private func angleForElement(at index: Int) -> CGFloat {
+        let count = max(1, paletteElements.count - 1)
+        let fraction = CGFloat(index) / CGFloat(count)
+        return arcStartAngle + (arcEndAngle - arcStartAngle) * fraction
+    }
+
+    // MARK: - Palette
 
     var body: some View {
         ZStack {
-            wedgeBackground
-            toolItems
-            colorItems
-            widthSlider
-            // Die Wert-Anzeige liegt unter dem Hub und nimmt keine Tipps an –
-            // so bleibt der Schließen-Knopf immer erreichbar.
-            valuePill
-            hubControls
+            if isColorPickerVisible {
+                colorChoices
+                    .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: scaleAnchor)))
+                    .zIndex(0)
+            }
+
+            mainArcBackground
+                .zIndex(1)
+
+            ForEach(Array(paletteElements.enumerated()), id: \.offset) { index, element in
+                let angle = angleForElement(at: index)
+                paletteElementView(element, angle: angle)
+                    .position(point(radius: arcRadius, angle: angle))
+                    .zIndex(2)
+            }
         }
         .frame(width: containerSize.width, height: containerSize.height)
         .scaleEffect(paletteScale, anchor: scaleAnchor)
-        .simultaneousGesture(widthDragGesture)
+        .animation(.spring(response: 0.28, dampingFraction: 0.84), value: isColorPickerVisible)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Apple Pencil Werkzeugpalette")
     }
 
-    // MARK: Hintergrund
-
-    private var wedgeBackground: some View {
-        let shape = SqueezeWedgeShape(
+    private var mainArcBackground: some View {
+        let arc = SqueezeArcShape(
             center: clampedAnchor,
-            radius: wedgeRadius,
-            startAngle: directionAngle - wedgeHalfAngle,
-            endAngle: directionAngle + wedgeHalfAngle
+            radius: arcRadius,
+            startAngle: arcStartAngle,
+            endAngle: arcEndAngle
+        )
+        let rim = SqueezeArcShape(
+            center: clampedAnchor,
+            radius: arcRadius + arcBandWidth / 2 - 3,
+            startAngle: arcStartAngle,
+            endAngle: arcEndAngle
         )
 
         return ZStack {
-            shape
-                .fill(.ultraThinMaterial)
-                .shadow(color: Color.black.opacity(0.22), radius: 18, x: 0, y: 8)
+            arc
+                .stroke(
+                    .ultraThinMaterial,
+                    style: StrokeStyle(lineWidth: arcBandWidth, lineCap: .round, lineJoin: .round)
+                )
+                .shadow(color: Color.black.opacity(0.24), radius: 15, x: 0, y: 6)
 
-            shape
+            rim
                 .stroke(
                     LinearGradient(
-                        colors: [Color.white.opacity(0.55), Color.white.opacity(0.12)],
+                        colors: [Color.white.opacity(0.42), Color.white.opacity(0.12)],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
-                    lineWidth: 1
+                    style: StrokeStyle(lineWidth: 1, lineCap: .round)
                 )
-
-            // Kleiner Punkt am Anker: markiert die Hover-Position des Stifts.
-            Circle()
-                .fill(Color.primary.opacity(0.35))
-                .frame(width: 6, height: 6)
-                .position(clampedAnchor)
         }
     }
 
-    // MARK: Werkzeuge (innerer Ring)
-
-    private var toolItems: some View {
-        ForEach(Array(PaletteTool.allCases.enumerated()), id: \.element.id) { index, tool in
-            let angle = directionAngle - 40 * .pi / 180 + CGFloat(index) * 20 * .pi / 180
-            let isSelected = activeTool == tool
-
-            Button {
-                Haptics.select()
-                select(tool)
-            } label: {
-                Image(systemName: tool.icon)
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundColor(isSelected ? .white : .primary)
-                    .frame(width: itemSize, height: itemSize)
-                    .background(
-                        Circle().fill(isSelected ? Color.blue : Color(UIColor.tertiarySystemBackground))
-                    )
-                    .overlay(
-                        Circle().strokeBorder(Color.white.opacity(0.35), lineWidth: 1)
-                    )
-                    .shadow(color: Color.black.opacity(0.18), radius: 4, x: 0, y: 2)
-            }
-            .buttonStyle(.plain)
-            .hoverEffect(.lift)
-            .position(point(radius: toolRingRadius, angle: angle))
-            .accessibilityLabel(tool.title)
-            .accessibilityValue(isSelected ? "Ausgewählt" : "")
+    @ViewBuilder
+    private func paletteElementView(_ element: SqueezePaletteElement, angle: CGFloat) -> some View {
+        switch element {
+        case .undo:
+            undoButton
+        case .divider:
+            Capsule()
+                .fill(Color.primary.opacity(0.20))
+                .frame(width: 1.5, height: 24)
+                // Die Linie steht senkrecht zur lokalen Laufrichtung des Bogens.
+                .rotationEffect(Angle(radians: Double(angle - .pi / 2)))
+                .accessibilityHidden(true)
+        case .tool(let tool):
+            toolButton(tool)
+        case .color:
+            colorButton
+        case .thickness:
+            thicknessButton
         }
     }
 
-    // MARK: Farben (mittlerer Ring)
-
-    private var colorItems: some View {
-        let slots = colorSlotsForActiveTool
-        let count = max(1, slots.count)
-        let span: CGFloat = 80 * .pi / 180
-        let selectedHex = activeInkingColorHex
-
-        return ForEach(Array(slots.enumerated()), id: \.offset) { index, hex in
-            // Der Winkel wird hier bewusst in einer einzigen `let`-Deklaration
-            // berechnet: Zuweisungen sind in einem ViewBuilder-Block keine
-            // gültigen Bausteine (sie liefern `()`, wofür es kein
-            // `buildExpression` gibt) und würden den Build abbrechen lassen.
-            let angle: CGFloat = count == 1
-                ? directionAngle
-                : directionAngle - span / 2 + span * CGFloat(index) / CGFloat(count - 1)
-            let isSelected = selectedHex?.caseInsensitiveCompare(hex) == .orderedSame
-            let swatch = Color(hex: hex)
-
-            Button {
-                Haptics.select()
-                applyColor(hex)
-            } label: {
-                ZStack {
-                    Circle()
-                        .fill(swatch)
-                        .frame(width: smallItemSize, height: smallItemSize)
-
-                    Circle()
-                        .strokeBorder(
-                            hex.caseInsensitiveCompare("#FFFFFF") == .orderedSame
-                                ? Color.gray.opacity(0.5)
-                                : Color.white.opacity(0.55),
-                            lineWidth: 1
-                        )
-                        .frame(width: smallItemSize, height: smallItemSize)
-
-                    if isSelected {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(swatch.contrastingTextColor)
-                            .shadow(
-                                color: swatch.contrastingTextColor == .white
-                                    ? Color.black.opacity(0.5)
-                                    : Color.clear,
-                                radius: 1
-                            )
-                    }
-                }
-                .frame(width: smallItemSize + 8, height: smallItemSize + 8)
-                .overlay(
-                    Circle()
-                        .strokeBorder(Color.blue, lineWidth: isSelected ? 2.5 : 0)
-                        .frame(width: smallItemSize + 7, height: smallItemSize + 7)
-                )
-                .shadow(color: Color.black.opacity(0.18), radius: 4, x: 0, y: 2)
-            }
-            .buttonStyle(.plain)
-            .hoverEffect(.lift)
-            .position(point(radius: colorRingRadius, angle: angle))
-            .accessibilityLabel("Farbe \(hex)")
-            .accessibilityValue(isSelected ? "Ausgewählt" : "")
-        }
-    }
-
-    // MARK: Dicke (äußerer Bogen-Regler)
-
-    private var widthSlider: some View {
-        let progress = widthProgress
-        let startAngle = directionAngle - sliderHalfAngle
-        let endAngle = directionAngle + sliderHalfAngle
-        let knobAngle = startAngle + (endAngle - startAngle) * progress
-
-        return ZStack {
-            SqueezeArcShape(
-                center: clampedAnchor,
-                radius: sliderTrackRadius,
-                startAngle: startAngle,
-                endAngle: endAngle
-            )
-            .stroke(
-                Color.primary.opacity(0.14),
-                style: StrokeStyle(lineWidth: sliderTrackWidth, lineCap: .round)
-            )
-
-            // Gefüllter Teil bis zum aktuellen Wert.
-            SqueezeArcShape(
-                center: clampedAnchor,
-                radius: sliderTrackRadius,
-                startAngle: startAngle,
-                endAngle: max(startAngle, knobAngle)
-            )
-            .stroke(
-                currentToolPreviewColor,
-                style: StrokeStyle(lineWidth: sliderTrackWidth, lineCap: .round)
-            )
-            .opacity(0.55)
-
-            Circle()
-                .fill(currentToolPreviewColor)
-                .frame(width: 26, height: 26)
-                .overlay(Circle().strokeBorder(Color.white, lineWidth: 2))
-                .shadow(color: Color.black.opacity(0.25), radius: 4, x: 0, y: 2)
-                .position(point(radius: sliderTrackRadius, angle: knobAngle))
-        }
-    }
-
-    // MARK: Mittelpunkt (Fertig, Rückgängig, Wiederholen)
-
-    private var hubControls: some View {
-        ZStack {
-            hubButton(icon: "xmark", label: "Palette schließen", action: onClose)
-                .position(point(radius: 76, angle: directionAngle + .pi))
-
-            hubButton(icon: "arrow.uturn.backward", label: "Rückgängig", action: onUndo)
-                .position(point(radius: 66, angle: directionAngle - 44 * .pi / 180))
-
-            hubButton(icon: "arrow.uturn.forward", label: "Wiederholen", action: onRedo)
-                .position(point(radius: 66, angle: directionAngle + 44 * .pi / 180))
-        }
-    }
-
-    private func hubButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
+    private var undoButton: some View {
         Button {
             Haptics.tap()
-            action()
+            onUndo()
         } label: {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.primary)
-                .frame(width: 32, height: 32)
-                .background(Circle().fill(.ultraThinMaterial))
-                .overlay(Circle().strokeBorder(Color.white.opacity(0.35), lineWidth: 1))
-                .shadow(color: Color.black.opacity(0.18), radius: 3, x: 0, y: 1.5)
+            Image(systemName: "arrow.uturn.backward")
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: buttonSize, height: buttonSize)
+                .lightButton(cornerRadius: 13, tint: .blue, isFilled: true)
+                .foregroundColor(.white)
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
-        .accessibilityLabel(label)
+        .accessibilityLabel("Rückgängig")
     }
 
-    /// Anzeige von Werkzeug und aktueller Dicke – bewusst kompakt, damit sie
-    /// am Anker weder den Schließen-Knopf noch die Werkzeuge überdeckt.
-    private var valuePill: some View {
-        HStack(spacing: 5) {
-            Image(systemName: activePaletteTool.icon)
-                .font(.system(size: 12, weight: .semibold))
-            Text("\(formattedWidth) pt")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .monospacedDigit()
+    private func toolButton(_ tool: SqueezePaletteTool) -> some View {
+        let isSelected = activeTool == tool
+
+        return Button {
+            Haptics.select()
+            select(tool)
+        } label: {
+            Image(systemName: tool.icon)
+                .font(.system(size: 16, weight: .medium))
+                .frame(width: buttonSize, height: buttonSize)
+                .lightButton(
+                    cornerRadius: 13,
+                    tint: isSelected ? .blue : nil,
+                    isFilled: isSelected
+                )
+                .foregroundColor(isSelected ? .white : .primary)
         }
-        .foregroundColor(.primary)
-        .allowsHitTesting(false)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(
-            Capsule().fill(.ultraThinMaterial)
-        )
-        .overlay(
-            Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.16), radius: 4, x: 0, y: 2)
-        .fixedSize()
-        // Bewusst direkt am Anker: Dort kollidiert die Beschriftung nicht mit
-        // dem mittleren Werkzeug-Symbol – egal, in welche Richtung der Stift
-        // zeigt.
-        .position(clampedAnchor)
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+        .accessibilityLabel(tool.title)
+        .accessibilityValue(isSelected ? "Ausgewählt" : "")
     }
 
-    // MARK: Regler-Geste
+    /// Farbe als einzelner Farbkreis. Der zusätzliche Bogen mit Farb-Slots wird
+    /// beim Hovern eingeblendet; Antippen öffnet ihn auch ohne Pointer.
+    private var colorButton: some View {
+        Button {
+            Haptics.tap()
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.84)) {
+                isColorPickerVisible.toggle()
+            }
+        } label: {
+            Circle()
+                .fill(Color(hex: currentColorHex))
+                .frame(width: 22, height: 22)
+                .overlay(
+                    Circle().strokeBorder(
+                        currentColorHex.caseInsensitiveCompare("#FFFFFF") == .orderedSame
+                            ? Color.gray.opacity(0.55)
+                            : Color.white.opacity(0.60),
+                        lineWidth: 1
+                    )
+                )
+                .frame(width: buttonSize, height: buttonSize)
+                .lightButton(cornerRadius: 13)
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+        .onHover { isHovering in
+            updateHoverTarget("color-button", isHovering: isHovering, source: .pointer)
+        }
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(_):
+                updateHoverTarget("color-button", isHovering: true, source: .continuous)
+            case .ended:
+                updateHoverTarget("color-button", isHovering: false, source: .continuous)
+            }
+        }
+        .accessibilityLabel("Farbe \(currentColorHex)")
+        .accessibilityHint("Beim Hovern oder Antippen werden die Farb-Slots geöffnet")
+    }
 
-    private var widthDragGesture: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .local)
-            .onChanged { value in
-                let dx = value.location.x - clampedAnchor.x
-                let dy = value.location.y - clampedAnchor.y
-                let radius = sqrt(dx * dx + dy * dy)
+    private var colorChoices: some View {
+        let colors = colorSlotsForActiveTool.isEmpty ? [currentColorHex] : colorSlotsForActiveTool
+        let count = max(1, colors.count)
+        let startAngle = colorButtonAngle - colorArcHalfAngle
+        let endAngle = colorButtonAngle + colorArcHalfAngle
+        let arc = SqueezeArcShape(
+            center: clampedAnchor,
+            radius: colorArcRadius,
+            startAngle: startAngle,
+            endAngle: endAngle
+        )
 
-                if !isAdjustingWidth {
-                    // Der Zug muss im äußeren Ring beginnen – Tipps auf
-                    // Werkzeuge/Farben bleiben dadurch unberührt. Alle Werte
-                    // sind unskalierte Punkte: `scaleEffect` ändert die
-                    // lokalen Koordinaten nicht.
-                    let lower = sliderTrackRadius - sliderTrackWidth * 1.6
-                    let upper = sliderTrackRadius + sliderTrackWidth * 1.6
-                    guard radius >= lower, radius <= upper else { return }
-                    isAdjustingWidth = true
+        return ZStack {
+            arc
+                .stroke(
+                    .ultraThinMaterial,
+                    style: StrokeStyle(lineWidth: colorArcBandWidth, lineCap: .round, lineJoin: .round)
+                )
+                .shadow(color: Color.black.opacity(0.20), radius: 10, x: 0, y: 4)
+
+            ForEach(Array(colors.enumerated()), id: \.offset) { index, hex in
+                let angle = count == 1
+                    ? colorButtonAngle
+                    : startAngle + (endAngle - startAngle) * CGFloat(index) / CGFloat(count - 1)
+                let isSelected = hex.caseInsensitiveCompare(currentColorHex) == .orderedSame
+
+                Button {
+                    Haptics.select()
+                    applyColor(hex)
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        isColorPickerVisible = false
+                    }
+                } label: {
+                    Circle()
+                        .fill(Color(hex: hex))
+                        .frame(width: colorSwatchSize, height: colorSwatchSize)
+                        .overlay(
+                            Circle().strokeBorder(
+                                hex.caseInsensitiveCompare("#FFFFFF") == .orderedSame
+                                    ? Color.gray.opacity(0.55)
+                                    : Color.white.opacity(0.75),
+                                lineWidth: 1
+                            )
+                        )
+                        .overlay(
+                            Circle()
+                                .strokeBorder(Color.blue, lineWidth: isSelected ? 2.5 : 0)
+                                .padding(-3)
+                        )
+                        .frame(width: 40, height: 40)
+                        .lightButton(
+                            cornerRadius: 20,
+                            tint: isSelected ? .blue : nil,
+                            isFilled: false
+                        )
                 }
+                .buttonStyle(.plain)
+                .hoverEffect(.lift)
+                .position(point(radius: colorArcRadius, angle: angle))
+                .onHover { isHovering in
+                    updateHoverTarget("color-\(index)", isHovering: isHovering, source: .pointer)
+                }
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(_):
+                        updateHoverTarget("color-\(index)", isHovering: true, source: .continuous)
+                    case .ended:
+                        updateHoverTarget("color-\(index)", isHovering: false, source: .continuous)
+                    }
+                }
+                .accessibilityLabel("Farbe \(hex)")
+                .accessibilityValue(isSelected ? "Ausgewählt" : "")
+            }
+        }
+        .frame(width: containerSize.width, height: containerSize.height)
+        .allowsHitTesting(isColorPickerVisible)
+        .accessibilityLabel("Farbauswahl")
+    }
 
-                var delta = atan2(dy, dx) - directionAngle
-                while delta > .pi { delta -= 2 * .pi }
-                while delta < -.pi { delta += 2 * .pi }
-                let clamped = min(max(delta, -sliderHalfAngle), sliderHalfAngle)
-                let progress = (clamped + sliderHalfAngle) / (2 * sliderHalfAngle)
-                setWidth(progress: progress)
+    /// Die Dicke wird durch Halten und radiales Ziehen angepasst: zum Anker hin
+    /// dünner, vom Anker weg dicker.
+    private var thicknessButton: some View {
+        Button {} label: {
+            VStack(spacing: 1) {
+                Image(systemName: "lineweight")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(formattedWidth)
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+            }
+            .frame(width: buttonSize, height: buttonSize)
+            .lightButton(cornerRadius: 13)
+            .foregroundColor(.primary)
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+        .simultaneousGesture(thicknessHoldAndDragGesture)
+        .accessibilityLabel("Stiftdicke \(formattedWidth) Punkt")
+        .accessibilityHint("Gedrückt halten und radial ziehen, um die Dicke anzupassen")
+    }
+
+    // MARK: - Farbe und Hover
+
+    private func updateHoverTarget(_ target: String, isHovering: Bool, source: HoverSource) {
+        switch source {
+        case .pointer:
+            if isHovering {
+                pointerHoverTargets.insert(target)
+            } else {
+                pointerHoverTargets.remove(target)
+            }
+        case .continuous:
+            if isHovering {
+                continuousHoverTargets.insert(target)
+            } else {
+                continuousHoverTargets.remove(target)
+            }
+        }
+
+        if isHovering {
+            colorPickerHideWorkItem?.cancel()
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.84)) {
+                isColorPickerVisible = true
+            }
+        } else {
+            scheduleColorPickerDismissal()
+        }
+    }
+
+    private func scheduleColorPickerDismissal() {
+        colorPickerHideWorkItem?.cancel()
+        let workItem = DispatchWorkItem {
+            guard pointerHoverTargets.isEmpty, continuousHoverTargets.isEmpty else { return }
+            withAnimation(.easeOut(duration: 0.16)) {
+                isColorPickerVisible = false
+            }
+        }
+        colorPickerHideWorkItem = workItem
+        // Die kurze Verzögerung lässt den Pointer/Pencil den schmalen Abstand
+        // zwischen Farbbutton und äußerem Farbsegment überqueren.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: workItem)
+    }
+
+    // MARK: - Dicke per radialer Geste
+
+    private var thicknessHoldAndDragGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.22)
+            .sequenced(
+                before: DragGesture(
+                    minimumDistance: 0,
+                    coordinateSpace: .named(GlobalCoordinateSpace.name)
+                )
+            )
+            .onChanged { value in
+                guard case .second(true, let possibleDragValue) = value,
+                      let dragValue = possibleDragValue else { return }
+                updateThickness(using: dragValue)
             }
             .onEnded { _ in
                 isAdjustingWidth = false
+                widthDragStartRadius = 0
             }
     }
 
-    // MARK: Werkzeug-Zustand
+    private func updateThickness(using drag: DragGesture.Value) {
+        let center = CGPoint(
+            x: clampedAnchor.x + containerOrigin.x,
+            y: clampedAnchor.y + containerOrigin.y
+        )
+        let startRadius = distance(drag.startLocation, center)
+        let currentRadius = distance(drag.location, center)
 
-    private var activeTool: PaletteTool {
+        if !isAdjustingWidth {
+            isAdjustingWidth = true
+            widthDragStartRadius = startRadius
+            widthDragStartValue = widthBinding.wrappedValue
+            Haptics.select()
+        }
+
+        let range = widthRange
+        let radialChange = currentRadius - widthDragStartRadius
+        let pointsForFullRange: CGFloat = 120
+        let widthChange = radialChange * (range.upperBound - range.lowerBound) / pointsForFullRange
+        setWidth(widthDragStartValue + widthChange)
+    }
+
+    private func distance(_ first: CGPoint, _ second: CGPoint) -> CGFloat {
+        let dx = first.x - second.x
+        let dy = first.y - second.y
+        return sqrt(dx * dx + dy * dy)
+    }
+
+    // MARK: - Werkzeugzustand
+
+    private var activeTool: SqueezePaletteTool {
         switch toolSelection {
         case .pen: return .pen
         case .marker: return .marker
@@ -393,18 +534,16 @@ struct PencilSqueezePaletteView: View {
         }
     }
 
-    private var activePaletteTool: PaletteTool { activeTool }
-
-    private func select(_ tool: PaletteTool) {
+    private func select(_ tool: SqueezePaletteTool) {
         switch tool {
+        case .lasso:
+            toolSelection = .lasso
         case .pen:
             toolSelection = .pen(color: UIColor(hex: fallbackPenHex))
         case .marker:
             toolSelection = .marker(color: UIColor(hex: fallbackMarkerHex).withAlphaComponent(0.60))
         case .eraser:
             toolSelection = .eraser
-        case .lasso:
-            toolSelection = .lasso
         case .text:
             toolSelection = .text
         }
@@ -420,19 +559,17 @@ struct PencilSqueezePaletteView: View {
         return markerColorSlots.first ?? "#FFE633"
     }
 
-    /// Farb-Slots des aktiven Werkzeugs (Textmarker → Marker-Farben, sonst
-    /// Stift-Farben).
     private var colorSlotsForActiveTool: [String] {
         if case .marker = toolSelection { return markerColorSlots }
         return penColorSlots
     }
 
-    private var activeInkingColorHex: String? {
+    private var currentColorHex: String {
         switch toolSelection {
         case .pen(let color), .marker(let color):
             return color.toHex()
-        default:
-            return nil
+        case .eraser, .lasso, .text:
+            return fallbackPenHex
         }
     }
 
@@ -445,7 +582,7 @@ struct PencilSqueezePaletteView: View {
         }
     }
 
-    // MARK: Dicke
+    // MARK: - Dicke
 
     private var widthBinding: Binding<CGFloat> {
         switch toolSelection {
@@ -469,102 +606,63 @@ struct PencilSqueezePaletteView: View {
         }
     }
 
-    private var widthProgress: CGFloat {
-        let range = widthRange
-        let value = min(max(widthBinding.wrappedValue, range.lowerBound), range.upperBound)
-        let span = range.upperBound - range.lowerBound
-        guard span > 0 else { return 0 }
-        return (value - range.lowerBound) / span
-    }
-
     private var formattedWidth: String {
         String(format: "%.1f", widthBinding.wrappedValue)
     }
 
-    private func setWidth(progress: CGFloat) {
+    private func setWidth(_ value: CGFloat) {
         let range = widthRange
-        let clamped = min(max(progress, 0), 1)
-        let value = range.lowerBound + clamped * (range.upperBound - range.lowerBound)
-        widthBinding.wrappedValue = (value * 2).rounded() / 2
-    }
-
-    /// Vorschau-Farbe der Dicke: die Farbe des aktiven Werkzeugs.
-    private var currentToolPreviewColor: Color {
-        switch toolSelection {
-        case .pen(let color):
-            return Color(uiColor: color)
-        case .marker(let color):
-            return Color(uiColor: color.withAlphaComponent(1))
-        case .eraser:
-            return Color(UIColor.systemGray2)
-        case .text, .lasso:
-            return .primary
-        }
+        let clamped = min(max(value, range.lowerBound), range.upperBound)
+        widthBinding.wrappedValue = (clamped * 2).rounded() / 2
     }
 }
 
-// MARK: - Werkzeugliste
+private enum HoverSource {
+    case pointer
+    case continuous
+}
 
-/// Die Werkzeuge der Palette in fester Reihenfolge (innerer Ring).
-enum PaletteTool: Int, CaseIterable, Identifiable {
+private enum SqueezePaletteElement {
+    case undo
+    case divider
+    case tool(SqueezePaletteTool)
+    case color
+    case thickness
+}
+
+/// Reihenfolge wie vom Nutzer gewünscht: Lasso, Stift, Textmarker, Radierer, Text.
+private enum SqueezePaletteTool: Int, CaseIterable, Identifiable {
+    case lasso
     case pen
     case marker
     case eraser
-    case lasso
     case text
 
     var id: Int { rawValue }
 
     var icon: String {
         switch self {
+        case .lasso: return "lasso"
         case .pen: return "pencil.tip"
         case .marker: return "highlighter"
         case .eraser: return "eraser"
-        case .lasso: return "lasso"
         case .text: return "textformat"
         }
     }
 
     var title: String {
         switch self {
+        case .lasso: return "Lasso"
         case .pen: return "Stift"
         case .marker: return "Textmarker"
         case .eraser: return "Radierer"
-        case .lasso: return "Lasso"
         case .text: return "Text"
         }
     }
 }
 
-// MARK: - Formen
-
-/// Viertelkreis-Segment (Tortenstück) zwischen zwei Winkeln.
-struct SqueezeWedgeShape: Shape {
-    let center: CGPoint
-    let radius: CGFloat
-    let startAngle: CGFloat
-    let endAngle: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: center)
-
-        let steps = 40
-        for step in 0...steps {
-            let fraction = CGFloat(step) / CGFloat(steps)
-            let angle = startAngle + (endAngle - startAngle) * fraction
-            path.addLine(to: CGPoint(
-                x: center.x + radius * cos(angle),
-                y: center.y + radius * sin(angle)
-            ))
-        }
-
-        path.closeSubpath()
-        return path
-    }
-}
-
-/// Offener Bogen – Basis für den Dicke-Regler.
+/// Open circle arc. Beim Strich mit `lineCap: .round` entsteht ein gerundetes
+/// Bogen-Segment statt eines Tortenstücks.
 struct SqueezeArcShape: Shape {
     let center: CGPoint
     let radius: CGFloat
@@ -573,7 +671,7 @@ struct SqueezeArcShape: Shape {
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        let steps = 32
+        let steps = 80
         for step in 0...steps {
             let fraction = CGFloat(step) / CGFloat(steps)
             let angle = startAngle + (endAngle - startAngle) * fraction

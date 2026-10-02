@@ -86,6 +86,12 @@ public struct NotesOverviewListView: View {
                         emptyState
                             .frame(maxWidth: .infinity)
                             .padding(.top, 60)
+                    } else if columns > 1 {
+                        multiColumnOverview(
+                            items: items,
+                            columnCount: columns,
+                            relativeTo: timeline.date
+                        )
                     } else {
                         gridOverview(
                             items: items,
@@ -105,27 +111,70 @@ public struct NotesOverviewListView: View {
     private let horizontalPadding: CGFloat = 18
     private let columnSpacing: CGFloat = 14
     private let rowSpacing: CGFloat = 14
-    /// Kleinste Breite, die eine Notiz-Karte im Raster noch angenehm lesbar
-    /// macht. Daraus ergibt sich, ob eine oder zwei Spalten sinnvoll sind.
-    ///
-    /// Der Wert ist bewusst so klein, dass auch das **iPad im Hochformat**
-    /// (und im geteilten Bildschirm mit halber Breite) echte zwei Spalten
-    /// bekommt – erst sehr schmale Fenster werden einspaltig.
+    /// Mindestbreite je Karte für zwei Spalten in nicht-querformatigen
+    /// Layouts (z. B. Hochformat oder schmale Fenster).
     private let minimumCardWidth: CGFloat = 330
 
-    /// Spalten des Rasters: **zwei**, sobald beide Spalten breit genug sind –
-    /// unabhängig davon, ob das Gerät quer oder hoch gehalten wird. Nur in
-    /// wirklich schmalen Fenstern (z. B. Split View mit einem schmalen Streifen)
-    /// bleibt die Übersicht einspaltig.
+    /// Auf dem iPad im Querformat sind zwei Spalten fest aktiv. Zuvor wurden
+    /// sie abhängig von einer Mindestkartenbreite gewählt; in manchen
+    /// Fenster-/Split-View-Konfigurationen blieb dadurch auch ein quer
+    /// gehaltenes iPad einspaltig.
     private func columnCount(for size: CGSize) -> Int {
+        if UIDevice.current.userInterfaceIdiom == .pad, size.width > size.height {
+            return 2
+        }
+
         let usableWidth = size.width - horizontalPadding * 2 - columnSpacing
         guard usableWidth >= minimumCardWidth * 2 else { return 1 }
         return 2
     }
 
-    /// Die komplette Übersicht als Raster: Tagesüberschriften und die grüne
-    /// „Jetzt“-Linie laufen über die volle Breite, die Notizen selbst stehen
-    /// als gleich breite Karten in ein oder zwei Spalten.
+    /// Querformat-Raster: Alle Notizen laufen in einem gemeinsamen Grid.
+    /// Tagesüberschriften werden hier weggelassen, da jede Karte Datum und
+    /// Stunde bereits im eigenen Header trägt. So können Notizen verschiedener
+    /// Tage dieselbe Zeile füllen, statt pro Tag jeweils allein links zu stehen.
+    private func multiColumnOverview(
+        items: [ListItem],
+        columnCount: Int,
+        relativeTo date: Date
+    ) -> some View {
+        let columns = Array(
+            repeating: GridItem(.flexible(), spacing: columnSpacing, alignment: .top),
+            count: max(2, columnCount)
+        )
+        let gridItems = items.filter { item in
+            if case .dayHeader = item { return false }
+            return true
+        }
+
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: rowSpacing) {
+            ForEach(gridItems) { item in
+                switch item {
+                case .nowLine:
+                    nowLine(relativeTo: date)
+                        .padding(.vertical, 2)
+                        .gridCellColumns(columnCount)
+                case .dayHeader:
+                    EmptyView()
+                case .row(let entry):
+                    noteRow(entry: entry, compact: true)
+                        // Innenabstand verkleinert Vorschau und Karte, ohne
+                        // die gleichmäßige Spaltenbreite des Grids zu ändern.
+                        .padding(.horizontal, 20)
+                        .frame(
+                            maxWidth: .infinity,
+                            maxHeight: .infinity,
+                            alignment: .topLeading
+                        )
+                }
+            }
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.vertical, 10)
+    }
+
+    /// Die einspaltige Übersicht behält ihre Tagesüberschriften. Im
+    /// Mehrspaltenraster stehen Datum und Stunde direkt auf jeder Karte.
     private func gridOverview(
         items: [ListItem],
         columnCount: Int,

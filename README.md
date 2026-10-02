@@ -69,7 +69,7 @@ Das Repository enthält das fertige App-Package **`PlanApp.swiftpm`**, welches a
 - **Werkzeuge**:
   - **Stift / Textmarker / Radierer / Lasso / Text** – mit frei wählbaren Farben aus den Farb-Slots und eigener Dicke je Werkzeug.
   - **Rückgängig & Vorwärts (Undo/Redo)** über die Werkzeugleiste, die Text-Werkzeuge und den **Doppeltipp** des Apple Pencil.
-- **Squeeze-Werkzeugpalette im Viertelkreis**: Ein Zusammendrücken des Apple Pencil Pro öffnet an der **letzten Hover-Position** einen Viertelkreis **in Blickrichtung des Stifts**. Darin ist alles einstellbar: Werkzeug, Farbe und Dicke (Bogen-Regler am äußeren Rand) sowie Rückgängig, Wiederholen und Schließen. Sobald wieder geschrieben wird, verschwindet die Palette von selbst.
+- **Squeeze-Werkzeugpalette als abgerundeter Bogen**: Ein Zusammendrücken des Apple Pencil Pro öffnet an der **letzten Hover-Position** eine schmale, abgerundete Viertelkreis-Kurve. Sie enthält Rückgängig, Lasso, Stift, Textmarker, Radierer, Text, die Farbe (Farb-Slots erscheinen beim Hovern außen) und die Stiftdicke (durch Halten und radiales Ziehen). Ein erneuter Squeeze schließt die Palette; beim Weiterzeichnen verschwindet sie ebenfalls.
 - **Radierer mit automatischer Rückkehr**: Nach dem Radieren und Loslassen wechselt das Werkzeug automatisch zum zuletzt benutzten Werkzeug zurück (Fallback: Stift). Der Schalter *„Radierer automatisch abwählen“* (Standard: an) sitzt unter *Zeichnen & Apple Pencil*.
 - **Apple-Pencil-Einstellung**: Standardmäßig **aus**, das heißt Finger und Pencil dürfen zeichnen. Sobald die App irgendwo einen echten Apple Pencil bemerkt (Hover, Strich oder Squeeze), schaltet sie „Nur Apple Pencil“ automatisch ein und merkt sich das.
 - **Apple Pencil Hover**: Alle Buttons und Karten unterstützen iPadOS Pointer- & Hover-Effekte (`.hoverEffect(.lift)`).
@@ -78,10 +78,10 @@ Das Repository enthält das fertige App-Package **`PlanApp.swiftpm`**, welches a
 
 ### 🗒️ 6. Ansichts-Modus „Nur Notizen“ als Raster
 
-- **Raster statt Liste**: Die Notiz-Übersicht ist ein echtes Raster. Auf dem iPad stehen die Notizen **zweispaltig** nebeneinander – **quer und hoch**, sobald beide Spalten breit genug sind. Nur in sehr schmalen Fenstern (Split View) bleibt es einspaltig, damit jede Karte lesbar bleibt.
+- **Raster statt Liste**: Die Notiz-Übersicht ist ein echtes Raster. Auf dem iPad stehen die Notizen im **Querformat immer zweispaltig**; im Hochformat werden zwei Spalten verwendet, sobald beide Karten breit genug sind. In sehr schmalen Fenstern bleibt es einspaltig.
 - **„Im Standard-Modus anzeigen“**: Karte gedrückt halten und die Option wählen – die App wechselt in den Standard-Modus **und** wischt automatisch zu der Woche, in der die Stunde liegt.
 - **Gleiche Kartenbreiten**: Alle Karten eines Abschnitts haben dieselbe Breite, und die Karten einer Zeile dieselbe Höhe – die Übersicht wirkt wie eine Tafel, nicht wie eine lose Liste.
-- **Volle Breite für Struktur**: Tagesüberschriften und die grüne „Jetzt“-Linie laufen über die volle Breite und trennen die Rasterabschnitte.
+- **Chronologie im Raster**: Die grüne „Jetzt“-Linie läuft über die volle Breite. Im Mehrspaltenraster stehen Datum und Stunde direkt im Header jeder Karte, sodass Notizen verschiedener Tage eine Zeile gemeinsam füllen können.
 - **Chronologie bleibt**: Gelesen wird zeilenweise von links nach rechts – vergangene Einträge oben, kommende unterhalb der grünen Linie.
 
 ### 🌙 7. Darstellung & Dark Mode (Schrift bleibt schwarz)
@@ -130,7 +130,7 @@ planapp/
 │   │   │   ├── LessonDrawingOverlayView.swift# Fullscreen-Overlay mit Zettel & Gesten
 │   │   │   ├── LinedPaperBackground.swift    # Linierter Zettel mit rotem Rand
 │   │   │   ├── PencilKitCanvasRepresentable.swift # PencilKit Wrapper, Pencil-Erkennung & Squeeze
-│   │   │   ├── PencilSqueezePaletteView.swift# Viertelkreis-Werkzeugpalette (Dicke, Tool, Farbe)
+│   │   │   ├── PencilSqueezePaletteView.swift# Abgerundete Squeeze-Bogenpalette
 │   │   │   └── DrawingToolbarView.swift      # Vorgegebene Stift-, Textmarker- & Radier-Tools
 │   │   ├── Keyboard/
 │   │   │   ├── TextInputHub.swift            # Eingabe-Hub, Tastatur-Erkennung & Diagnose
