@@ -77,4 +77,22 @@ expect(AppKeyboardLayout.keyHeight(totalHeight: 384, bottomInset: 20, rowCount: 
 expect(AppKeyboardLayout.keyHeight(totalHeight: 512, bottomInset: 20, rowCount: 0), 0, "Keine Tastenreihen")
 expect(AppKeyboardLayout.keyHeight(totalHeight: 40, bottomInset: 20, rowCount: 4), 0, "Keine negativen Tastenhöhen")
 
+// Eingebettete Tastatur: komfortable Höhe auf großen Fenstern, begrenzt auf
+// kleine Fenster, niemals negativ oder unsinnig groß.
+let embeddedLandscape = AppKeyboardLayout.embeddedHeight(windowHeight: 1024, bottomInset: 20)
+expect(embeddedLandscape, 322, "iPad Querformat: vier volle Tastenreihen")
+expect(AppKeyboardLayout.embeddedHeight(windowHeight: 1366, bottomInset: 24), 326, "iPad Hochformat")
+expect(AppKeyboardLayout.embeddedHeight(windowHeight: 390, bottomInset: 0), 240, "Kleines Fenster begrenzt")
+expect(AppKeyboardLayout.embeddedHeight(windowHeight: 0, bottomInset: 20), 322, "Noch kein Fensterlayout")
+expect(AppKeyboardLayout.embeddedHeight(windowHeight: .infinity, bottomInset: 20), 322, "Ungültige Fensterhöhe")
+expect(
+    AppKeyboardLayout.keyHeight(
+        totalHeight: AppKeyboardLayout.embeddedHeight(windowHeight: 1024, bottomInset: 20),
+        bottomInset: 20,
+        rowCount: 4
+    ),
+    58,
+    "Eingebettete Tastenreihen füllen die Höhe"
+)
+
 print("\(checks) Tastatur-Layout-Checks erfolgreich.")

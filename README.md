@@ -111,9 +111,8 @@ planapp/
 │   │   ├── Keyboard/
 │   │   │   ├── TextInputHub.swift            # Eingabe-Hub, Tastatur-Erkennung & Diagnose
 │   │   │   ├── AppKeyboardView.swift         # App-eigene Bildschirmtastatur
-│   │   │   ├── AppKeyboardWindow.swift       # Gemeinsame Tastaturebene über allen Sheets
-│   │   │   ├── AppKeyboardLayout.swift       # Fensterbezogene Größe & Überlappung
-│   │   │   └── AppKeyboardHost.swift         # App-Root-Einbindung, Inhaltsabstand & Tipp-Überwachung
+│   │   │   ├── AppKeyboardLayout.swift       # Adaptive Tastaturmaße & Safe-Area-Abstände
+│   │   │   └── AppKeyboardHost.swift         # Untere Einbindung pro Eingabeansicht & Tipp-Überwachung
 │   │   ├── Settings/
 │   │   │   ├── SettingsView.swift            # Einstellungen-Übersicht (Kategorien)
 │   │   │   ├── SettingsCategory.swift        # Kategorien & Detailseiten
@@ -185,16 +184,18 @@ Sie ist eine normale SwiftUI-Ansicht innerhalb der App, braucht also weder die
 Systemtastatur noch Tastenereignisse von iPadOS – sie funktioniert immer, weil
 sie nur Tipps benötigt.
 
-Die Tastatur liegt **fensterweit über allen Ansichten und Sheets**, nicht im
-Einstellungen-Formular. Sie füllt die **untere Hälfte des aktuellen App-Fensters
-über die volle Breite** aus und bleibt unten angedockt. Bei Rotation, Split View
-und Stage Manager richtet sie sich nach der App-Fenstergröße. Die zusätzliche
-Tastaturebene wird nicht zum Key-Window; das bearbeitete Feld behält den Fokus.
-Einstellungen und Notiz halten nur den tatsächlich verdeckten Inhaltsbereich
-frei, auch bei einem weiteren Fach-/Lehrer-Bearbeiten-Sheet. Falls ein nativer
-Hardware-Kurzbefehlsstreifen oder im Modus **Immer anzeigen** zusätzlich die
-Systemtastatur erscheint, dockt die App-Tastatur direkt darüber im verbleibenden
-Fensterbereich an, damit keine Tasten verdeckt werden.
+Die Tastatur wird **unten an die jeweilige Eingabeansicht angebunden**
+(`safeAreaInset`): auf der Zeichenfläche am unteren Bildschirmrand, in den
+Einstellungen und in verschachtelten Bearbeiten-Sheets unten im Sheet. Sie ist
+damit Teil der normalen Ansichts-Hierarchie – ihre Tasten funktionieren auf
+echten Geräten zuverlässig, und Tipps auf die Tastatur können keine Gesten
+dahinterliegender Ebenen auslösen (kein ungewolltes Schließen von Notiz oder
+Einstellungen). Der oberste sichtbare Host zeigt die Tastatur, darunterliegende
+Hosts bleiben leer – es gibt also nie zwei Tastaturen gleichzeitig. Bei
+Rotation, Split View und Stage Manager skaliert die Höhe mit der Ansicht
+(höchstens ~42 % der Ansichtshöhe, mindestens 240 pt); die unterste Tastenreihe
+bleibt oberhalb des Home-Indikators, nur der Hintergrund reicht bis an den
+Bildschirmrand.
 
 Der Ablauf:
 
@@ -239,9 +240,13 @@ tut – statt nur zu vermuten, dass etwas „repariert“ sei.
 
 ### Technische Randnotizen
 
-- `appKeyboardHost()` wird einmal am App-Root installiert. Eingabeansichten
-  verwenden nur `appKeyboardAvoidance()` für den benötigten Inhaltsabstand –
-  dadurch entstehen auch in verschachtelten Sheets keine weiteren Tastaturen.
+- `appKeyboardHost()` wird auf jeder Eingabeansicht installiert (Einstellungen,
+  Fach-/Lehrer-Bearbeiten-Sheets, Zeichenfläche). Der `TextInputHub` merkt sich
+  die Host-Reihenfolge; nur der oberste Host blendet die Tastatur ein, dadurch
+  entstehen auch in verschachtelten Sheets nie zwei Tastaturen. Auf ein
+  eigenes Overlay-Fenster wird bewusst verzichtet: Es erhielt auf echten
+  Geräten keine zuverlässigen Tipps und ließ Sheets/Notizen beim Tippen auf
+  die Tastatur ungewollt schließen.
 - Die Kopfzeile der geöffneten Notiz verwendet die adaptive System-Textfarbe:
   **weiß im Dark Mode, dunkel im Light Mode**. Das weiße Papier und die dort
   gewählten Text-/Stiftfarben ändern sich dadurch nicht.

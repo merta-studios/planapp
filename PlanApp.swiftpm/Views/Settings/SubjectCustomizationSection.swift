@@ -469,8 +469,9 @@ struct EditSubjectSheet: View {
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
-        // Auch verschachtelte Sheets verwenden dieselbe fensterweite Tastatur.
-        .appKeyboardAvoidance()
+        // Auch verschachtelte Sheets bekommen ihre eigene Tastatur unten im
+        // Sheet; sichtbar ist immer nur die des obersten Hosts.
+        .appKeyboardHost()
     }
 
     private func saveChanges() {
