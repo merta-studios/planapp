@@ -109,11 +109,12 @@ public final class TextInputHub: ObservableObject {
     /// Systemtastatur in Bildschirm-Koordinaten, inklusive des schmalen
     /// Hardware-Kurzbefehlsstreifens. Die App-Tasten dürfen nicht darunter liegen.
     @Published private(set) var systemKeyboardFrame: CGRect = .zero
-    /// Sichtbare Tastaturfläche in den Koordinaten des zugehörigen App-Fensters.
-    /// Eingabeansichten halten nur ihre tatsächliche Überlappung damit frei.
-    @Published private(set) var appKeyboardFrame: CGRect = .zero
-    private(set) weak var appKeyboardSourceWindow: UIWindow?
-    /// Das Fenster des Eingabeziels, nicht das zusätzliche Tastaturfenster.
+    /// Der Host, der die app-eigene Tastatur gerade anzeigen darf: immer der
+    /// oberste (zuletzt erschienene) registrierte Host. So erscheint genau
+    /// eine Tastatur – auch wenn mehrere Ansichten (Einstellungen plus
+    /// Bearbeiten-Sheet) gleichzeitig einen Host besitzen.
+    @Published public private(set) var activeKeyboardHostID: UUID?
+    /// Das Fenster des Eingabeziels.
     private var activeInputWindow: UIWindow? { currentInputView?.window }
     /// Auch „App-Tastatur jetzt einblenden“ ohne aktives Feld unterstützen.
     var keyboardPresentationWindow: UIWindow? { activeInputWindow ?? manualKeyboardWindow }
@@ -149,7 +150,8 @@ public final class TextInputHub: ObservableObject {
     private var observers: [NSObjectProtocol] = []
     private var revealWorkItem: DispatchWorkItem?
     private var didAttemptKeyWindowRepair = false
-    private var keyboardHostCount = 0
+    /// Reihenfolge der erschienenen Hosts; das letzte Element ist der oberste.
+    private var keyboardHosts: [UUID] = []
     /// Nach „Ausblenden“ soll die Tastatur für dieses Feld nicht sofort wieder
     /// auftauchen – erst beim nächsten Fokuswechsel.
     private var isRevealSuppressed = false
@@ -425,26 +427,6 @@ public final class TextInputHub: ObservableObject {
 
     // MARK: - Tastatur ein-/ausblenden
 
-    /// Die fensterweite Ebene meldet ihre Fläche. Ein anderes App-Fenster
-    /// darf die Fläche der aktuell sichtbaren Tastatur nicht zurücksetzen.
-    func updateAppKeyboardFrame(_ frame: CGRect, in window: UIWindow) {
-        if frame.isEmpty {
-            guard appKeyboardSourceWindow === window else { return }
-            appKeyboardSourceWindow = nil
-            appKeyboardFrame = .zero
-        } else {
-            guard appKeyboardSourceWindow !== window || appKeyboardFrame != frame else { return }
-            appKeyboardSourceWindow = window
-            appKeyboardFrame = frame
-        }
-    }
-
-    /// Nach dem Safe-Area-Update (auch bei Rotation) das aktive Feld wieder
-    /// in den nun sichtbaren Bereich der jeweiligen ScrollView schieben.
-    func keyboardHostLayoutDidChange() {
-        revealActiveInputInScrollView()
-    }
-
     public func showAppKeyboard() {
         guard AppKeyboardPreferences.shared.mode != .off else { return }
         isRevealSuppressed = false
@@ -531,8 +513,8 @@ public final class TextInputHub: ObservableObject {
             systemKeyboardFrame = frame
         }
 
-        // Bei „Immer anzeigen“ bleibt die fensterweite App-Tastatur bewusst
-        // eingeblendet, direkt oberhalb einer angedockten Systemtastatur.
+        // Bei „Immer anzeigen“ bleibt die App-Tastatur bewusst eingeblendet,
+        // auch zusätzlich zu einer angedockten Systemtastatur.
         guard AppKeyboardPreferences.shared.mode != .always else { return }
 
         if isSystemKeyboardVisible {
@@ -590,14 +572,24 @@ public final class TextInputHub: ObservableObject {
         }
     }
 
-    // MARK: - Hosts (Settings-Ansicht, Zeichenfläche)
+    // MARK: - Hosts (Einstellungen, Bearbeiten-Sheets, Zeichenfläche)
 
-    public func keyboardHostDidAppear() {
-        keyboardHostCount += 1
+    /// Registriert einen erschienenen Tastatur-Host. Nur der zuletzt
+    /// registrierte (oberste) Host zeigt die Tastatur; alle darunter
+    /// liegenden bleiben leer, damit nie zwei Tastaturen sichtbar sind.
+    public func keyboardHostDidAppear(_ id: UUID) {
+        if !keyboardHosts.contains(id) {
+            keyboardHosts.append(id)
+        }
+        refreshActiveHost()
     }
 
-    public func keyboardHostDidDisappear() {
-        keyboardHostCount = max(0, keyboardHostCount - 1)
+    /// Meldet einen verschwindenden Host ab; der nächste darunter wird
+    /// wieder aktiv.
+    public func keyboardHostDidDisappear(_ id: UUID) {
+        keyboardHosts.removeAll { $0 == id }
+        refreshActiveHost()
+
         if manualKeyboardWindow != nil { hideAppKeyboard() }
 
         // Nach dem Schließen eines Blatts (Einstellungen, Fach-/Lehrer-Blatt)
@@ -606,12 +598,19 @@ public final class TextInputHub: ObservableObject {
             self?.discardDetachedInputs()
         }
 
-        guard keyboardHostCount == 0 else { return }
+        guard keyboardHosts.isEmpty else { return }
         revealWorkItem?.cancel()
         isRevealSuppressed = false
         focusedInput = nil
         registeredInput = nil
         refreshActiveState()
+    }
+
+    private func refreshActiveHost() {
+        let active = keyboardHosts.last
+        if activeKeyboardHostID != active {
+            activeKeyboardHostID = active
+        }
     }
 
     // MARK: - Hilfsfunktionen

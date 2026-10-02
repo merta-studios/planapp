@@ -42,6 +42,21 @@ enum AppKeyboardLayout {
         return intersection.height
     }
 
+    /// Höhe der in die Ansicht eingebetteten Tastatur.
+    ///
+    /// Vier komfortable Tastenreihen (~58 pt), auf kleinen Fenstern
+    /// (iPhone-Querformat) begrenzt auf höchstens 42 % der Fensterhöhe,
+    /// mindestens aber 240 pt. Der untere Safe-Area-Abstand (Home-Indikator)
+    /// kommt hinzu, damit die Tasten darüber liegen und nur der Hintergrund
+    /// bis an den Bildschirmrand reicht.
+    static func embeddedHeight(windowHeight: CGFloat, bottomInset: CGFloat) -> CGFloat {
+        let inset = max(0, bottomInset)
+        let preferred = topBarHeight + topPadding + bottomPadding
+            + CGFloat(4) * rowSpacing + 4 * 58 + inset
+        guard windowHeight.isFinite, windowHeight > 0 else { return preferred }
+        return min(preferred, max(240, windowHeight * 0.42))
+    }
+
     /// Vier Tastenreihen füllen den verfügbaren Bereich bis oberhalb des
     /// Home-Indikators, statt auf großen iPads nur einen schmalen Streifen
     /// mit festen 50-pt-Tasten zu ergeben.

@@ -122,8 +122,11 @@ struct AppKeyboardView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .background(
+            // Der Hintergrund reicht bis an den unteren Bildschirmrand
+            // (Home-Indikator), während die Tasten darüber bleiben.
             Color(UIColor.secondarySystemBackground)
                 .overlay(Color.primary.opacity(0.05))
+                .ignoresSafeArea(edges: .bottom)
         )
         .overlay(alignment: .top) {
             Rectangle()
