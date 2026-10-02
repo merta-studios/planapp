@@ -9,11 +9,14 @@ private struct DrawingViewport {
     private let margin: CGFloat = 14
 
     var bounds: CGRect {
-        CGRect(
+        // Auch bei der auf die obere Bildschirmhälfte verkleinerten Notiz
+        // bleibt die Kopfzeile unter der Werkzeugleiste (40 pt + 2 × 8 pt).
+        let top = max(12, safeAreaInsets.top + 8) + 56 + margin
+        return CGRect(
             x: safeAreaInsets.leading + margin,
-            y: safeAreaInsets.top + margin,
+            y: top,
             width: max(1, size.width - safeAreaInsets.leading - safeAreaInsets.trailing - (margin * 2)),
-            height: max(1, size.height - safeAreaInsets.top - safeAreaInsets.bottom - (margin * 2))
+            height: max(1, size.height - top - safeAreaInsets.bottom - margin)
         )
     }
 
@@ -171,6 +174,12 @@ public struct LessonDrawingOverlayView: View {
                 guard didInitialize else { return }
                 normalizeTransform(in: viewport)
             }
+            .onChange(of: geometry.safeAreaInsets) { _, _ in
+                // Die globale Tastatur ändert die Safe Area, nicht zwingend
+                // die äußere Größe. Die Notiz muss trotzdem oberhalb bleiben.
+                guard didInitialize else { return }
+                normalizeTransform(in: viewport)
+            }
             .onChange(of: isTextToolActive) { _, nowActive in
                 if !nowActive {
                     // Werkzeugwechsel: Auswahl und Bearbeitung beenden; leere
@@ -225,11 +234,9 @@ public struct LessonDrawingOverlayView: View {
                 Text(exportAlertMessage ?? "")
             }
         }
-        // App-eigene Tastatur für das Text-Werkzeug: Sie erscheint unten auf
-        // der Zeichenfläche, wenn iPadOS keine Systemtastatur einblendet.
-        // Ohne Tipp-Überwachung, damit die PencilKit-Eingabe völlig unberührt
-        // bleibt – das Textfeld meldet sich hier ausdrücklich selbst an.
-        .appKeyboardHost(monitorsTaps: false)
+        // Nur Platz freihalten: Die einzige App-Tastatur liegt fensterweit
+        // über allen Ansichten. Das Textfeld meldet sich selbst beim Hub an.
+        .appKeyboardAvoidance()
     }
 
     // MARK: - Editor panel
@@ -380,7 +387,10 @@ public struct LessonDrawingOverlayView: View {
             display: display,
             displaySettings: viewModel.displaySettings,
             periods: viewModel.periods,
-            primaryColor: Color.black,
+            // Der aufgeklappte Rahmen verwendet secondarySystemBackground:
+            // weißer Text im Dark Mode, schwarzer im Light Mode. Während der
+            // Karten-Animation bleibt der Text auf der Fach-Farbe schwarz.
+            primaryColor: isExpanded ? .primary : display.color.contrastingTextColor,
             teacherDisplayName: viewModel.resolveTeacherName(lesson.teacherRaw),
             originalTeacherDisplayName: lesson.originalTeacher.map { viewModel.resolveTeacherName($0) }
         )

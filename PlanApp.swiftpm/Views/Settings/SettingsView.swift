@@ -56,9 +56,9 @@ public struct SettingsView: View {
                 SettingsCategoryDetailView(category: category)
             }
         }
-        // Die app-eigene Tastatur liegt über der gesamten Navigation, damit
-        // sie auch auf den Unterseiten erscheint.
-        .appKeyboardHost()
+        // Die Tastatur selbst liegt außerhalb des Sheets am Fensterrand.
+        // Hier nur den verdeckten Teil der Navigation freihalten.
+        .appKeyboardAvoidance()
     }
 }
 

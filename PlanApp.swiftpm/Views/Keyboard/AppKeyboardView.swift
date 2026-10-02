@@ -83,35 +83,47 @@ private func characterKey(_ text: String) -> KeySpec {
 /// inklusive Cursorposition und Autokorrektur-Verhalten des Felds.
 struct AppKeyboardView: View {
     @ObservedObject private var hub = TextInputHub.shared
+    let safeAreaInsets: UIEdgeInsets
 
     @State private var layer: KeyboardLayer = .letters
     @State private var isShifted = false
     @State private var showsPasteKey = false
 
-    private let keyHeight: CGFloat = 50
     private let keySpacing: CGFloat = 5
 
-    var body: some View {
-        VStack(spacing: 6) {
-            topBar
+    init(safeAreaInsets: UIEdgeInsets) {
+        self.safeAreaInsets = safeAreaInsets
+    }
 
-            ForEach(rows.indices, id: \.self) { index in
-                HStack(spacing: keySpacing) {
-                    ForEach(rows[index]) { key in
-                        keyView(key)
+    var body: some View {
+        GeometryReader { geometry in
+            let keyHeight = AppKeyboardLayout.keyHeight(
+                totalHeight: geometry.size.height,
+                bottomInset: safeAreaInsets.bottom,
+                rowCount: rows.count
+            )
+            let widthScale = max(0.75, geometry.size.width / 900)
+
+            VStack(spacing: AppKeyboardLayout.rowSpacing) {
+                topBar
+
+                ForEach(rows.indices, id: \.self) { index in
+                    HStack(spacing: keySpacing) {
+                        ForEach(rows[index]) { key in
+                            keyView(key, height: keyHeight, widthScale: widthScale)
+                        }
                     }
                 }
             }
+            .padding(.leading, max(8, safeAreaInsets.left))
+            .padding(.trailing, max(8, safeAreaInsets.right))
+            .padding(.top, AppKeyboardLayout.topPadding)
+            .padding(.bottom, AppKeyboardLayout.bottomPadding + safeAreaInsets.bottom)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .padding(.horizontal, 8)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
-        .frame(maxWidth: 900)
-        .frame(maxWidth: .infinity)
         .background(
             Color(UIColor.secondarySystemBackground)
                 .overlay(Color.primary.opacity(0.05))
-                .ignoresSafeArea(edges: .bottom)
         )
         .overlay(alignment: .top) {
             Rectangle()
@@ -159,7 +171,7 @@ struct AppKeyboardView: View {
                 hub.suppressAppKeyboardForCurrentInput()
             }
         }
-        .frame(height: 32)
+        .frame(height: AppKeyboardLayout.topBarHeight)
     }
 
     private var infoText: String {
@@ -259,21 +271,21 @@ struct AppKeyboardView: View {
 
     // MARK: - Tasten
 
-    private func keyView(_ key: KeySpec) -> some View {
+    private func keyView(_ key: KeySpec, height: CGFloat, widthScale: CGFloat) -> some View {
         let button = KeyboardKeyButton(
-            height: keyHeight,
+            height: height,
             isActive: isActiveKey(key),
             isAccent: key.isAccent,
             isProminent: key.isProminent,
             repeats: key.repeats,
             action: { perform(key) }
         ) {
-            keyLabel(key)
+            keyLabel(key, height: height)
         }
 
         return Group {
             if let width = key.width {
-                button.frame(width: width)
+                button.frame(width: width * widthScale)
             } else {
                 button.frame(maxWidth: .infinity)
             }
@@ -281,14 +293,14 @@ struct AppKeyboardView: View {
     }
 
     @ViewBuilder
-    private func keyLabel(_ key: KeySpec) -> some View {
+    private func keyLabel(_ key: KeySpec, height: CGFloat) -> some View {
         if let icon = key.icon {
             Image(systemName: icon)
-                .font(.system(size: 16, weight: .regular))
+                .font(.system(size: min(26, max(16, height * 0.28)), weight: .regular))
         } else if let title = key.title {
             Text(displayTitle(for: key, base: title))
                 .font(.system(
-                    size: key.isProminent ? 15 : 19,
+                    size: key.isProminent ? 15 : min(28, max(19, height * 0.28)),
                     weight: key.isProminent ? .semibold : .regular,
                     design: .default
                 ))

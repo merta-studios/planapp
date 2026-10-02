@@ -267,69 +267,70 @@ private struct EditTeacherSheet: View {
             ZStack {
                 Color(UIColor.systemBackground).ignoresSafeArea()
 
-                VStack(spacing: 20) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("Passe an, welches System-Kürzel durch welchen Lehrer-Namen ersetzt wird.")
-                            .font(.system(size: 14, weight: .regular, design: .default))
+                ScrollView(.vertical, showsIndicators: true) {
+                    VStack(spacing: 20) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("Passe an, welches System-Kürzel durch welchen Lehrer-Namen ersetzt wird.")
+                                .font(.system(size: 14, weight: .regular, design: .default))
+                                .foregroundColor(.secondary)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Lehrer-Kürzel vom System:")
+                                    .font(.system(size: 12, weight: .regular, design: .default))
+                                    .foregroundColor(.secondary)
+                                KeyboardTextField(
+                                    "z.B. DÜCK",
+                                    text: $systemAbbreviation,
+                                    capitalization: .allCharacters,
+                                    autocorrection: .no
+                                )
+                            }
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Gewünschter Name:")
+                                    .font(.system(size: 12, weight: .regular, design: .default))
+                                    .foregroundColor(.secondary)
+                                KeyboardTextField(
+                                    "z.B. Frau Dückerhoff",
+                                    text: $displayName,
+                                    returnKeyType: .done,
+                                    onSubmit: saveChanges
+                                )
+                            }
+                        }
+                        .padding(16)
+                        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
+
+                        HStack(spacing: 12) {
+                            Button(action: {
+                                Haptics.tap()
+                                onCancel()
+                            }) {
+                                Text("Abbrechen")
+                                    .font(.system(size: 15, weight: .regular, design: .default))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                            }
+                            .lightButton(cornerRadius: 12)
                             .foregroundColor(.secondary)
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Lehrer-Kürzel vom System:")
-                                .font(.system(size: 12, weight: .regular, design: .default))
-                                .foregroundColor(.secondary)
-                            KeyboardTextField(
-                                "z.B. DÜCK",
-                                text: $systemAbbreviation,
-                                capitalization: .allCharacters,
-                                autocorrection: .no
-                            )
-                        }
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Gewünschter Name:")
-                                .font(.system(size: 12, weight: .regular, design: .default))
-                                .foregroundColor(.secondary)
-                            KeyboardTextField(
-                                "z.B. Frau Dückerhoff",
-                                text: $displayName,
-                                returnKeyType: .done,
-                                onSubmit: saveChanges
-                            )
+                            Button(action: {
+                                Haptics.tap()
+                                saveChanges()
+                            }) {
+                                Text("Speichern")
+                                    .font(.system(size: 15, weight: .regular, design: .default))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                            }
+                            .lightButton(cornerRadius: 12, tint: .blue, isFilled: true)
+                            .foregroundColor(.white)
+                            .disabled(!canSave)
                         }
                     }
-                    .padding(16)
-                    .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
-
-                    Spacer()
-
-                    HStack(spacing: 12) {
-                        Button(action: {
-                            Haptics.tap()
-                            onCancel()
-                        }) {
-                            Text("Abbrechen")
-                                .font(.system(size: 15, weight: .regular, design: .default))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                        }
-                        .lightButton(cornerRadius: 12)
-                        .foregroundColor(.secondary)
-
-                        Button(action: {
-                            Haptics.tap()
-                            saveChanges()
-                        }) {
-                            Text("Speichern")
-                                .font(.system(size: 15, weight: .regular, design: .default))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                        }
-                        .lightButton(cornerRadius: 12, tint: .blue, isFilled: true)
-                        .foregroundColor(.white)
-                        .disabled(!canSave)
-                    }
+                    .padding(20)
                 }
-                .padding(20)
+                .scrollDismissesKeyboard(.never)
             }
             .navigationTitle("Lehrer bearbeiten")
             .navigationBarTitleDisplayMode(.inline)
@@ -345,9 +346,8 @@ private struct EditTeacherSheet: View {
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
-        // Dieses Blatt liegt über den Einstellungen – die app-eigene Tastatur
-        // muss deshalb auch hier eingebunden sein.
-        .appKeyboardHost()
+        // Auch verschachtelte Sheets verwenden dieselbe fensterweite Tastatur.
+        .appKeyboardAvoidance()
     }
 
     private var canSave: Bool {
