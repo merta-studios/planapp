@@ -1,124 +1,37 @@
 import SwiftUI
 
-/// Haupt-Einstellungsansicht der PlanApp im Liquid-Glass Design
+/// Startseite der Einstellungen: nur noch die Kategorien-Übersicht.
+///
+/// Jede Zeile öffnet eine eigene Seite mit allen Einstellungen dieser
+/// Kategorie – dadurch ist die Eingangsliste kurz und übersichtlich.
 public struct SettingsView: View {
-    @EnvironmentObject private var viewModel: TimetableViewModel
     @Environment(\.dismiss) private var dismiss
 
     public init() {}
 
     public var body: some View {
-        NavigationView {
+        NavigationStack {
             ZStack {
-                // Liquid Glass Hintergrund
                 Color(UIColor.systemBackground).ignoresSafeArea()
 
                 ScrollView(.vertical, showsIndicators: true) {
                     // Bewusst `VStack` statt `LazyVStack`: Eine LazyVStack baut
                     // Zeilen ab, sobald sie aus dem sichtbaren Bereich
-                    // scrollen. Wird beim Einblenden der Tastatur gescrollt,
+                    // scrollen. Wird beim Einblenden einer Tastatur gescrollt,
                     // kann dabei genau das UIKit-Textfeld entfernt werden, das
                     // gerade First Responder ist – die Tastatur klappt wieder
-                    // zu bzw. erscheint gar nicht erst. Die Einstellungen haben
-                    // nur eine Handvoll Abschnitte, der Lazy-Vorteil wiegt das
-                    // nicht auf.
-                    VStack(spacing: 20) {
-                        // 1. WebUntis API Konfiguration
-                        UntisConfigSection()
-
-                        // 2. Fächer, Farben & Namen
-                        SubjectCustomizationSection()
-
-                        // 3. Lehrer-Namen
-                        TeacherCustomizationSection()
-
-                        // 4. Block-Inhalte anpassen
-                        BlockDisplaySettingsSection()
-
-                        // 5. Zeichenfläche & Notizen
-                        DrawingSettingsSection()
-
-                        // 6. Stundenraster & Zeiten
-                        PeriodConfigSection()
-
-                        // 7. Apple Pencil Pro & Bedienungshinweise
-                        VStack(alignment: .leading, spacing: 14) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "pencil.and.scribble")
-                                    .font(.system(size: 16, weight: .regular, design: .default))
-                                    .foregroundColor(.blue)
-                                Text("Apple Pencil Pro & Gesten")
-                                    .font(.system(size: 15, weight: .regular, design: .default))
-                                    .foregroundColor(.primary)
+                    // zu bzw. erscheint gar nicht erst.
+                    VStack(spacing: 12) {
+                        ForEach(SettingsCategory.allCases) { category in
+                            NavigationLink(value: category) {
+                                SettingsCategoryRow(category: category)
                             }
-
-                            VStack(alignment: .leading, spacing: 12) {
-                                HStack(alignment: .top, spacing: 12) {
-                                    Image(systemName: "hand.tap")
-                                        .font(.system(size: 15, weight: .regular, design: .default))
-                                        .foregroundColor(.blue)
-                                        .frame(width: 24)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Notizen öffnen")
-                                            .font(.system(size: 14, weight: .regular, design: .default))
-                                        Text("Tippe auf ein Fach im Stundenplan, um die handschriftliche Zeichenfläche nahtlos zu öffnen.")
-                                            .font(.system(size: 12, weight: .regular, design: .default))
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-
-                                HStack(alignment: .top, spacing: 12) {
-                                    Image(systemName: "pencil.tip")
-                                        .font(.system(size: 15, weight: .regular, design: .default))
-                                        .foregroundColor(.orange)
-                                        .frame(width: 24)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Apple Pencil Stift & Radierer")
-                                            .font(.system(size: 14, weight: .regular, design: .default))
-                                        Text("In der Zeichenfläche wird nur mit dem Apple Pencil gezeichnet. Der Standard-Radierer entfernt gezeichnete Pixel präzise.")
-                                            .font(.system(size: 12, weight: .regular, design: .default))
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-
-                                HStack(alignment: .top, spacing: 12) {
-                                    Image(systemName: "hand.draw")
-                                        .font(.system(size: 15, weight: .regular, design: .default))
-                                        .foregroundColor(.green)
-                                        .frame(width: 24)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Verschieben & Größe ändern")
-                                            .font(.system(size: 14, weight: .regular, design: .default))
-                                        Text("Die Zeichenfläche lässt sich mit Fingern flüssig verschieben und über den runden Griff unten vergrößern oder verkleinern. Textfelder: 1× tippen = auswählen & verschieben, 2× tippen = Text bearbeiten. Rückgängig/Wiederholen gilt auch für Textfelder.")
-                                            .font(.system(size: 12, weight: .regular, design: .default))
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                            }
+                            .buttonStyle(.plain)
                         }
-                        .padding(16)
-                        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
-
-                        // 8. Stundenplan leeren (Zurücksetzen)
-                        Button(action: {
-                            Haptics.warning()
-                            viewModel.clearTimetable()
-                        }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "trash")
-                                    .font(.system(size: 14, weight: .regular, design: .default))
-                                Text("Stundenplan leeren")
-                                    .font(.system(size: 14, weight: .regular, design: .default))
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                        }
-                        .lightButton(cornerRadius: 14, tint: .red)
-                        .foregroundColor(.red)
-                        .padding(.bottom, 24)
                     }
                     .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
+                    .padding(.top, 16)
+                    .padding(.bottom, 28)
                 }
                 .scrollDismissesKeyboard(.never)
             }
@@ -139,7 +52,50 @@ public struct SettingsView: View {
                     .foregroundColor(.white)
                 }
             }
+            .navigationDestination(for: SettingsCategory.self) { category in
+                SettingsCategoryDetailView(category: category)
+            }
         }
-        .navigationViewStyle(StackNavigationViewStyle())
+        // Die app-eigene Tastatur liegt über der gesamten Navigation, damit
+        // sie auch auf den Unterseiten erscheint.
+        .appKeyboardHost()
+    }
+}
+
+/// Eine Zeile der Kategorien-Übersicht (Icon, Titel, Untertitel, Pfeil).
+private struct SettingsCategoryRow: View {
+    let category: SettingsCategory
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: category.icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: 30, height: 30)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(category.tint)
+                )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(category.title)
+                    .font(.system(size: 15, weight: .medium, design: .default))
+                    .foregroundColor(.primary)
+                Text(category.subtitle)
+                    .font(.system(size: 12, weight: .regular, design: .default))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 8)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.secondary.opacity(0.7))
+        }
+        .padding(14)
+        .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
