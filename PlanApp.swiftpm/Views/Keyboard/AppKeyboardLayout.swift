@@ -8,6 +8,12 @@ enum AppKeyboardLayout {
     static let topPadding: CGFloat = 6
     static let bottomPadding: CGFloat = 8
 
+    /// Abstand der schwebenden Tastatur zum Rand der Ansicht, über der sie
+    /// liegt (Zeichenfläche). Der untere Abstand kommt zum Home-Indikator dazu.
+    static let floatingHorizontalMargin: CGFloat = 10
+    static let floatingBottomMargin: CGFloat = 8
+    static let floatingCornerRadius: CGFloat = 16
+
     /// Die Tastatur belegt die untere Hälfte des aktuellen App-Fensters.
     /// Bei einem Hardware-Kurzbefehlsstreifen bzw. einer zusätzlich sichtbaren
     /// Systemtastatur („Immer anzeigen“) im verbleibenden Bereich andocken.
@@ -55,6 +61,14 @@ enum AppKeyboardLayout {
             + CGFloat(4) * rowSpacing + 4 * 58 + inset
         guard windowHeight.isFinite, windowHeight > 0 else { return preferred }
         return min(preferred, max(240, windowHeight * 0.42))
+    }
+
+    /// Höhe der **schwebenden** Tastatur (Zeichenfläche). Sie ist genauso
+    /// groß wie die eingebettete Variante und reserviert denselben
+    /// Home-Indikator-Abstand – sie wird nur über den Inhalt gelegt, statt
+    /// ihn zu verschieben. Dadurch behält die Notiz Größe und Position.
+    static func floatingHeight(windowHeight: CGFloat, bottomInset: CGFloat) -> CGFloat {
+        embeddedHeight(windowHeight: windowHeight, bottomInset: bottomInset)
     }
 
     /// Vier Tastenreihen füllen den verfügbaren Bereich bis oberhalb des

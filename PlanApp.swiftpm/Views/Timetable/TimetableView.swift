@@ -102,6 +102,12 @@ public struct TimetableView: View {
                 performJump(to: target, pageWidth: availableWidth)
             }
         }
+        // Die Hauptansicht weicht keiner Systemtastatur aus: Die App bringt
+        // ihre eigene Tastatur mit, und der Stundenplan bzw. die Notiz darf
+        // beim Tippen weder verkleinert noch nach oben geschoben werden.
+        // (In den Einstellungen und Sheets gilt weiterhin die eingebettete
+        // Tastatur mit eigenem Abstand – sie liegen in einer eigenen Hierarchie.)
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         // Einstellungs-Sheet
         .sheet(isPresented: $viewModel.isSettingsPresented) {
             SettingsView()

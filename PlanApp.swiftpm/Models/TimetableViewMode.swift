@@ -9,8 +9,9 @@ public enum TimetableViewMode: String, Codable, CaseIterable, Identifiable {
     /// Wochenansicht, bei der Blöcke OHNE Notiz stark aufgehellt werden,
     /// damit die Stunden mit Notizen sofort ins Auge springen.
     case notesHighlighted
-    /// Reine Notiz-Übersicht: chronologische Liste aller Stunden, die eine
-    /// Notiz enthalten (Hausaufgaben, Tests, ...).
+    /// Reine Notiz-Übersicht: chronologisches Raster aller Stunden, die eine
+    /// Notiz enthalten (Hausaufgaben, Tests, ...). Auf dem iPad im Querformat
+    /// zweispaltig, sonst einspaltig.
     case notesOnly
 
     public var id: String { rawValue }

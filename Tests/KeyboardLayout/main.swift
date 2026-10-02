@@ -95,4 +95,25 @@ expect(
     "Eingebettete Tastenreihen füllen die Höhe"
 )
 
+// Schwebende Tastatur (Zeichenfläche): gleiche Höhe wie eingebettet, damit die
+// Notiz beim Tippen weder verkleinert noch verschoben wird. Nur die Summe aus
+// Fensterhöhe und Safe Area darf die Höhe bestimmen.
+expect(AppKeyboardLayout.floatingHeight(windowHeight: 1024, bottomInset: 20), 322, "Schwebend: iPad Querformat")
+expect(AppKeyboardLayout.floatingHeight(windowHeight: 1366, bottomInset: 24), 326, "Schwebend: iPad Hochformat")
+expect(AppKeyboardLayout.floatingHeight(windowHeight: 390, bottomInset: 0), 240, "Schwebend: kleines Fenster begrenzt")
+expect(AppKeyboardLayout.floatingHeight(windowHeight: 0, bottomInset: 20), 322, "Schwebend: noch kein Fensterlayout")
+expect(AppKeyboardLayout.floatingHeight(windowHeight: 1024, bottomInset: 20), AppKeyboardLayout.embeddedHeight(windowHeight: 1024, bottomInset: 20), "Schwebend = eingebettet (nur überlagert)")
+expect(
+    AppKeyboardLayout.keyHeight(
+        totalHeight: AppKeyboardLayout.floatingHeight(windowHeight: 1024, bottomInset: 20),
+        bottomInset: 20,
+        rowCount: 4
+    ),
+    58,
+    "Schwebende Tastenreihen füllen die Höhe"
+)
+expect(AppKeyboardLayout.floatingCornerRadius, 16, "Schwebend: Eckenradius")
+expect(AppKeyboardLayout.floatingHorizontalMargin, 10, "Schwebend: seitlicher Randabstand")
+expect(AppKeyboardLayout.floatingBottomMargin, 8, "Schwebend: unterer Randabstand")
+
 print("\(checks) Tastatur-Layout-Checks erfolgreich.")

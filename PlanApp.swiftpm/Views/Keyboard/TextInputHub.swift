@@ -391,6 +391,99 @@ public final class TextInputHub: ObservableObject {
         UIPasteboard.general.hasStrings
     }
 
+    /// Fügt ein Leerzeichen ein – und macht daraus wie die Apple-Tastatur bei
+    /// einem **doppelten** Leertipp ein „. “ (Satzende mit Leerzeichen).
+    /// In Sicherheitsfeldern bleibt das aus.
+    /// - Returns: `true`, wenn daraus ein „. “ geworden ist.
+    @discardableResult
+    public func insertSpace() -> Bool {
+        guard !isSecureInput else {
+            insert(" ")
+            return false
+        }
+
+        let preceding = precedingTextBeforeCaret()
+        if preceding.hasSuffix(" ") {
+            let beforeSpace = preceding.dropLast()
+            if let last = beforeSpace.last,
+               last.isLetter || last.isNumber || last == ")" || last == "\"" || last == "”" {
+                // Das Leerzeichen wieder entfernen und durch das Satzende ersetzen.
+                deleteBackward()
+                insert(". ")
+                return true
+            }
+        }
+
+        insert(" ")
+        return false
+    }
+
+    /// Eingabetaste: In mehrzeiligen Feldern wird ein Zeilenumbruch eingefügt,
+    /// sonst wird die Bearbeitung beendet – genau wie bei der Apple-Tastatur.
+    /// - Returns: `true`, wenn ein Zeilenumbruch eingefügt wurde.
+    @discardableResult
+    public func insertNewline() -> Bool {
+        guard prefersNewlineOnReturn else {
+            dismissActiveInput()
+            return false
+        }
+        insert("\n")
+        return true
+    }
+
+    /// Ob die Eingabetaste einen Zeilenumbruch einfügen soll: mehrzeiliges
+    /// Feld, das keine eigene Aktion verlangt (`returnKeyType == .default`).
+    public var prefersNewlineOnReturn: Bool {
+        guard !isSecureInput else { return false }
+        if let textView = currentInputView as? UITextView {
+            return textView.returnKeyType == .default
+        }
+        return false
+    }
+
+    /// Beschriftung der Eingabetaste – wie auf der Apple-Tastatur die Aktion
+    /// des Felds („Fertig“, „Weiter“, „Suchen“, …). `nil` bedeutet: nur das
+    /// Eingabe-Symbol anzeigen.
+    public var activeReturnKeyTitle: String? {
+        guard let type = activeReturnKeyType else { return nil }
+        switch type {
+        case .done: return "Fertig"
+        case .next: return "Weiter"
+        case .go: return "Los"
+        case .search: return "Suchen"
+        case .send: return "Senden"
+        case .join: return "Beitreten"
+        case .route: return "Route"
+        case .emergencyCall: return "Notruf"
+        default: return nil
+        }
+    }
+
+    private var activeReturnKeyType: UIReturnKeyType? {
+        if let field = currentInputView as? UITextField { return field.returnKeyType }
+        if let view = currentInputView as? UITextView { return view.returnKeyType }
+        return nil
+    }
+
+    /// Ob das aktive Feld ein Sicherheitsfeld (Passwort) ist.
+    private var isSecureInput: Bool {
+        if let field = currentInputView as? UITextField { return field.isSecureTextEntry }
+        if let view = currentInputView as? UITextView { return view.isSecureTextEntry }
+        return false
+    }
+
+    /// Der Text, der im aktiven Feld vor dem Cursor steht.
+    private func precedingTextBeforeCaret() -> String {
+        guard let textInput = currentInputView as? UITextInput,
+              let selected = textInput.selectedTextRange,
+              let range = textInput.textRange(
+                from: textInput.beginningOfDocument,
+                to: selected.start
+              ),
+              let text = textInput.text(in: range) else { return "" }
+        return text
+    }
+
     /// Verschiebt den Cursor (negative Werte nach links).
     public func moveCaret(by offset: Int) {
         guard let textInput = currentInputView as? UITextInput,

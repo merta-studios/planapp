@@ -70,6 +70,14 @@ Das Repository enthält das fertige App-Package **`PlanApp.swiftpm`**, welches a
 - **Apple Pencil Pro Squeeze-Unterstützung**: Durch leichtes Zusammendrücken des Apple Pencil Pro wird der letzte Strich sofort rückgängig gemacht (`UIPencilInteraction`).
 - **Apple Pencil Hover**: Alle Buttons und Karten unterstützen iPadOS Pointer- & Hover-Effekte (`.hoverEffect(.lift)`).
 - **Automatischer Rand-Zuschnitt**: Beim Schließen wird die Zeichnung exakt an den Rändern der geschriebenen Striche zugeschnitten und als gestochen scharfe Vorschau direkt im Stundenplan-Block angezeigt!
+- **Tastatur ändert die Notiz nicht**: Das Text-Werkzeug öffnet die app-eigene Tastatur **schwebend über** dem Zettel. Der Zettel behält beim Tippen seine Größe und seine Position – nichts rutscht nach oben und nichts wird klein gerechnet. Nur wenn das bearbeitete Textfeld sonst hinter der Tastatur läge, rückt der Zettel gerade so weit hoch, dass das Feld sichtbar bleibt (ohne Zoom).
+
+### 🗒️ 6. Ansichts-Modus „Nur Notizen“ als Raster
+
+- **Raster statt Liste**: Die Notiz-Übersicht ist ein echtes Raster. Liegt das iPad **seitlich** (Querformat und genug Breite), stehen die Notizen **zweispaltig** nebeneinander; im Hochformat, in Split View und in schmalen Fenstern bleibt es einspaltig, damit jede Karte lesbar bleibt.
+- **Gleiche Kartenbreiten**: Alle Karten eines Abschnitts haben dieselbe Breite, und die Karten einer Zeile dieselbe Höhe – die Übersicht wirkt wie eine Tafel, nicht wie eine lose Liste.
+- **Volle Breite für Struktur**: Tagesüberschriften und die grüne „Jetzt“-Linie laufen über die volle Breite und trennen die Rasterabschnitte.
+- **Chronologie bleibt**: Gelesen wird zeilenweise von links nach rechts – vergangene Einträge oben, kommende unterhalb der grünen Linie.
 
 ---
 
@@ -110,9 +118,9 @@ planapp/
 │   │   │   └── DrawingToolbarView.swift      # Vorgegebene Stift-, Textmarker- & Radier-Tools
 │   │   ├── Keyboard/
 │   │   │   ├── TextInputHub.swift            # Eingabe-Hub, Tastatur-Erkennung & Diagnose
-│   │   │   ├── AppKeyboardView.swift         # App-eigene Bildschirmtastatur
+│   │   │   ├── AppKeyboardView.swift         # App-eigene Tastatur im Apple-Stil (Ebenen, Akzente, Emoji)
 │   │   │   ├── AppKeyboardLayout.swift       # Adaptive Tastaturmaße & Safe-Area-Abstände
-│   │   │   └── AppKeyboardHost.swift         # Untere Einbindung pro Eingabeansicht & Tipp-Überwachung
+│   │   │   └── AppKeyboardHost.swift         # Einbindung pro Eingabeansicht (eingebettet/schwebend)
 │   │   ├── Settings/
 │   │   │   ├── SettingsView.swift            # Einstellungen-Übersicht (Kategorien)
 │   │   │   ├── SettingsCategory.swift        # Kategorien & Detailseiten
@@ -184,18 +192,29 @@ Sie ist eine normale SwiftUI-Ansicht innerhalb der App, braucht also weder die
 Systemtastatur noch Tastenereignisse von iPadOS – sie funktioniert immer, weil
 sie nur Tipps benötigt.
 
-Die Tastatur wird **unten an die jeweilige Eingabeansicht angebunden**
-(`safeAreaInset`): auf der Zeichenfläche am unteren Bildschirmrand, in den
-Einstellungen und in verschachtelten Bearbeiten-Sheets unten im Sheet. Sie ist
-damit Teil der normalen Ansichts-Hierarchie – ihre Tasten funktionieren auf
-echten Geräten zuverlässig, und Tipps auf die Tastatur können keine Gesten
+Die Tastatur wird **unten an die jeweilige Eingabeansicht angebunden** und ist
+Teil der normalen Ansichts-Hierarchie – ihre Tasten funktionieren auf echten
+Geräten zuverlässig, und Tipps auf die Tastatur können keine Gesten
 dahinterliegender Ebenen auslösen (kein ungewolltes Schließen von Notiz oder
 Einstellungen). Der oberste sichtbare Host zeigt die Tastatur, darunterliegende
 Hosts bleiben leer – es gibt also nie zwei Tastaturen gleichzeitig. Bei
 Rotation, Split View und Stage Manager skaliert die Höhe mit der Ansicht
 (höchstens ~42 % der Ansichtshöhe, mindestens 240 pt); die unterste Tastenreihe
-bleibt oberhalb des Home-Indikators, nur der Hintergrund reicht bis an den
-Bildschirmrand.
+bleibt oberhalb des Home-Indikators.
+
+Dafür gibt es **zwei Darstellungen** (`AppKeyboardPresentation`):
+
+| Darstellung | Verhalten | Verwendet in |
+| --- | --- | --- |
+| **Eingebettet** (`safeAreaInset`, Standard) | Der Inhalt weicht der Tastatur aus, das aktive Feld bleibt sichtbar | Einstellungen und Bearbeiten-Sheets |
+| **Schwebend** (Overlay, abgerundet, mit Schatten) | Die Tastatur liegt **über** dem Inhalt, dessen Layout sich nicht ändert | Zeichenfläche (Notiz) |
+
+Auf der Zeichenfläche ist das entscheidend: Die Notiz behält beim Tippen Größe
+und Position. Früher hat die eingebettete Tastatur die Safe Area verändert –
+die Notiz wurde dadurch klein gerechnet und nach oben geschoben. Jetzt
+schwebt die Tastatur über dem Zettel (leicht durchscheinend, damit die Notiz
+darunter sichtbar bleibt), und nur das gerade bearbeitete Textfeld holt die
+Notiz bei Bedarf ohne Skalierung ein Stück nach oben.
 
 Der Ablauf:
 
@@ -214,6 +233,39 @@ Der Ablauf:
 
 Erscheint die Systemtastatur doch (z. B. in Xcode oder wenn keine
 Hardware-Tastatur gekoppelt ist), tritt die App-Tastatur automatisch zurück.
+
+### ⌨️ Aufbau der App-Tastatur (Apple-Stil)
+
+Die Tastatur ist bewusst **wie die Tastatur von iPadOS** aufgebaut – im Layout,
+in den Farben und in der Bedienung:
+
+- **Ebenen**: Buchstaben (QWERTZ mit `Ü Ö Ä ß`) → `123` (Zahlen) → `#+=`
+  (Sonderzeichen) → Emoji. Die Ebenen-Tasten sitzen wie bei Apple unten links
+  (`123`, `#+=`, `ABC`) und in der dritten Reihe.
+- **Untere Reihe wie bei Apple**: Ebenen-Taste, Emoji-Taste (öffnet die
+  Emoji-Ebene), breite Leertaste, Punkt mit kleinem **`?!,`**-Hinweis,
+  Eingabetaste.
+- **Eingabetaste mit Aktion**: Sie zeigt die Aktion des Felds („Fertig“,
+  „Weiter“, „Suchen“, „Senden“ …) bzw. das ⏎-Symbol. In mehrzeiligen Feldern
+  fügt sie einen Zeilenumbruch ein, in einzeiligen Feldern beendet sie die
+  Bearbeitung – genau wie bei Apple.
+- **Akzent-Popup**: Langes Drücken auf eine Taste zeigt die Alternativen
+  (`a` → `à á â ä æ …`, `o` → `ò ó ô ö œ ø …`, `s` → `ß ś š`, `.` → `, ? ! …`,
+  `0` → `°`). Seitliches Ziehen wählt aus; das gewählte Zeichen ist im Popup
+  hervorgehoben.
+- **Umschalten wie bei Apple**: Die Umschalttaste zeigt den gefüllten Pfeil
+  (Shift) und wird beim **Doppeltipp** zur Feststelltaste (`capslock.fill`).
+  Nach einem Satzende schaltet die Tastatur im Satzmodus automatisch wieder
+  groß. „ß“ bleibt „ß“ – daraus wird kein „SS“.
+- **Doppelter Leertipp wird zu „. “** – in Sicherheitsfeldern (Passwort)
+  bewusst nicht.
+- **Tasten lösen beim Loslassen aus**; die Löschtaste wirkt sofort und
+  wiederholt sich beim Halten (mit fester Obergrenze, damit nichts
+  „durchläuft“).
+- **Aussehen**: helle Tasten auf grauem Grund im Light Mode, graue Tasten auf
+  dunklem Grund im Dark Mode, flache Tasten mit 1 pt Schattenkante, abgerundete
+  Ecken – dazu eine schmale Kurzbefehl-Leiste mit Cursor-Pfeilen, Einfügen und
+  Ausblenden.
 
 **Einstellbar** unter *Einstellungen → Tastatur & Eingabe*:
 
@@ -247,6 +299,17 @@ tut – statt nur zu vermuten, dass etwas „repariert“ sei.
   eigenes Overlay-Fenster wird bewusst verzichtet: Es erhielt auf echten
   Geräten keine zuverlässigen Tipps und ließ Sheets/Notizen beim Tippen auf
   die Tastatur ungewollt schließen.
+- `appKeyboardHost(presentation:)` bestimmt die Darstellung: `.embedded`
+  (Standard, `safeAreaInset`) für Einstellungen und Sheets, `.floating`
+  (Overlay über dem Inhalt) für die Zeichenfläche. Die Notiz berechnet ihre
+  Skalierung ausschließlich aus `geometry.size`; auf einen Wechsel der Safe
+  Area reagiert sie nicht mehr, und `.ignoresSafeArea(.keyboard)` verhindert
+  auch bei der Systemtastatur, dass die Zeichenfläche verkleinert wird.
+- Die Tastenhöhe (`AppKeyboardLayout.keyHeight`) reserviert fest die 32 pt
+  hohe Kurzbefehl-Leiste und den Home-Indikator-Abstand; dadurch füllen die
+  vier Reihen exakt die Tastaturhöhe, ohne dass etwas verrutscht. Die
+  schwebende Variante verwendet `AppKeyboardLayout.floatingHeight` – dieselbe
+  Höhe, nur über den Inhalt gelegt.
 - Die Kopfzeile der geöffneten Notiz verwendet die adaptive System-Textfarbe:
   **weiß im Dark Mode, dunkel im Light Mode**. Das weiße Papier und die dort
   gewählten Text-/Stiftfarben ändern sich dadurch nicht.
