@@ -31,14 +31,16 @@ struct PencilSqueezePaletteView: View {
 
     // MARK: - Geometrie
 
-    private let arcRadius: CGFloat = 244
-    private let arcBandWidth: CGFloat = 76
-    private let arcHalfAngle: CGFloat = .pi / 4
-    private let buttonSize: CGFloat = 40
+    private let arcRadius = SqueezePaletteLayout.arcRadius
+    private let arcBandWidth = SqueezePaletteLayout.arcBandWidth
+    private let arcHalfAngle = SqueezePaletteLayout.arcHalfAngle
+    private let buttonSize = SqueezePaletteLayout.buttonSize
 
-    private let colorArcBandWidth: CGFloat = 50
-    private let colorSwatchSize: CGFloat = 30
-    private let colorArcHalfAngle: CGFloat = 27 * .pi / 180
+    private let colorArcBandWidth = SqueezePaletteLayout.colorBandWidth
+    private let colorSwatchSize = SqueezePaletteLayout.colorSwatchSize
+    private var colorArcHalfAngle: CGFloat {
+        SqueezePaletteLayout.colorHalfAngle(for: max(1, colorSlotsForActiveTool.count))
+    }
 
     private var localAnchor: CGPoint {
         CGPoint(x: anchor.x - containerOrigin.x, y: anchor.y - containerOrigin.y)
@@ -59,9 +61,7 @@ struct PencilSqueezePaletteView: View {
     private var arcEndAngle: CGFloat { openingAngle + arcHalfAngle }
 
     private var paletteElements: [SqueezePaletteElement] {
-        [.undo, .divider]
-            + SqueezePaletteTool.allCases.map { .tool($0) }
-            + [.divider, .color, .thickness]
+        [.undo] + SqueezePaletteTool.allCases.map { .tool($0) } + [.color, .thickness]
     }
 
     private var colorButtonAngle: CGFloat {
@@ -73,79 +73,19 @@ struct PencilSqueezePaletteView: View {
         return openingAngle
     }
 
-    private var colorArcRadius: CGFloat {
-        arcRadius + arcBandWidth / 2 + colorArcBandWidth / 2 + 10
-    }
+    private var colorArcRadius: CGFloat { SqueezePaletteLayout.colorArcRadius }
 
-    /// Die Palette wird auf kleinen Fenstern skaliert. Für die Berechnung wird
-    /// auch die nach außen aufklappende Farbkurve berücksichtigt, damit beim
-    /// Öffnen nichts am Bildschirmrand abgeschnitten wird.
-    private var paletteScale: CGFloat {
-        let bounds = unscaledPaletteBounds()
-        let availableWidth = max(1, containerSize.width - 28)
-        let availableHeight = max(1, containerSize.height - 28)
-        let scaleX = availableWidth / max(1, bounds.width)
-        let scaleY = availableHeight / max(1, bounds.height)
-        return min(1, max(0.48, min(scaleX, scaleY)))
-    }
-
-    /// Umriss der gesamten Palette relativ zum Squeeze-Anker.
-    private func unscaledPaletteBounds() -> CGRect {
-        var minX: CGFloat = 0
-        var maxX: CGFloat = 0
-        var minY: CGFloat = 0
-        var maxY: CGFloat = 0
-
-        func include(_ point: CGPoint, padding: CGFloat) {
-            minX = min(minX, point.x - padding)
-            maxX = max(maxX, point.x + padding)
-            minY = min(minY, point.y - padding)
-            maxY = max(maxY, point.y + padding)
-        }
-
-        // Hauptbogen inklusive Buttons und Schatten.
-        for step in 0...64 {
-            let fraction = CGFloat(step) / 64
-            let angle = arcStartAngle + (arcEndAngle - arcStartAngle) * fraction
-            let radius = arcRadius + arcBandWidth / 2
-            include(offsetPoint(radius: radius, angle: angle), padding: buttonSize / 2 + 12)
-        }
-
-        // Außenliegender Farbbogen (wird beim Hover aufgeklappt).
-        let paletteColors = colorSlotsForActiveTool.isEmpty
-            ? [currentColorHex]
-            : colorSlotsForActiveTool
-        let colorHalfSpan = colorArcHalfAngle
-        for step in 0...max(16, paletteColors.count * 8) {
-            let fraction = CGFloat(step) / CGFloat(max(16, paletteColors.count * 8))
-            let angle = colorButtonAngle - colorHalfSpan + 2 * colorHalfSpan * fraction
-            include(
-                offsetPoint(radius: colorArcRadius, angle: angle),
-                padding: colorSwatchSize / 2 + 10
-            )
-        }
-
-        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-    }
-
-    private var clampedAnchor: CGPoint {
-        let bounds = unscaledPaletteBounds()
-        let margin: CGFloat = 14
-        let scaledMinX = bounds.minX * paletteScale
-        let scaledMaxX = bounds.maxX * paletteScale
-        let scaledMinY = bounds.minY * paletteScale
-        let scaledMaxY = bounds.maxY * paletteScale
-
-        let lowerX = max(margin, -scaledMinX + margin)
-        let upperX = max(lowerX, containerSize.width - scaledMaxX - margin)
-        let lowerY = max(margin, -scaledMinY + margin)
-        let upperY = max(lowerY, containerSize.height - scaledMaxY - margin)
-
-        return CGPoint(
-            x: min(max(localAnchor.x, lowerX), upperX),
-            y: min(max(localAnchor.y, lowerY), upperY)
+    private var layout: SqueezePaletteLayout {
+        SqueezePaletteLayout(
+            hoverAnchor: localAnchor,
+            containerSize: containerSize,
+            openingAngle: openingAngle,
+            colorCount: max(1, colorSlotsForActiveTool.count)
         )
     }
+
+    private var paletteScale: CGFloat { layout.scale }
+    private var clampedAnchor: CGPoint { layout.anchor }
 
     private var scaleAnchor: UnitPoint {
         UnitPoint(
@@ -164,14 +104,35 @@ struct PencilSqueezePaletteView: View {
     }
 
     private func angleForElement(at index: Int) -> CGFloat {
-        let count = max(1, paletteElements.count - 1)
-        let fraction = CGFloat(index) / CGFloat(count)
-        return arcStartAngle + (arcEndAngle - arcStartAngle) * fraction
+        SqueezePaletteLayout.angle(at: index, openingAngle: openingAngle)
     }
 
     // MARK: - Palette
 
     var body: some View {
+        glassPalette
+            .frame(width: containerSize.width, height: containerSize.height)
+            .scaleEffect(paletteScale, anchor: scaleAnchor)
+            .animation(.spring(response: 0.28, dampingFraction: 0.84), value: isColorPickerVisible)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Apple Pencil Werkzeugpalette")
+            .onDisappear { colorPickerHideWorkItem?.cancel() }
+    }
+
+    @ViewBuilder
+    private var glassPalette: some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: 1) { paletteContent }
+        } else {
+            paletteContent
+        }
+        #else
+        paletteContent
+        #endif
+    }
+
+    private var paletteContent: some View {
         ZStack {
             if isColorPickerVisible {
                 colorChoices
@@ -180,20 +141,17 @@ struct PencilSqueezePaletteView: View {
             }
 
             mainArcBackground
+                .allowsHitTesting(false)
                 .zIndex(1)
 
             ForEach(Array(paletteElements.enumerated()), id: \.offset) { index, element in
                 let angle = angleForElement(at: index)
-                paletteElementView(element, angle: angle)
+                paletteElementView(element)
                     .position(point(radius: arcRadius, angle: angle))
                     .zIndex(2)
             }
         }
         .frame(width: containerSize.width, height: containerSize.height)
-        .scaleEffect(paletteScale, anchor: scaleAnchor)
-        .animation(.spring(response: 0.28, dampingFraction: 0.84), value: isColorPickerVisible)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Apple Pencil Werkzeugpalette")
     }
 
     private var mainArcBackground: some View {
@@ -231,17 +189,10 @@ struct PencilSqueezePaletteView: View {
     }
 
     @ViewBuilder
-    private func paletteElementView(_ element: SqueezePaletteElement, angle: CGFloat) -> some View {
+    private func paletteElementView(_ element: SqueezePaletteElement) -> some View {
         switch element {
         case .undo:
             undoButton
-        case .divider:
-            Capsule()
-                .fill(Color.primary.opacity(0.20))
-                .frame(width: 1.5, height: 24)
-                // Die Linie steht senkrecht zur lokalen Laufrichtung des Bogens.
-                .rotationEffect(Angle(radians: Double(angle - .pi / 2)))
-                .accessibilityHidden(true)
         case .tool(let tool):
             toolButton(tool)
         case .color:
@@ -257,12 +208,11 @@ struct PencilSqueezePaletteView: View {
             onUndo()
         } label: {
             Image(systemName: "arrow.uturn.backward")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 18, weight: .semibold))
                 .frame(width: buttonSize, height: buttonSize)
-                .lightButton(cornerRadius: 13, tint: .blue, isFilled: true)
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SqueezePaletteButtonStyle())
         .hoverEffect(.lift)
         .accessibilityLabel("Rückgängig")
     }
@@ -275,16 +225,11 @@ struct PencilSqueezePaletteView: View {
             select(tool)
         } label: {
             Image(systemName: tool.icon)
-                .font(.system(size: 16, weight: .medium))
+                .font(.system(size: 18, weight: isSelected ? .semibold : .medium))
                 .frame(width: buttonSize, height: buttonSize)
-                .lightButton(
-                    cornerRadius: 13,
-                    tint: isSelected ? .blue : nil,
-                    isFilled: isSelected
-                )
-                .foregroundColor(isSelected ? .white : .primary)
+                .foregroundColor(isSelected ? .blue : .primary)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SqueezePaletteButtonStyle(isSelected: isSelected))
         .hoverEffect(.lift)
         .accessibilityLabel(tool.title)
         .accessibilityValue(isSelected ? "Ausgewählt" : "")
@@ -301,7 +246,7 @@ struct PencilSqueezePaletteView: View {
         } label: {
             Circle()
                 .fill(Color(hex: currentColorHex))
-                .frame(width: 22, height: 22)
+                .frame(width: 26, height: 26)
                 .overlay(
                     Circle().strokeBorder(
                         currentColorHex.caseInsensitiveCompare("#FFFFFF") == .orderedSame
@@ -311,9 +256,8 @@ struct PencilSqueezePaletteView: View {
                     )
                 )
                 .frame(width: buttonSize, height: buttonSize)
-                .lightButton(cornerRadius: 13)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SqueezePaletteButtonStyle(isSelected: isColorPickerVisible))
         .hoverEffect(.lift)
         .onHover { isHovering in
             updateHoverTarget("color-button", isHovering: isHovering, source: .pointer)
@@ -349,6 +293,7 @@ struct PencilSqueezePaletteView: View {
                     style: StrokeStyle(lineWidth: colorArcBandWidth, lineCap: .round, lineJoin: .round)
                 )
                 .shadow(color: Color.black.opacity(0.20), radius: 10, x: 0, y: 4)
+                .allowsHitTesting(false)
 
             ForEach(Array(colors.enumerated()), id: \.offset) { index, hex in
                 let angle = count == 1
@@ -379,14 +324,9 @@ struct PencilSqueezePaletteView: View {
                                 .strokeBorder(Color.blue, lineWidth: isSelected ? 2.5 : 0)
                                 .padding(-3)
                         )
-                        .frame(width: 40, height: 40)
-                        .lightButton(
-                            cornerRadius: 20,
-                            tint: isSelected ? .blue : nil,
-                            isFilled: false
-                        )
+                        .frame(width: buttonSize, height: buttonSize)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(SqueezePaletteButtonStyle(isSelected: isSelected))
                 .hoverEffect(.lift)
                 .position(point(radius: colorArcRadius, angle: angle))
                 .onHover { isHovering in
@@ -415,16 +355,15 @@ struct PencilSqueezePaletteView: View {
         Button {} label: {
             VStack(spacing: 1) {
                 Image(systemName: "lineweight")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))
                 Text(formattedWidth)
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
                     .monospacedDigit()
             }
             .frame(width: buttonSize, height: buttonSize)
-            .lightButton(cornerRadius: 13)
             .foregroundColor(.primary)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SqueezePaletteButtonStyle(isSelected: isAdjustingWidth))
         .hoverEffect(.lift)
         .simultaneousGesture(thicknessHoldAndDragGesture)
         .accessibilityLabel("Stiftdicke \(formattedWidth) Punkt")
@@ -624,7 +563,6 @@ private enum HoverSource {
 
 private enum SqueezePaletteElement {
     case undo
-    case divider
     case tool(SqueezePaletteTool)
     case color
     case thickness

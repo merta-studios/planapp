@@ -59,7 +59,7 @@ public final class TimetableViewModel: ObservableObject {
     @Published var settingsLaunchCategory: SettingsCategory? = nil
 
     // Letzter Synchronisationszeitpunkt für die Statusanzeige
-    @Published public var lastSyncDate: Date? = Date()
+    @Published public var lastSyncDate: Date? = nil
 
     // Aktive Notiz-Ansicht (Zeichnen-Overlay)
     @Published public var activeNoteLesson: Lesson? = nil
@@ -81,6 +81,7 @@ public final class TimetableViewModel: ObservableObject {
     @Published public var weekJumpRequest: Date? = nil
 
     private var activeSyncCount: Int = 0
+    private var lastSyncAttemptDate: Date?
     /// Wochen, die in dieser Sitzung schon erfolgreich von der API geladen
     /// wurden – auch wenn sie (z. B. in den Ferien) keine Stunden enthalten.
     /// So erscheint das Lade-Symbol beim erneuten Hineinwischen nicht wieder.
@@ -112,7 +113,7 @@ public final class TimetableViewModel: ObservableObject {
         self.lessonNotes = storage.loadAllLessonNotes()
         self.viewMode = storage.loadViewMode()
         self.appearance = storage.loadAppearance()
-        self.lastSyncDate = untisCredentials.lastSyncDate ?? Date()
+        self.lastSyncDate = untisCredentials.lastSyncDate
 
         // Alte, versehentlich leer gespeicherte Notizen (PKDrawing-Daten ohne
         // Strokes / leere Textfelder) direkt entfernen, damit sie nicht in
@@ -137,24 +138,43 @@ public final class TimetableViewModel: ObservableObject {
         }
     }
 
-    /// Richtet ein automatisches Aktualisierungsintervall alle 5 Minuten (300 Sekunden) ein
+    /// Häufig prüfen, aber frisch geladene Daten weiterhin nur alle fünf
+    /// Minuten abrufen. Veraltete Daten werden nach Fehlern schneller erneut
+    /// angefragt; dieselbe Prüfung läuft beim Zurückkehren in die App.
     private func setupAutoRefresh() {
-        autoRefreshTimer = Timer.publish(every: 300, on: .main, in: .common)
+        autoRefreshTimer = Timer.publish(every: TimetableRefreshPolicy.checkInterval, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
-                guard let self = self else { return }
-                Task { @MainActor [weak self] in
-                    guard let self = self else { return }
-                    if self.untisCredentials.isConfigured {
-                        await self.syncWithUntis()
-                    }
+                Task(priority: .userInitiated) { @MainActor [weak self] in
+                    await self?.refreshTimetableIfNeeded()
                 }
             }
     }
 
+    public func isTimetableStale(relativeTo now: Date = Date()) -> Bool {
+        TimetableRefreshPolicy.isStale(
+            lastSuccess: lastSyncDate ?? untisCredentials.lastSyncDate,
+            now: now
+        )
+    }
+
+    /// Leise automatische Aktualisierung. Ein laufender Abruf wird nicht
+    /// dupliziert, und fehlende Zugangsdaten lösen keine Endlosversuche aus.
+    public func refreshTimetableIfNeeded() async {
+        guard untisCredentials.hasCompleteCredentials, !isLoading,
+              TimetableRefreshPolicy.shouldRefresh(
+                lastSuccess: lastSyncDate ?? untisCredentials.lastSyncDate,
+                lastAttempt: lastSyncAttemptDate,
+                now: Date()
+              ) else { return }
+        await syncWeek(startingAt: selectedWeekStart, showsSuccessMessage: false, reportsErrors: false)
+    }
+
     /// Formatiert die Zeit seit der letzten Synchronisation dynamisch (Sekunden / Minuten)
     public func relativeLastSyncString(relativeTo now: Date = Date()) -> String {
-        let date = lastSyncDate ?? untisCredentials.lastSyncDate ?? Date()
+        guard let date = lastSyncDate ?? untisCredentials.lastSyncDate else {
+            return "Noch nicht aktualisiert"
+        }
         let seconds = max(0, Int(now.timeIntervalSince(date)))
         if seconds < 5 {
             return "Gerade eben"
@@ -765,7 +785,11 @@ public final class TimetableViewModel: ObservableObject {
     /// Lädt eine konkrete Woche. Der explizite Parameter verhindert, dass ein
     /// schneller zweiter Swipe die noch laufende Anfrage der ersten Woche auf
     /// ein falsches Datum umbiegt.
-    private func syncWeek(startingAt weekStart: Date, showsSuccessMessage: Bool) async {
+    private func syncWeek(
+        startingAt weekStart: Date,
+        showsSuccessMessage: Bool,
+        reportsErrors: Bool = true
+    ) async {
         guard untisCredentials.isConfigured else {
             if showsSuccessMessage {
                 self.errorMessage = "Bitte zuerst WebUntis Server und Schulnamen in den Einstellungen angeben."
@@ -775,10 +799,12 @@ public final class TimetableViewModel: ObservableObject {
 
         let normalizedWeekStart = weekStart.startOfWeek()
         let weekKey = normalizedWeekStart.yyyyMMddString
+        guard !loadingWeekKeys.contains(weekKey) else { return }
+        lastSyncAttemptDate = Date()
         activeSyncCount += 1
         loadingWeekKeys.insert(weekKey)
         self.isLoading = true
-        self.errorMessage = nil
+        if reportsErrors { self.errorMessage = nil }
         if showsSuccessMessage { self.successMessage = nil }
         defer {
             activeSyncCount -= 1
@@ -829,7 +855,7 @@ public final class TimetableViewModel: ObservableObject {
             // Bewusst keine "synchronisiert"-Erfolgsmeldung mehr – die
             // Live-Anzeige im Header zeigt den Sync-Status bereits an.
         } catch {
-            self.errorMessage = error.localizedDescription
+            if reportsErrors { self.errorMessage = error.localizedDescription }
             noteSyncFailure(error.localizedDescription)
         }
     }
