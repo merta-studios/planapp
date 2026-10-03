@@ -34,6 +34,7 @@ Das Repository enthält das fertige App-Package **`PlanApp.swiftpm`**, welches a
 - Abruf von:
   - **Stundenzeiten (Timegrid Units)** zur automatischen Zeilen-Konfiguration.
   - **Stundenplandaten** für jede Kalenderwoche.
+- **Frische-Warnung**: Liegt der letzte erfolgreiche Abruf mehr als **60 Minuten** zurück, steht oben rechts rot **„Stundenplan veraltet“**. Die App versucht sofort zu aktualisieren und bei Fehlern höchstens alle 30 Sekunden erneut; auch beim Zurückkehren in die App wird geprüft. Ein Tipp auf die Statusanzeige startet einen manuellen Abruf.
 - **Offline- & Demo-Modus**: Enthält einen integrierten Generator für realistische Beispieldaten (Doppelstunden, Entfall, Vertretung), um alle Features ohne aktiven Schul-Account sofort testen zu können.
 - **Einrichtungs-Guide statt leerem Stundenplan**: Fehlen die API-Daten (oder sind sie unvollständig/ungültig), steht in der Bildschirmmitte ein Guide-Fenster: Der Plan lässt sich automatisch von Untis laden – dafür ist nur **ein Schritt in den Einstellungen** nötig. Der Knopf **„Zu den Einstellungen“** springt direkt auf die Seite *WebUntis & Sync* mit den API-Feldern.
 
@@ -58,7 +59,7 @@ Das Repository enthält das fertige App-Package **`PlanApp.swiftpm`**, welches a
 ### ✏️ 5. Apple Pencil Pro & PencilKit Notizzettel
 - **Öffnen**: Durch Antippen eines Fachs oder mit einer **2-Finger-Zoom-Geste**.
 - **Fokus-Ansicht**: Der Stundenplan bleibt im Hintergrund abgedunkelt und geblurrt sichtbar.
-- **Schließen & Speichern**: Ein einfacher Tipp in den abgedunkelten Hintergrund schließt und speichert die Notiz automatisch.
+- **Schließen & Speichern**: Ein bewusster kurzer Ein-Finger-Tipp in den abgedunkelten Hintergrund schließt und speichert die Notiz automatisch. Kontaktgröße samt Messunsicherheit, Bewegung und Dauer werden über den gesamten Tipp geprüft. Laufende Striche und eine kurze Absetzphase sind geschützt; Handballen, Pencil-Tipps und Mehrfinger-Gesten schließen die Notiz nicht.
 - **Linierter Zettel**: Authentisches Notizpapier mit roter Randlinie und horizontalen Schreiblinien.
 - **Zeilen erweitern**: Über den Button „＋ Zeile hinzufügen (Erweitern)“ können flexibel bis zu **maximal 10 Zeilen** hinzugefügt werden.
 - **Gesten auf dem Zettel**:
@@ -69,7 +70,7 @@ Das Repository enthält das fertige App-Package **`PlanApp.swiftpm`**, welches a
 - **Werkzeuge**:
   - **Stift / Textmarker / Radierer / Lasso / Text** – mit frei wählbaren Farben aus den Farb-Slots und eigener Dicke je Werkzeug.
   - **Rückgängig & Vorwärts (Undo/Redo)** über die Werkzeugleiste, die Text-Werkzeuge und den **Doppeltipp** des Apple Pencil.
-- **Squeeze-Werkzeugpalette als abgerundeter Bogen**: Ein Zusammendrücken des Apple Pencil Pro öffnet an der **letzten Hover-Position** eine schmale, abgerundete Viertelkreis-Kurve. Sie enthält Rückgängig, Lasso, Stift, Textmarker, Radierer, Text, die Farbe (Farb-Slots erscheinen beim Hovern außen) und die Stiftdicke (durch Halten und radiales Ziehen). Ein erneuter Squeeze schließt die Palette; beim Weiterzeichnen verschwindet sie ebenfalls.
+- **Kompakte Squeeze-Werkzeugpalette**: Ein Zusammendrücken des Apple Pencil Pro öffnet nahe der **letzten aktiven Hover-Position** einen schmalen Viertelkreis. Acht runde **48-pt-Buttons** enthalten Rückgängig, Lasso, Stift, Textmarker, Radierer, Text, die Farbe (Farb-Slots erscheinen beim Hovern außen) und die Stiftdicke (durch Halten und radiales Ziehen). Unter iPadOS 26 mit aktuellem SDK wird natives interaktives Liquid Glass verwendet; ältere Versionen erhalten einen reflektierenden Material-Fallback. Erneuter Squeeze, Weiterzeichnen oder ein Fingertipp schließen die Palette. Ein Rand-Tipp schließt zunächst nur die offene Palette, nicht gleichzeitig die Notiz.
 - **Radierer mit automatischer Rückkehr**: Nach dem Radieren und Loslassen wechselt das Werkzeug automatisch zum zuletzt benutzten Werkzeug zurück (Fallback: Stift). Der Schalter *„Radierer automatisch abwählen“* (Standard: an) sitzt unter *Zeichnen & Apple Pencil*.
 - **Apple-Pencil-Einstellung**: Standardmäßig **aus**, das heißt Finger und Pencil dürfen zeichnen. Sobald die App irgendwo einen echten Apple Pencil bemerkt (Hover, Strich oder Squeeze), schaltet sie „Nur Apple Pencil“ automatisch ein und merkt sich das.
 - **Apple Pencil Hover**: Alle Buttons und Karten unterstützen iPadOS Pointer- & Hover-Effekte (`.hoverEffect(.lift)`).
@@ -78,10 +79,10 @@ Das Repository enthält das fertige App-Package **`PlanApp.swiftpm`**, welches a
 
 ### 🗒️ 6. Ansichts-Modus „Nur Notizen“ als Raster
 
-- **Raster statt Liste**: Die Notiz-Übersicht ist ein echtes Raster. Auf dem iPad stehen die Notizen im **Querformat immer zweispaltig**; im Hochformat werden zwei Spalten verwendet, sobald beide Karten breit genug sind. In sehr schmalen Fenstern bleibt es einspaltig.
+- **Drei kompakte Spalten**: Auf normalen iPad-Fensterbreiten (hoch und quer) stehen **drei** kleinere Notizkarten nebeneinander. Kopfzeile, Vorschau und Abstände sind kompakter. Im Split View wechselt die Übersicht abhängig von der verfügbaren Breite auf zwei oder eine Spalte.
 - **„Im Standard-Modus anzeigen“**: Karte gedrückt halten und die Option wählen – die App wechselt in den Standard-Modus **und** wischt automatisch zu der Woche, in der die Stunde liegt.
 - **Gleiche Kartenbreiten**: Alle Karten eines Abschnitts haben dieselbe Breite, und die Karten einer Zeile dieselbe Höhe – die Übersicht wirkt wie eine Tafel, nicht wie eine lose Liste.
-- **Chronologie im Raster**: Die grüne „Jetzt“-Linie läuft über die volle Breite. Im Mehrspaltenraster stehen Datum und Stunde direkt im Header jeder Karte, sodass Notizen verschiedener Tage eine Zeile gemeinsam füllen können.
+- **Chronologie im Raster**: Die grüne „Jetzt“-Linie liegt **zwischen** dem vergangenen und kommenden Kartenraster und läuft von Rand zu Rand – sie belegt niemals eine Rasterzelle. Im Mehrspaltenraster stehen Datum und Stunde direkt im Header jeder Karte, sodass Notizen verschiedener Tage eine Zeile gemeinsam füllen können.
 - **Chronologie bleibt**: Gelesen wird zeilenweise von links nach rechts – vergangene Einträge oben, kommende unterhalb der grünen Linie.
 
 ### 🌙 7. Darstellung & Dark Mode (Schrift bleibt schwarz)
@@ -352,3 +353,13 @@ tut – statt nur zu vermuten, dass etwas „repariert“ sei.
   App-Start und nur, wenn kein Systemfenster (z. B. ein Alert) oberhalb liegt.
   Sie kann in manchen Konfigurationen die Systemtastatur zurückholen, ist aber
   nicht die eigentliche Lösung – das ist die App-Tastatur.
+
+
+## 🧪 Regressionstests für Interaktion und Layout
+
+`Tests/run-regressions.sh` kompiliert mit einem installierten Swift-Compiler die
+UIKit-freien Tastatur-, Tipp-, Sync- und Paletten-/Notizlayout-Tests direkt gegen
+die App-Dateien. Hardware- und Sichtprüfungen für Handballen, Pencil Pro,
+Liquid Glass, Tastendruck-Feedback und die Jetzt-Linie stehen unter
+[`Tests/InteractionRegressions/README.md`](Tests/InteractionRegressions/README.md).
+Ein vollständiger App-Build benötigt weiterhin Xcode oder Swift Playgrounds.

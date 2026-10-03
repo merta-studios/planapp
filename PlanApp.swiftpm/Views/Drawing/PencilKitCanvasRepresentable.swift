@@ -35,6 +35,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     /// **Fenster-Koordinaten** (nil, wenn keine Pose vorliegt) und die Richtung,
     /// in die der Stift zeigt (Einheitsvektor im Fenster-Koordinatensystem).
     public let onPencilSqueeze: (CGPoint?, CGVector) -> Void
+    /// Synchrone, nicht UI-verändernde Aktivitätsmeldung für den Handballenfilter.
+    /// Sie darf nicht erst nach dem asynchronen SwiftUI-Update eintreffen.
+    public let onCanvasActivity: () -> Void
     /// Wird aufgerufen, sobald eine Zeichen- oder Radier-Geste auf der Fläche
     /// beginnt (z. B. um die Squeeze-Palette zu schließen).
     public let onCanvasGestureBegan: () -> Void
@@ -58,6 +61,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         onRequestUndo: @escaping () -> Void = {},
         onPencilInputDetected: @escaping () -> Void = {},
         onPencilSqueeze: @escaping (CGPoint?, CGVector) -> Void = { _, _ in },
+        onCanvasActivity: @escaping () -> Void = {},
         onCanvasGestureBegan: @escaping () -> Void = {},
         onCanvasGestureEnded: @escaping () -> Void = {}
     ) {
@@ -76,6 +80,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         self.onRequestUndo = onRequestUndo
         self.onPencilInputDetected = onPencilInputDetected
         self.onPencilSqueeze = onPencilSqueeze
+        self.onCanvasActivity = onCanvasActivity
         self.onCanvasGestureBegan = onCanvasGestureBegan
         self.onCanvasGestureEnded = onCanvasGestureEnded
     }
@@ -260,6 +265,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         @objc func handlePencilTouch(_ recognizer: UIPanGestureRecognizer) {
             switch recognizer.state {
             case .began, .changed:
+                parent.onCanvasActivity()
                 DispatchQueue.main.async { [weak self] in
                     self?.parent.onPencilInputDetected()
                 }
@@ -272,7 +278,10 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// ohne SwiftUI-State, damit die vielen Hover-Ereignisse keine
         /// Neuzeichnung auslösen.
         @objc func handlePencilHover(_ recognizer: UIHoverGestureRecognizer) {
-            guard let view = recognizer.view else { return }
+            // Beim Hover-Ende kann UIKit eine leere/verschobene Pose liefern.
+            // Für Squeeze bleibt die letzte tatsächlich aktive Position erhalten.
+            guard recognizer.state == .began || recognizer.state == .changed,
+                  let view = recognizer.view else { return }
 
             let windowLocation = recognizer.location(in: view.window)
             if windowLocation.x.isFinite, windowLocation.y.isFinite {
@@ -293,6 +302,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
         @objc func handleFingerPan(_ recognizer: UIPanGestureRecognizer) {
             guard let canvasView else { return }
+            parent.onCanvasActivity()
 
             let coordinateView: UIView = canvasView.window ?? canvasView
             let translation = recognizer.translation(in: coordinateView)
@@ -310,6 +320,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         }
 
         public func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
+            parent.onCanvasActivity()
             DispatchQueue.main.async {
                 self.parent.drawing = canvasView.drawing
                 self.parent.onStrokeMutation()
@@ -321,6 +332,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// Zeichen- oder Radier-Geste begonnen. Wird u. a. genutzt, um die
         /// Squeeze-Palette zu schließen, sobald wieder geschrieben wird.
         public func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
+            parent.onCanvasActivity()
             DispatchQueue.main.async { [weak self] in
                 self?.parent.onCanvasGestureBegan()
             }
@@ -329,6 +341,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// Zeichen- oder Radier-Geste beendet (z. B. Radierer automatisch
         /// abwählen, sobald der Stift losgelassen wird).
         public func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
+            parent.onCanvasActivity()
             DispatchQueue.main.async { [weak self] in
                 self?.parent.onCanvasGestureEnded()
             }

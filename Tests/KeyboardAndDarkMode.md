@@ -117,13 +117,12 @@ volle Breite, die Notizen stehen als gleich breite Karten darunter.
 1. Demostundenplan laden und über die Modus-Taste in der Kopfzeile
    **Nur Notizen** wählen. Mehrere Stunden mit Notizen befüllen
    (auch über mehrere Tage).
-2. iPad **quer** halten (bzw. Fenster breit ziehen): Die Notizen stehen in
-   **zwei Spalten**, die Karten einer Zeile sind gleich hoch und die Spalten
-   gleich breit. Die Reihenfolge bleibt chronologisch (zeilenweise von links
-   nach rechts), Tagesüberschriften und die grüne Linie trennen die
-   Abschnitte über die volle Breite.
-3. iPad **hoch** halten, in **Split View** oder ein schmales Fenster: Die
-   Übersicht wird einspaltig, jede Karte nutzt die volle Breite.
+2. Auf normaler iPad-Breite (quer oder hoch) stehen **drei kompakte Spalten**
+   mit gleich breiten Karten. Datum und Stunde stehen in jeder Karte;
+   mehrspaltig können verschiedene Tage eine Zeile gemeinsam nutzen.
+3. Im schmalen Split View wechseln die Karten auf zwei bzw. eine Spalte. Die
+   grüne Jetzt-Linie liegt **zwischen** getrennten Rastern und reicht über die
+   volle Fensterbreite, auch bei unvollständiger letzter Kartenzeile darüber.
 4. Bei Rotation (quer ↔ hoch) muss das Raster sofort mitwechseln, ohne dass
    Einträge verschwinden oder doppelt erscheinen.
 5. Eine Karte antippen: Die Notiz öffnet sich zum Bearbeiten wie im
@@ -206,10 +205,11 @@ Nur mit Apple Pencil Pro (iOS/iPadOS 17.5+) prüfbar.
 1. Notiz öffnen, den Stift in der Nähe des Zettels schweben lassen und
    **zusammendrücken**. An der letzten Hover-Position öffnet sich ein
    **Viertelkreis** – in der Richtung, in die der Stift zeigt.
-2. Im inneren Ring Werkzeug, im mittleren Ring Farbe und am äußeren Bogen die
-   **Dicke** ändern (Ziehen am Bogen). Die Anzeige in der Mitte zeigt Werkzeug
-   und Wert.
-3. Rückgängig/Wiederholen im Kreis und Schließen (✕) prüfen.
+2. Die acht runden Buttons (Rückgängig, Lasso, Stift, Textmarker, Radierer,
+   Text, Farbe und Dicke) sind größer, der Bogen schmaler und näher am Hover.
+   Über Farbe hovern öffnet den äußeren Farbbogen; Dicke halten und radial ziehen.
+3. Erneuter Squeeze oder Fingertipp schließt die Palette. Bei einem Tipp auf
+   den abgedunkelten Hintergrund bleibt die Notiz selbst zunächst offen.
 4. Mit dem Stift schreiben: Die Palette verschwindet automatisch.
 5. Der alte Undo-auf-Squeeze darf **nicht** mehr passieren; der Doppeltipp des
    Pencil löst weiterhin Rückgängig aus.
@@ -224,3 +224,11 @@ Nur mit Apple Pencil Pro (iOS/iPadOS 17.5+) prüfbar.
    aus).
 2. Schalter **aus**: Tippen bleibt stumm.
 3. Beim Einschalten ertönt automatisch eine Hörprobe.
+
+
+## Erweiterte Regressionsprüfung
+
+Die detaillierten aktuellen Prüfungen für Rand-/Handballenerkennung, veraltete
+Stundenpläne, drei Notizenspalten, Druck-Feedback aller Tasten und native
+Liquid-Glass-Palettenbuttons stehen in
+[InteractionRegressions/README.md](InteractionRegressions/README.md).

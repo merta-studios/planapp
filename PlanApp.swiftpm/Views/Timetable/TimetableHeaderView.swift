@@ -21,6 +21,12 @@ public struct TimetableHeaderView: View {
                 regularHeader(relativeTo: timeline.date)
                 compactHeader(relativeTo: timeline.date)
             }
+            .onChange(of: viewModel.isTimetableStale(relativeTo: timeline.date), initial: true) { _, isStale in
+                guard isStale else { return }
+                Task(priority: .userInitiated) {
+                    await viewModel.refreshTimetableIfNeeded()
+                }
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
@@ -190,9 +196,7 @@ public struct TimetableHeaderView: View {
                                 .combined(with: .move(edge: .trailing))
                         )
                 }
-                refreshBadge(
-                    text: viewModel.relativeLastSyncString(relativeTo: date)
-                )
+                refreshBadge(relativeTo: date, compact: false)
                 settingsButton
             }
             .animation(.spring(response: 0.45, dampingFraction: 0.82), value: showsJumpButton)
@@ -223,7 +227,7 @@ public struct TimetableHeaderView: View {
                         )
                 }
 
-                refreshBadge(text: compactRefreshString(relativeTo: date))
+                refreshBadge(relativeTo: date, compact: true)
                     .fixedSize(horizontal: true, vertical: false)
 
                 settingsButton
@@ -278,32 +282,42 @@ public struct TimetableHeaderView: View {
         )
     }
 
-    private func refreshBadge(text: String) -> some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(Color(red: 0.15, green: 0.75, blue: 0.35))
-                .frame(width: 7, height: 7)
+    private func refreshBadge(relativeTo date: Date, compact: Bool) -> some View {
+        let isStale = viewModel.isTimetableStale(relativeTo: date)
+        let color = isStale ? Color.red : Color(red: 0.10, green: 0.62, blue: 0.28)
+        let text = isStale
+            ? "Stundenplan veraltet"
+            : (compact ? compactRefreshString(relativeTo: date) : viewModel.relativeLastSyncString(relativeTo: date))
 
-            Text(text)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(Color(red: 0.10, green: 0.62, blue: 0.28))
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
+        return Button {
+            Task(priority: .userInitiated) { await viewModel.syncWithUntis() }
+        } label: {
+            HStack(spacing: 5) {
+                if viewModel.isLoading {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(color)
+                } else {
+                    Image(systemName: isStale ? "exclamationmark.circle.fill" : "circle.fill")
+                        .font(.system(size: isStale ? 12 : 7))
+                }
+
+                Text(text)
+                    .font(.system(size: 12, weight: isStale ? .semibold : .medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+            }
+            .foregroundColor(color)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Capsule().fill(color.opacity(0.13)))
+            .overlay(Capsule().strokeBorder(color.opacity(0.28), lineWidth: 1))
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(
-            Capsule()
-                .fill(Color(red: 0.15, green: 0.75, blue: 0.35).opacity(0.13))
-        )
-        .overlay(
-            Capsule()
-                .strokeBorder(
-                    Color(red: 0.15, green: 0.75, blue: 0.35).opacity(0.28),
-                    lineWidth: 1
-                )
-        )
-        .accessibilityLabel("Letzte Aktualisierung: \(viewModel.relativeLastSyncString())")
+        .buttonStyle(.plain)
+        .disabled(viewModel.isLoading || !viewModel.untisCredentials.isConfigured)
+        .accessibilityLabel(isStale ? "Stundenplan veraltet" : "Letzte Aktualisierung: \(viewModel.relativeLastSyncString(relativeTo: date))")
+        .accessibilityValue(viewModel.isLoading ? "Wird aktualisiert" : "")
+        .accessibilityHint("Stundenplan jetzt aktualisieren")
     }
 
     private var settingsButton: some View {
@@ -322,9 +336,9 @@ public struct TimetableHeaderView: View {
     }
 
     private func compactRefreshString(relativeTo now: Date) -> String {
-        let lastDate = viewModel.lastSyncDate
-            ?? viewModel.untisCredentials.lastSyncDate
-            ?? now
+        guard let lastDate = viewModel.lastSyncDate ?? viewModel.untisCredentials.lastSyncDate else {
+            return "Noch nicht geladen"
+        }
         let seconds = max(0, Int(now.timeIntervalSince(lastDate)))
 
         if seconds < 5 { return "Jetzt" }

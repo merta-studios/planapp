@@ -10,10 +10,9 @@ import UIKit
 /// vorhandene Notizen. Eine grüne Linie markiert den aktuellen Moment (davor
 /// liegen die abgelaufenen Einträge).
 ///
-/// Das Raster ist auf dem iPad (quer **und** hoch) zweispaltig, sobald beide
-/// Spalten breit genug sind – so ist die ganze Übersicht auf einen Blick
-/// erfassbar. Nur sehr schmale Fenster (Split View) bleiben einspaltig;
-/// Tagesüberschriften und die grüne Linie laufen immer über die volle Breite.
+/// Auf normalen iPad-Breiten stehen drei kompakte Karten nebeneinander.
+/// Schmale Fenster weichen auf zwei bzw. eine Spalte aus. Die grüne Linie
+/// liegt zwischen getrennten Rastern und läuft über die gesamte Fensterbreite.
 ///
 /// Gedrückt halten öffnet die Optionen, darunter „Im Standard-Modus anzeigen“:
 /// Damit wechselt die App in den Standard-Modus und wischt automatisch zur
@@ -79,19 +78,13 @@ public struct NotesOverviewListView: View {
         GeometryReader { geometry in
             TimelineView(.periodic(from: .now, by: 60)) { timeline in
                 let items = buildListItems(relativeTo: timeline.date)
-                let columns = columnCount(for: geometry.size)
+                let columns = NotesOverviewLayout.columnCount(for: geometry.size.width)
 
                 ScrollView(.vertical, showsIndicators: true) {
                     if items.isEmpty {
                         emptyState
                             .frame(maxWidth: .infinity)
                             .padding(.top, 60)
-                    } else if columns > 1 {
-                        multiColumnOverview(
-                            items: items,
-                            columnCount: columns,
-                            relativeTo: timeline.date
-                        )
                     } else {
                         gridOverview(
                             items: items,
@@ -108,70 +101,9 @@ public struct NotesOverviewListView: View {
 
     // MARK: - Raster
 
-    private let horizontalPadding: CGFloat = 18
-    private let columnSpacing: CGFloat = 14
-    private let rowSpacing: CGFloat = 14
-    /// Mindestbreite je Karte für zwei Spalten in nicht-querformatigen
-    /// Layouts (z. B. Hochformat oder schmale Fenster).
-    private let minimumCardWidth: CGFloat = 330
-
-    /// Auf dem iPad im Querformat sind zwei Spalten fest aktiv. Zuvor wurden
-    /// sie abhängig von einer Mindestkartenbreite gewählt; in manchen
-    /// Fenster-/Split-View-Konfigurationen blieb dadurch auch ein quer
-    /// gehaltenes iPad einspaltig.
-    private func columnCount(for size: CGSize) -> Int {
-        if UIDevice.current.userInterfaceIdiom == .pad, size.width > size.height {
-            return 2
-        }
-
-        let usableWidth = size.width - horizontalPadding * 2 - columnSpacing
-        guard usableWidth >= minimumCardWidth * 2 else { return 1 }
-        return 2
-    }
-
-    /// Querformat-Raster: Alle Notizen laufen in einem gemeinsamen Grid.
-    /// Tagesüberschriften werden hier weggelassen, da jede Karte Datum und
-    /// Stunde bereits im eigenen Header trägt. So können Notizen verschiedener
-    /// Tage dieselbe Zeile füllen, statt pro Tag jeweils allein links zu stehen.
-    private func multiColumnOverview(
-        items: [ListItem],
-        columnCount: Int,
-        relativeTo date: Date
-    ) -> some View {
-        let columns = Array(
-            repeating: GridItem(.flexible(), spacing: columnSpacing, alignment: .top),
-            count: max(2, columnCount)
-        )
-        let gridItems = items.filter { item in
-            if case .dayHeader = item { return false }
-            return true
-        }
-
-        return LazyVGrid(columns: columns, alignment: .leading, spacing: rowSpacing) {
-            ForEach(gridItems) { item in
-                switch item {
-                case .nowLine:
-                    nowLine(relativeTo: date)
-                        .padding(.vertical, 2)
-                        .gridCellColumns(columnCount)
-                case .dayHeader:
-                    EmptyView()
-                case .row(let entry):
-                    noteRow(entry: entry, compact: true)
-                        // Innenabstand verkleinert Vorschau und Karte, ohne
-                        // die gleichmäßige Spaltenbreite des Grids zu ändern.
-                        .padding(.horizontal, 20)
-                        .frame(
-                            maxWidth: .infinity,
-                            maxHeight: .infinity,
-                            alignment: .topLeading
-                        )
-                }
-            }
-        }
-        .padding(.horizontal, horizontalPadding)
-        .padding(.vertical, 10)
-    }
+    private let horizontalPadding = NotesOverviewLayout.horizontalPadding
+    private let columnSpacing = NotesOverviewLayout.columnSpacing
+    private let rowSpacing = NotesOverviewLayout.rowSpacing
 
     /// Die einspaltige Übersicht behält ihre Tagesüberschriften. Im
     /// Mehrspaltenraster stehen Datum und Stunde direkt auf jeder Karte.
@@ -184,9 +116,16 @@ public struct NotesOverviewListView: View {
             repeating: GridItem(.flexible(), spacing: columnSpacing, alignment: .top),
             count: max(1, columnCount)
         )
+        let visibleItems = items.filter { item in
+            if columnCount > 1, case .dayHeader = item { return false }
+            return true
+        }
 
+        // LazyVGrid unterstützt gridCellColumns nicht. Deshalb bekommt jede
+        // Seite der Jetzt-Linie ein eigenes Grid; die Linie ist ein Geschwister-
+        // Element im Stack und kann niemals eine Karten-Zelle belegen.
         return LazyVStack(alignment: .leading, spacing: rowSpacing) {
-            ForEach(buildOverviewRows(from: items)) { row in
+            ForEach(buildOverviewRows(from: visibleItems)) { row in
                 switch row {
                 case .full(let item):
                     fullWidthItem(item, relativeTo: date)
@@ -201,10 +140,11 @@ public struct NotesOverviewListView: View {
                                 )
                         }
                     }
+                    .padding(.horizontal, horizontalPadding)
                 }
             }
         }
-        .padding(.horizontal, horizontalPadding)
+        .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
     }
 
@@ -218,17 +158,19 @@ public struct NotesOverviewListView: View {
                 .padding(.vertical, 2)
         case .dayHeader(let headerDate):
             dayHeader(for: headerDate)
+                .padding(.horizontal, horizontalPadding)
                 .padding(.top, 6)
         case .row(let entry):
             // Kann nur auftreten, wenn Reihen nicht gruppiert wurden.
             noteRow(entry: entry, compact: false)
+                .padding(.horizontal, horizontalPadding)
         }
     }
 
-    /// Gruppiert die flache Liste in Rasterabschnitte: Alle Notizen zwischen
-    /// zwei Tagesüberschriften bilden ein Raster, das die Spalten des
-    /// jeweiligen Geräts füllt. Die Reihenfolge bleibt dabei chronologisch
-    /// (zeilenweise von links nach rechts).
+    /// Gruppiert die flache Liste in Rasterabschnitte: Die Jetzt-Linie trennt
+    /// immer zwei Raster, auch mitten in einer unvollständigen Kartenzeile.
+    /// Nur einspaltig trennen zusätzlich die Tagesüberschriften die Abschnitte.
+    /// Die Reihenfolge bleibt chronologisch (zeilenweise von links nach rechts).
     private func buildOverviewRows(from items: [ListItem]) -> [OverviewLayoutRow] {
         var rows: [OverviewLayoutRow] = []
         var pendingCards: [NotedLesson] = []
@@ -369,6 +311,9 @@ public struct NotesOverviewListView: View {
     /// Grüne Linie: "Hier ist jetzt" – darüber abgelaufen, darunter anstehend.
     private func nowLine(relativeTo date: Date) -> some View {
         HStack(spacing: 8) {
+            Rectangle()
+                .fill(Color.green.opacity(0.8))
+                .frame(width: horizontalPadding, height: 2)
             Circle()
                 .fill(Color.green)
                 .frame(width: 9, height: 9)
@@ -380,8 +325,9 @@ public struct NotesOverviewListView: View {
                 .fill(Color.green.opacity(0.8))
                 .frame(height: 2)
         }
+        .frame(maxWidth: .infinity)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Aktueller Zeitpunkt")
+        .accessibilityLabel("Aktueller Zeitpunkt: \(nowLabel(relativeTo: date))")
     }
 
     private func nowLabel(relativeTo date: Date) -> String {
@@ -441,7 +387,7 @@ private struct NoteOverviewCard: View {
             : [display.color, display.gradientEndColor ?? display.color.opacity(0.88)]
         let textColor = lesson.isCancelled ? Color.secondary : display.color.contrastingTextColor
 
-        return VStack(alignment: .leading, spacing: compact ? 8 : 10) {
+        return VStack(alignment: .leading, spacing: compact ? 6 : 10) {
             NoteHeaderContent(
                 lesson: lesson,
                 display: display,
@@ -449,13 +395,14 @@ private struct NoteOverviewCard: View {
                 periods: viewModel.periods,
                 primaryColor: textColor,
                 showsColorCircle: false,
+                isCompact: compact,
                 teacherDisplayName: viewModel.resolveTeacherName(lesson.teacherRaw),
                 originalTeacherDisplayName: lesson.originalTeacher.map { viewModel.resolveTeacherName($0) }
             )
 
             noteContent(textColor: textColor)
         }
-        .padding(.horizontal, compact ? 11 : 14)
+        .padding(.horizontal, compact ? 10 : 14)
         .padding(.vertical, compact ? 8 : 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
@@ -597,10 +544,10 @@ private struct NoteOverviewCard: View {
                 .resizable()
                 .scaledToFit()
                 .frame(
-                    // Im Raster (zwei Spalten im Querformat) darf die Vorschau
-                    // die Kartenbreite ausnutzen.
-                    maxWidth: compact ? 560 : 460,
-                    maxHeight: 200,
+                    // Drei kompakte Spalten, ohne zusätzlichen Außenabstand
+                    // pro Karte. Das Bild bleibt vollständig sichtbar.
+                    maxWidth: .infinity,
+                    maxHeight: compact ? 140 : 200,
                     alignment: .leading
                 )
                 .padding(compact ? 4 : 6)
@@ -622,7 +569,7 @@ private struct NoteOverviewCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(texts.enumerated()), id: \.offset) { _, text in
                         Text(text)
-                            .font(.system(size: compact ? 14 : 15, weight: .regular, design: .default))
+                            .font(.system(size: compact ? 12 : 15, weight: .regular, design: .default))
                             .foregroundColor(textColor)
                             .multilineTextAlignment(.leading)
                     }

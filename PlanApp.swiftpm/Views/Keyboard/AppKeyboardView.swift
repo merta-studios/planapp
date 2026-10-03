@@ -134,7 +134,9 @@ private struct KeyboardPalette {
     let key: Color
     let keyPressed: Color
     let modifier: Color
+    let modifierPressed: Color
     let modifierActive: Color
+    let modifierActivePressed: Color
     let text: Color
     let modifierText: Color
     let modifierTextActive: Color
@@ -152,9 +154,11 @@ private struct KeyboardPalette {
             return KeyboardPalette(
                 surface: Color(red: 0.10, green: 0.10, blue: 0.11).opacity(0.72),
                 key: Color(red: 0.42, green: 0.42, blue: 0.44),
-                keyPressed: Color(red: 0.53, green: 0.53, blue: 0.56),
+                keyPressed: Color(red: 0.25, green: 0.25, blue: 0.27),
                 modifier: Color(red: 0.25, green: 0.25, blue: 0.27),
+                modifierPressed: Color(red: 0.13, green: 0.13, blue: 0.15),
                 modifierActive: Color(red: 0.86, green: 0.86, blue: 0.89),
+                modifierActivePressed: Color(red: 0.61, green: 0.61, blue: 0.65),
                 text: .white,
                 modifierText: .white,
                 modifierTextActive: .black,
@@ -169,9 +173,11 @@ private struct KeyboardPalette {
             return KeyboardPalette(
                 surface: Color(red: 0.81, green: 0.83, blue: 0.86).opacity(0.92),
                 key: .white,
-                keyPressed: Color(white: 0.86),
+                keyPressed: Color(red: 0.71, green: 0.74, blue: 0.79),
                 modifier: Color(red: 0.67, green: 0.70, blue: 0.75),
+                modifierPressed: Color(red: 0.46, green: 0.50, blue: 0.57),
                 modifierActive: .white,
+                modifierActivePressed: Color(red: 0.71, green: 0.74, blue: 0.79),
                 text: .black,
                 modifierText: .black,
                 modifierTextActive: .black,
@@ -322,17 +328,16 @@ struct AppKeyboardView: View {
         label: String,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        Button {
+            KeyboardFeedback.keyPress()
+            action()
+        } label: {
             Image(systemName: icon)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(palette.modifierText)
                 .frame(width: 44, height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(palette.modifier)
-                )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(KeyboardShortcutButtonStyle(palette: palette))
         .accessibilityLabel(label)
     }
 
@@ -754,6 +759,7 @@ private struct KeyboardKeyButton<Label: View>: View {
     let label: Label
 
     @State private var isPressed = false
+    @GestureState private var isTouchActive = false
     @State private var isPopupOpen = false
     @State private var selectedAccentIndex: Int?
     @State private var popupTask: Task<Void, Never>?
@@ -796,12 +802,16 @@ private struct KeyboardKeyButton<Label: View>: View {
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(backgroundColor)
-                    .shadow(color: palette.shadow, radius: 0, x: 0, y: 1)
+                    .shadow(color: palette.shadow, radius: 0, x: 0, y: isPressed ? 0 : 1)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .strokeBorder(palette.border, lineWidth: 0.5)
             )
+            .offset(y: isPressed ? 1 : 0)
+            // Kein verzögertes Einblenden: Die Taste wird beim Aufsetzen sofort
+            // dunkler, einschließlich Shift, Löschen, Ebenen- und Eingabetaste.
+            .animation(nil, value: isPressed)
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .gesture(pressGesture)
             .overlay(alignment: .top) {
@@ -810,10 +820,17 @@ private struct KeyboardKeyButton<Label: View>: View {
                         .offset(x: popupOffset, y: -(popupHeight + 6))
                 }
             }
-            .onDisappear {
-                popupTask?.cancel()
-                stopRepeating()
+            .onChange(of: isTouchActive) { _, active in
+                // DragGesture.onEnded fehlt bei System-Abbruch. Keine Taste
+                // darf danach dunkel bleiben oder weiter Zeichen löschen.
+                if !active, isPressed {
+                    // onEnded darf zuerst seine normale Tastenaktion ausführen.
+                    DispatchQueue.main.async {
+                        if !isTouchActive, isPressed { cancelPress() }
+                    }
+                }
             }
+            .onDisappear { cancelPress() }
     }
 
     // MARK: Darstellung
@@ -827,12 +844,12 @@ private struct KeyboardKeyButton<Label: View>: View {
 
     private var backgroundColor: Color {
         if isModifier {
-            return isActive ? palette.modifierActive : palette.modifier
+            if isActive {
+                return isPressed ? palette.modifierActivePressed : palette.modifierActive
+            }
+            return isPressed ? palette.modifierPressed : palette.modifier
         }
-        if isPressed {
-            return palette.keyPressed
-        }
-        return palette.key
+        return isPressed ? palette.keyPressed : palette.key
     }
 
     private var popup: some View {
@@ -865,6 +882,7 @@ private struct KeyboardKeyButton<Label: View>: View {
 
     private var pressGesture: some Gesture {
         DragGesture(minimumDistance: 0)
+            .updating($isTouchActive) { _, active, _ in active = true }
             .onChanged { value in
                 if !isPressed {
                     beginPress()
@@ -907,7 +925,17 @@ private struct KeyboardKeyButton<Label: View>: View {
         }
     }
 
+    private func cancelPress() {
+        popupTask?.cancel()
+        popupTask = nil
+        stopRepeating()
+        isPressed = false
+        isPopupOpen = false
+        selectedAccentIndex = nil
+    }
+
     private func endPress() {
+        guard isPressed else { return }
         popupTask?.cancel()
         popupTask = nil
         stopRepeating()
@@ -967,5 +995,20 @@ private struct KeyboardKeyButton<Label: View>: View {
     private func stopRepeating() {
         repeatTask?.cancel()
         repeatTask = nil
+    }
+}
+
+/// Auch die kleinen Kurzbefehle reagieren wie Tasten, nicht wie statische Icons.
+private struct KeyboardShortcutButtonStyle: ButtonStyle {
+    let palette: KeyboardPalette
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(configuration.isPressed ? palette.modifierPressed : palette.modifier)
+            )
+            .offset(y: configuration.isPressed ? 1 : 0)
+            .animation(nil, value: configuration.isPressed)
     }
 }

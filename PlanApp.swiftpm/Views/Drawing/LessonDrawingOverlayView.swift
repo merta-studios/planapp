@@ -51,7 +51,7 @@ public struct LessonDrawingOverlayView: View {
     @State private var isSqueezePaletteVisible = false
     @State private var squeezeAnchor: CGPoint? = nil
     @State private var squeezeDirection = CGVector(dx: 0, dy: -1)
-    @State private var isCanvasGestureInProgress = false
+    @State private var drawingInputActivity = DrawingInputActivity()
     /// Zuletzt benutztes Werkzeug außer dem Radierer – dorthin wechselt die
     /// App nach dem Radieren automatisch zurück (Fallback: Stift).
     @State private var lastInkingTool: DrawingToolSelection? = nil
@@ -132,6 +132,10 @@ public struct LessonDrawingOverlayView: View {
                 safeAreaInsets: geometry.safeAreaInsets
             )
 
+            // Ein Tipp, der bei offener Palette beginnt, schließt nur diese –
+            // selbst wenn ein weiterer Observer sie im selben Event ausblendet.
+            let dismissesPaletteOnly = isSqueezePaletteVisible
+
             ZStack {
                 // Nur ein gezielter Ein-Finger-Tipp auf den abgedunkelten
                 // Hintergrund schließt die Notiz. Große Handballen-Kontakte,
@@ -141,10 +145,23 @@ public struct LessonDrawingOverlayView: View {
                     Color.black
                         .opacity(isExpanded ? 0.58 : 0)
                         .background(.ultraThinMaterial.opacity(isExpanded ? 1 : 0))
+                        .allowsHitTesting(false)
 
                     PalmSafeBackdropDismissView(
-                        isEnabled: isExpanded && !isCanvasGestureInProgress,
-                        onDismiss: saveAndDismiss
+                        isEnabled: isExpanded && showsEditor && !isMovingFromHeader && !isResizing,
+                        canDismiss: {
+                            let state = canvasView?.drawingGestureRecognizer.state
+                            return drawingInputActivity.permitsBackdropTap(
+                                toolIsActive: state == .began || state == .changed
+                            )
+                        },
+                        onDismiss: {
+                            if dismissesPaletteOnly {
+                                dismissSqueezePalette()
+                            } else {
+                                saveAndDismiss()
+                            }
+                        }
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -192,6 +209,13 @@ public struct LessonDrawingOverlayView: View {
                     .zIndex(30)
                     .transition(.opacity)
                 }
+            }
+            .background {
+                DrawingFingerTapObserver(isEnabled: isSqueezePaletteVisible) {
+                    dismissSqueezePalette()
+                }
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
             }
             .onAppear {
                 configureTextUndo()
@@ -380,8 +404,10 @@ public struct LessonDrawingOverlayView: View {
                         viewModel.registerApplePencilSqueeze()
                         presentSqueezePalette(anchor: anchor, direction: direction)
                     },
+                    onCanvasActivity: {
+                        drawingInputActivity.record()
+                    },
                     onCanvasGestureBegan: {
-                        isCanvasGestureInProgress = true
                         // Sobald wieder geschrieben wird, verschwindet die
                         // Palette – wie bei Apples eigener Kontext-Palette.
                         if isSqueezePaletteVisible {
@@ -389,7 +415,6 @@ public struct LessonDrawingOverlayView: View {
                         }
                     },
                     onCanvasGestureEnded: {
-                        isCanvasGestureInProgress = false
                         handleCanvasGestureEnded()
                     }
                 )
@@ -1235,7 +1260,8 @@ public struct LessonDrawingOverlayView: View {
     }
 
     private func saveAndDismiss() {
-        guard viewModel.isDrawingOverlayPresented else { return }
+        guard viewModel.isDrawingOverlayPresented, isExpanded else { return }
+        dismissSqueezePalette()
 
         // Erst die Bearbeitung beenden: Dadurch gibt das UIKit-Textfeld den
         // First Responder ab und verwirft eine evtl. offene Fokus-Anfrage,
@@ -1290,76 +1316,6 @@ public struct LessonDrawingOverlayView: View {
                 textBoxes: cleanedTextBoxes,
                 backgroundStyle: noteBackgroundStyle
             )
-        }
-    }
-
-    /// UIKit-Tap-Erkenner für den abgedunkelten Hintergrund. SwiftUI-OnTap nimmt
-    /// auch große Handballen-Touches als normalen Tipp; hier lassen sich Pencil,
-    /// Multitouch und große direkte Kontakte zuverlässig aussortieren.
-    private struct PalmSafeBackdropDismissView: UIViewRepresentable {
-        let isEnabled: Bool
-        let onDismiss: () -> Void
-
-        func makeCoordinator() -> Coordinator {
-            Coordinator(isEnabled: isEnabled, onDismiss: onDismiss)
-        }
-
-        func makeUIView(context: Context) -> UIView {
-            let view = UIView(frame: .zero)
-            view.backgroundColor = .clear
-            view.isMultipleTouchEnabled = true
-
-            let tap = UITapGestureRecognizer(
-                target: context.coordinator,
-                action: #selector(Coordinator.handleTap(_:))
-            )
-            tap.numberOfTapsRequired = 1
-            tap.numberOfTouchesRequired = 1
-            tap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
-            tap.cancelsTouchesInView = false
-            tap.delaysTouchesBegan = false
-            tap.delaysTouchesEnded = false
-            tap.delegate = context.coordinator
-            view.addGestureRecognizer(tap)
-
-            view.isUserInteractionEnabled = isEnabled
-            return view
-        }
-
-        func updateUIView(_ view: UIView, context: Context) {
-            context.coordinator.isEnabled = isEnabled
-            context.coordinator.onDismiss = onDismiss
-            view.isUserInteractionEnabled = isEnabled
-        }
-
-        final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-            var isEnabled: Bool
-            var onDismiss: () -> Void
-
-            init(isEnabled: Bool, onDismiss: @escaping () -> Void) {
-                self.isEnabled = isEnabled
-                self.onDismiss = onDismiss
-            }
-
-            func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-                isEnabled
-            }
-
-            func gestureRecognizer(
-                _ gestureRecognizer: UIGestureRecognizer,
-                shouldReceive touch: UITouch
-            ) -> Bool {
-                guard isEnabled, touch.type == .direct else { return false }
-                let contactRadius = touch.majorRadius
-                // Ein Finger-Tipp liegt üblicherweise deutlich darunter; eine
-                // aufliegende Handfläche hat eine wesentlich größere Kontaktfläche.
-                return contactRadius.isFinite && contactRadius <= 22
-            }
-
-            @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
-                guard recognizer.state == .recognized, isEnabled else { return }
-                onDismiss()
-            }
         }
     }
 }

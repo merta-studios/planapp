@@ -16,6 +16,7 @@ public struct NoteHeaderContent: View {
     /// Grundfarbe der Texte (im Overlay z. B. abhängig vom Ausklapp-Zustand).
     public let primaryColor: Color
     public let showsColorCircle: Bool
+    public let isCompact: Bool
     private let teacherDisplayName: String
     private let originalTeacherDisplayName: String?
 
@@ -26,6 +27,7 @@ public struct NoteHeaderContent: View {
         periods: [Period],
         primaryColor: Color = .primary,
         showsColorCircle: Bool = true,
+        isCompact: Bool = false,
         teacherDisplayName: String? = nil,
         originalTeacherDisplayName: String? = nil
     ) {
@@ -35,11 +37,49 @@ public struct NoteHeaderContent: View {
         self.periods = periods
         self.primaryColor = primaryColor
         self.showsColorCircle = showsColorCircle
+        self.isCompact = isCompact
         self.teacherDisplayName = teacherDisplayName ?? lesson.teacherRaw
         self.originalTeacherDisplayName = originalTeacherDisplayName ?? lesson.originalTeacher
     }
 
     public var body: some View {
+        Group {
+            if isCompact {
+                compactHeader
+            } else {
+                regularHeader
+            }
+        }
+        .foregroundColor(primaryColor)
+    }
+
+    /// Datum unter statt neben dem Fach: So bleibt der Titel auch in drei
+    /// Spalten lesbar, ohne die 64-pt-Kopfzeile der Zeichenfläche zu ändern.
+    private var compactHeader: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Text(display.name)
+                    .font(.system(size: 15, weight: .semibold))
+                    .strikethrough(lesson.isCancelled, color: .red)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Text("\(lesson.periodNumber). Std.")
+                    .font(.system(size: 11, weight: .semibold))
+                    .strikethrough(lesson.isCancelled, color: .red)
+                    .fixedSize()
+            }
+            if hasHeaderDetails { headerDetails }
+            Text(headerDateText)
+                .font(.system(size: 10))
+                .opacity(0.78)
+                .strikethrough(lesson.isCancelled, color: .red)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+        }
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+    }
+
+    private var regularHeader: some View {
         HStack(alignment: .center, spacing: showsColorCircle ? 12 : 0) {
             if showsColorCircle {
                 Circle()
@@ -99,7 +139,7 @@ public struct NoteHeaderContent: View {
     private var headerDetails: some View {
         let settings = displaySettings
 
-        return HStack(spacing: 10) {
+        return HStack(spacing: isCompact ? 6 : 10) {
             if settings.showTeacher && !lesson.teacherRaw.isEmpty {
                 HStack(spacing: 3) {
                     Image(systemName: "person")
@@ -151,7 +191,7 @@ public struct NoteHeaderContent: View {
                 }
             }
         }
-        .font(.system(size: 12, weight: .regular, design: .default))
+        .font(.system(size: isCompact ? 10 : 12, weight: .regular, design: .default))
         .opacity(0.75)
         .lineLimit(1)
     }
