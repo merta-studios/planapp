@@ -802,16 +802,18 @@ private struct KeyboardKeyButton<Label: View>: View {
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(backgroundColor)
-                    .shadow(color: palette.shadow, radius: 0, x: 0, y: isPressed ? 0 : 1)
+                    .shadow(color: palette.shadow, radius: 0, x: 0, y: isVisuallyPressed ? 0 : 1)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .strokeBorder(palette.border, lineWidth: 0.5)
             )
-            .offset(y: isPressed ? 1 : 0)
-            // Kein verzögertes Einblenden: Die Taste wird beim Aufsetzen sofort
-            // dunkler, einschließlich Shift, Löschen, Ebenen- und Eingabetaste.
-            .animation(nil, value: isPressed)
+            .offset(y: isVisuallyPressed ? 1 : 0)
+            .brightness(isVisuallyPressed ? -0.14 : 0)
+            // Der GestureState reagiert bereits auf das Aufsetzen. So wird die
+            // Taste auch bei sehr kurzem Tippen sichtbar dunkler, bevor die
+            // Aktion beim Loslassen ausgeführt wird.
+            .animation(.easeOut(duration: 0.06), value: isVisuallyPressed)
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .gesture(pressGesture)
             .overlay(alignment: .top) {
@@ -835,6 +837,13 @@ private struct KeyboardKeyButton<Label: View>: View {
 
     // MARK: Darstellung
 
+    /// `isTouchActive` kommt direkt aus dem GestureState und sorgt für eine
+    /// sichtbare Rückmeldung auch bei kurzen Taps; `isPressed` deckt den
+    /// wiederholenden Backspace- und Popup-Zustand ab.
+    private var isVisuallyPressed: Bool {
+        isPressed || isTouchActive
+    }
+
     private var foregroundColor: Color {
         if isModifier {
             return isActive ? palette.modifierTextActive : palette.modifierText
@@ -845,11 +854,11 @@ private struct KeyboardKeyButton<Label: View>: View {
     private var backgroundColor: Color {
         if isModifier {
             if isActive {
-                return isPressed ? palette.modifierActivePressed : palette.modifierActive
+                return isVisuallyPressed ? palette.modifierActivePressed : palette.modifierActive
             }
-            return isPressed ? palette.modifierPressed : palette.modifier
+            return isVisuallyPressed ? palette.modifierPressed : palette.modifier
         }
-        return isPressed ? palette.keyPressed : palette.key
+        return isVisuallyPressed ? palette.keyPressed : palette.key
     }
 
     private var popup: some View {

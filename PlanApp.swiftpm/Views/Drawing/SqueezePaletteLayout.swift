@@ -1,15 +1,15 @@
 import Foundation
 
-/// Ein kompakter Viertelkreis mit acht gleichmäßig verteilten 48-pt-Buttons.
-/// Keine leeren Trennzeichen-Plätze: So passt mehr Bedienfläche auf einen
-/// kleineren Radius, ohne dass sich benachbarte Trefferflächen überschneiden.
+/// Ein enger Viertelkreis mit acht gleichmäßig verteilten, 44-pt-großen
+/// Bedienelementen. Keine leeren Trennzeichen-Plätze: So bleibt die Palette
+/// kompakt, ohne dass sich die Touch-Ziele überschneiden.
 struct SqueezePaletteLayout {
-    static let arcRadius: CGFloat = 224
-    static let arcBandWidth: CGFloat = 58
+    static let arcRadius: CGFloat = 210
+    static let arcBandWidth: CGFloat = 44
     static let arcHalfAngle: CGFloat = .pi / 4
-    static let buttonSize: CGFloat = 48
-    static let colorBandWidth: CGFloat = 58
-    static let colorSwatchSize: CGFloat = 30
+    static let buttonSize: CGFloat = 44
+    static let colorBandWidth: CGFloat = 44
+    static let colorSwatchSize: CGFloat = 28
     static let margin: CGFloat = 14
     static let elementCount = 8
     static let colorElementIndex = 6

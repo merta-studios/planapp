@@ -23,6 +23,8 @@ struct PencilSqueezePaletteView: View {
     @State private var isColorPickerVisible = false
     @State private var pointerHoverTargets: Set<String> = []
     @State private var continuousHoverTargets: Set<String> = []
+    @State private var pointerHoveredPaletteElements: Set<String> = []
+    @State private var continuouslyHoveredPaletteElements: Set<String> = []
     @State private var colorPickerHideWorkItem: DispatchWorkItem?
 
     @State private var isAdjustingWidth = false
@@ -212,13 +214,15 @@ struct PencilSqueezePaletteView: View {
                 .frame(width: buttonSize, height: buttonSize)
                 .foregroundColor(.primary)
         }
-        .buttonStyle(SqueezePaletteButtonStyle())
+        .buttonStyle(SqueezePaletteButtonStyle(isHovered: isPaletteElementHovered("undo")))
         .hoverEffect(.lift)
+        .modifier(paletteElementHoverTracking("undo"))
         .accessibilityLabel("Rückgängig")
     }
 
     private func toolButton(_ tool: SqueezePaletteTool) -> some View {
         let isSelected = activeTool == tool
+        let hoverID = "tool-\(tool.rawValue)"
 
         return Button {
             Haptics.select()
@@ -229,8 +233,14 @@ struct PencilSqueezePaletteView: View {
                 .frame(width: buttonSize, height: buttonSize)
                 .foregroundColor(isSelected ? .blue : .primary)
         }
-        .buttonStyle(SqueezePaletteButtonStyle(isSelected: isSelected))
+        .buttonStyle(
+            SqueezePaletteButtonStyle(
+                isSelected: isSelected,
+                isHovered: isPaletteElementHovered(hoverID)
+            )
+        )
         .hoverEffect(.lift)
+        .modifier(paletteElementHoverTracking(hoverID))
         .accessibilityLabel(tool.title)
         .accessibilityValue(isSelected ? "Ausgewählt" : "")
     }
@@ -257,8 +267,14 @@ struct PencilSqueezePaletteView: View {
                 )
                 .frame(width: buttonSize, height: buttonSize)
         }
-        .buttonStyle(SqueezePaletteButtonStyle(isSelected: isColorPickerVisible))
+        .buttonStyle(
+            SqueezePaletteButtonStyle(
+                isSelected: isColorPickerVisible,
+                isHovered: isPaletteElementHovered("color-button")
+            )
+        )
         .hoverEffect(.lift)
+        .modifier(paletteElementHoverTracking("color-button"))
         .onHover { isHovering in
             updateHoverTarget("color-button", isHovering: isHovering, source: .pointer)
         }
@@ -300,6 +316,7 @@ struct PencilSqueezePaletteView: View {
                     ? colorButtonAngle
                     : startAngle + (endAngle - startAngle) * CGFloat(index) / CGFloat(count - 1)
                 let isSelected = hex.caseInsensitiveCompare(currentColorHex) == .orderedSame
+                let hoverID = "color-\(index)"
 
                 Button {
                     Haptics.select()
@@ -326,18 +343,24 @@ struct PencilSqueezePaletteView: View {
                         )
                         .frame(width: buttonSize, height: buttonSize)
                 }
-                .buttonStyle(SqueezePaletteButtonStyle(isSelected: isSelected))
+                .buttonStyle(
+                    SqueezePaletteButtonStyle(
+                        isSelected: isSelected,
+                        isHovered: isPaletteElementHovered(hoverID)
+                    )
+                )
                 .hoverEffect(.lift)
+                .modifier(paletteElementHoverTracking(hoverID))
                 .position(point(radius: colorArcRadius, angle: angle))
                 .onHover { isHovering in
-                    updateHoverTarget("color-\(index)", isHovering: isHovering, source: .pointer)
+                    updateHoverTarget(hoverID, isHovering: isHovering, source: .pointer)
                 }
                 .onContinuousHover { phase in
                     switch phase {
                     case .active(_):
-                        updateHoverTarget("color-\(index)", isHovering: true, source: .continuous)
+                        updateHoverTarget(hoverID, isHovering: true, source: .continuous)
                     case .ended:
-                        updateHoverTarget("color-\(index)", isHovering: false, source: .continuous)
+                        updateHoverTarget(hoverID, isHovering: false, source: .continuous)
                     }
                 }
                 .accessibilityLabel("Farbe \(hex)")
@@ -363,8 +386,14 @@ struct PencilSqueezePaletteView: View {
             .frame(width: buttonSize, height: buttonSize)
             .foregroundColor(.primary)
         }
-        .buttonStyle(SqueezePaletteButtonStyle(isSelected: isAdjustingWidth))
+        .buttonStyle(
+            SqueezePaletteButtonStyle(
+                isSelected: isAdjustingWidth,
+                isHovered: isPaletteElementHovered("thickness")
+            )
+        )
         .hoverEffect(.lift)
+        .modifier(paletteElementHoverTracking("thickness"))
         .simultaneousGesture(thicknessHoldAndDragGesture)
         .accessibilityLabel("Stiftdicke \(formattedWidth) Punkt")
         .accessibilityHint("Gedrückt halten und radial ziehen, um die Dicke anzupassen")
@@ -372,21 +401,36 @@ struct PencilSqueezePaletteView: View {
 
     // MARK: - Farbe und Hover
 
+    private func isPaletteElementHovered(_ identifier: String) -> Bool {
+        pointerHoveredPaletteElements.contains(identifier)
+            || continuouslyHoveredPaletteElements.contains(identifier)
+    }
+
+    private func paletteElementHoverTracking(_ identifier: String) -> SqueezePaletteHoverTrackingModifier {
+        SqueezePaletteHoverTrackingModifier(
+            identifier: identifier,
+            pointerTargets: $pointerHoveredPaletteElements,
+            continuousTargets: $continuouslyHoveredPaletteElements
+        )
+    }
+
     private func updateHoverTarget(_ target: String, isHovering: Bool, source: HoverSource) {
+        let didChange: Bool
         switch source {
         case .pointer:
             if isHovering {
-                pointerHoverTargets.insert(target)
+                didChange = pointerHoverTargets.insert(target).inserted
             } else {
-                pointerHoverTargets.remove(target)
+                didChange = pointerHoverTargets.remove(target) != nil
             }
         case .continuous:
             if isHovering {
-                continuousHoverTargets.insert(target)
+                didChange = continuousHoverTargets.insert(target).inserted
             } else {
-                continuousHoverTargets.remove(target)
+                didChange = continuousHoverTargets.remove(target) != nil
             }
         }
+        guard didChange else { return }
 
         if isHovering {
             colorPickerHideWorkItem?.cancel()
@@ -559,6 +603,41 @@ struct PencilSqueezePaletteView: View {
 private enum HoverSource {
     case pointer
     case continuous
+}
+
+/// Tracking occurs once on enter/exit (not on every Pencil-hover coordinate),
+/// then feeds a visible hover treatment into the button style.
+private struct SqueezePaletteHoverTrackingModifier: ViewModifier {
+    let identifier: String
+    @Binding var pointerTargets: Set<String>
+    @Binding var continuousTargets: Set<String>
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { hovering in
+                update(hovering, identifier: identifier, targets: $pointerTargets)
+            }
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(_):
+                    update(true, identifier: identifier, targets: $continuousTargets)
+                case .ended:
+                    update(false, identifier: identifier, targets: $continuousTargets)
+                }
+            }
+    }
+
+    private func update(_ hovering: Bool, identifier: String, targets: Binding<Set<String>>) {
+        var current = targets.wrappedValue
+        let changed: Bool
+        if hovering {
+            changed = current.insert(identifier).inserted
+        } else {
+            changed = current.remove(identifier) != nil
+        }
+        guard changed else { return }
+        targets.wrappedValue = current
+    }
 }
 
 private enum SqueezePaletteElement {

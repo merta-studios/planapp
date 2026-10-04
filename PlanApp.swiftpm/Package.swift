@@ -33,7 +33,10 @@ let package = Package(
                 .portraitUpsideDown(.when(deviceFamilies: [.pad]))
             ],
             capabilities: [
-                .outgoingNetworkConnections()
+                .outgoingNetworkConnections(),
+                .bluetoothAlways(
+                    purposeString: "PlanApp verwendet Bluetooth, um den Akkustand des verbundenen Apple Pencil anzuzeigen."
+                )
             ]
         )
     ],

@@ -23,23 +23,36 @@ public struct SubjectDisplay {
 public final class TimetableViewModel: ObservableObject {
     // MARK: - Published State
 
+    /// Ändert sich nur, wenn Stunden, Stundenzeiten oder Notizen geändert
+    /// werden. Die „Nur Notizen“-Übersicht kann ihre teure Datensammlung so
+    /// zwischenspeichern, statt sie bei jeder SwiftUI-Aktualisierung erneut
+    /// aus allen gespeicherten Stunden aufzubauen.
+    @Published public private(set) var notesOverviewRevision: UInt = 0
+
     @Published public var selectedWeekStart: Date
-    @Published public var periods: [Period] = []
-    @Published public var lessons: [Lesson] = []
+    @Published public var periods: [Period] = [] {
+        didSet { notesOverviewRevision &+= 1 }
+    }
+    @Published public var lessons: [Lesson] = [] {
+        didSet { notesOverviewRevision &+= 1 }
+    }
     @Published public var subjectCustomizations: [SubjectCustomization] = []
     @Published public var teacherNameCustomizations: [TeacherNameCustomization] = []
     @Published public var displaySettings: BlockDisplaySettings = .default
     @Published public var drawingSettings: DrawingSettings = .default
     @Published public var untisCredentials: UntisCredentials = UntisCredentials()
-    @Published public var lessonNotes: [String: LessonNote] = [:]
+    @Published public var lessonNotes: [String: LessonNote] = [:] {
+        didSet { notesOverviewRevision &+= 1 }
+    }
     /// Aktueller Ansichts-Modus (Standard / Notizen hervorgehoben / Nur Notizen).
     /// Wird persistent gespeichert und beim Start wiederhergestellt.
     @Published public var viewMode: TimetableViewMode = .standard
 
-    /// Modellhinweis aus tatsächlich beobachtetem Pencil-Input. iPadOS stellt
-    /// keine öffentliche Abfrage für den gekoppelten Pencil-Akku oder für die
-    /// genaue Modellgeneration bereit; ein Squeeze identifiziert Pro dagegen.
+    /// Modellhinweis aus tatsächlich beobachtetem Pencil-Input. Ein Squeeze
+    /// identifiziert den Pro; die Akkuanzeige bleibt leer, solange CoreBluetooth
+    /// keinen tatsächlichen Pencil-Batteriewert liefert.
     @Published public private(set) var detectedApplePencilName: String? = nil
+    @Published public private(set) var applePencilBatteryLevel: Int? = nil
 
     /// Erscheinungsbild der App. Standard ist **hell** (siehe ``AppAppearance``),
     /// damit weißes Papier niemals weiße Schrift bekommt.
@@ -90,6 +103,8 @@ public final class TimetableViewModel: ObservableObject {
     /// PKDrawing-Daten während SwiftUI den Stundenplan neu rendert.
     private var visibleNoteKeys: Set<String> = []
     private var autoRefreshTimer: AnyCancellable? = nil
+    private var applePencilBatteryMonitor: ApplePencilBatteryMonitor?
+    private var applePencilBatteryObservation: AnyCancellable?
     private let storage = TimetableStorageService.shared
     private let untis = WebUntisService.shared
     private let demo = DemoDataService.shared
@@ -338,6 +353,7 @@ public final class TimetableViewModel: ObservableObject {
         if detectedApplePencilName == nil {
             detectedApplePencilName = "Apple Pencil"
         }
+        startApplePencilBatteryMonitoring()
         registerApplePencilUsage()
     }
 
@@ -345,7 +361,27 @@ public final class TimetableViewModel: ObservableObject {
     /// daher zuverlässig.
     public func registerApplePencilSqueeze() {
         detectedApplePencilName = "Apple Pencil Pro"
+        startApplePencilBatteryMonitoring()
         registerApplePencilUsage()
+    }
+
+    /// Startet die BLE-Abfrage erst, sobald echter Pencil-Input erkannt wurde.
+    /// Das verhindert eine Bluetooth-Berechtigungsabfrage direkt beim Start.
+    private func startApplePencilBatteryMonitoring() {
+        guard applePencilBatteryMonitor == nil else {
+            applePencilBatteryMonitor?.startMonitoring()
+            return
+        }
+
+        let monitor = ApplePencilBatteryMonitor()
+        applePencilBatteryMonitor = monitor
+        applePencilBatteryObservation = monitor.$batteryLevel
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] level in
+                self?.applePencilBatteryLevel = level
+            }
+        monitor.startMonitoring()
     }
 
     /// Merkt sich, dass der letzte API-Abgleich fehlgeschlagen ist.

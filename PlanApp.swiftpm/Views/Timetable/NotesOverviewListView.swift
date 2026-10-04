@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import ImageIO
 
 /// Ansichts-Modus "Nur Notizen": chronologische, scrollbare **Raster**-Übersicht
 /// aller Stunden, die eine Notiz enthalten (Hausaufgaben, Tests, ...). Der Titel
@@ -19,6 +20,7 @@ import UIKit
 /// Woche dieser Stunde.
 public struct NotesOverviewListView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
+    @State private var entrySnapshot: [NotedLesson] = []
 
     public let noteNamespace: Namespace.ID
 
@@ -35,10 +37,15 @@ public struct NotesOverviewListView: View {
         /// Uhrzeit (Minute des Tages), ab der der Eintrag als abgelaufen gilt
         /// (Ende der letzten Stunde des Blocks).
         let endMinutes: Int
-        /// Liegt der Eintrag bezogen auf den Betrachtungszeitpunkt in der Vergangenheit?
-        let isPast: Bool
 
         var id: String { lesson.noteKey }
+
+        func isPast(relativeTo now: Date, nowMinutes: Int) -> Bool {
+            if Calendar.germanCalendar.isDate(date, inSameDayAs: now) {
+                return endMinutes <= nowMinutes
+            }
+            return date < now
+        }
     }
 
     /// Flaches Modell der Liste: Tagesüberschriften, Notiz-Zeilen und die
@@ -77,7 +84,7 @@ public struct NotesOverviewListView: View {
     public var body: some View {
         GeometryReader { geometry in
             TimelineView(.periodic(from: .now, by: 60)) { timeline in
-                let items = buildListItems(relativeTo: timeline.date)
+                let items = buildListItems(from: entrySnapshot, relativeTo: timeline.date)
                 let columns = NotesOverviewLayout.columnCount(for: geometry.size.width)
 
                 ScrollView(.vertical, showsIndicators: true) {
@@ -97,6 +104,10 @@ public struct NotesOverviewListView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(UIColor.systemBackground))
+        .onAppear(perform: refreshEntrySnapshot)
+        .onChange(of: viewModel.notesOverviewRevision) { _, _ in
+            refreshEntrySnapshot()
+        }
     }
 
     // MARK: - Raster
@@ -199,16 +210,16 @@ public struct NotesOverviewListView: View {
 
     /// Baut die fertige Liste inkl. Tagesüberschriften und der grünen Linie
     /// zwischen dem letzten abgelaufenen und dem ersten anstehenden Eintrag.
-    private func buildListItems(relativeTo now: Date) -> [ListItem] {
-        let entries = collectEntries(relativeTo: now)
+    private func buildListItems(from entries: [NotedLesson], relativeTo now: Date) -> [ListItem] {
         guard !entries.isEmpty else { return [] }
+        let nowMinutes = minutesOfDay(at: now)
 
         var items: [ListItem] = []
         var lastDateString: String? = nil
         var insertedNowLine = false
 
         for entry in entries {
-            if !insertedNowLine, !entry.isPast {
+            if !insertedNowLine, !entry.isPast(relativeTo: now, nowMinutes: nowMinutes) {
                 items.append(.nowLine)
                 insertedNowLine = true
             }
@@ -227,35 +238,54 @@ public struct NotesOverviewListView: View {
         return items
     }
 
+    /// Aktualisiert den teuren Notiz-Snapshot nur bei echten Datenänderungen.
+    /// Der Minutentimer darunter berechnet anschließend nur noch die Position
+    /// der „Jetzt“-Linie, nicht erneut die gesamte Liste und jede Tagesgruppe.
+    private func refreshEntrySnapshot() {
+        entrySnapshot = collectEntries()
+    }
+
     /// Alle Stunden mit sichtbarer Notiz, aufsteigend nach Datum und
     /// Startzeit sortiert (Doppelstunden bleiben ein Eintrag).
-    private func collectEntries(relativeTo now: Date) -> [NotedLesson] {
-        let dateStrings = Set(viewModel.lessons.map { $0.dateString })
-        let sortedPeriods = viewModel.periods.sorted { $0.periodNumber < $1.periodNumber }
-        let nowMinutes = minutesOfDay(at: now)
+    ///
+    /// Die Stunden werden einmal nach Datum gruppiert und dann lokal
+    /// zusammengeführt. `lessonsFor(day:)` würde hier für jeden Schultag erneut
+    /// die komplette Stundenliste filtern und sortieren – bei vielen
+    /// gespeicherten Wochen summiert sich das unnötig.
+    private func collectEntries() -> [NotedLesson] {
+        let lessonsByDate = Dictionary(grouping: viewModel.lessons, by: \.dateString)
+        let periodsByNumber = Dictionary(
+            grouping: viewModel.periods,
+            by: \.periodNumber
+        ).compactMapValues(\.first)
 
         var entries: [NotedLesson] = []
 
-        for dateString in dateStrings {
-            guard let date = Date.fromYyyyMMdd(dateString) else { continue }
-            for lesson in viewModel.lessonsFor(day: date) {
+        for dateString in lessonsByDate.keys.sorted() {
+            guard let date = Date.fromYyyyMMdd(dateString),
+                  let rawDayLessons = lessonsByDate[dateString] else { continue }
+
+            let sortedLessons = rawDayLessons.sorted { $0.periodNumber < $1.periodNumber }
+            var index = 0
+
+            while index < sortedLessons.count {
+                var lesson = sortedLessons[index]
+                if index + 1 < sortedLessons.count,
+                   lesson.canMergeWithNext(lesson: sortedLessons[index + 1]) {
+                    lesson.durationPeriods = 2
+                    index += 2
+                } else {
+                    index += 1
+                }
+
                 guard viewModel.hasVisibleNote(for: lesson),
                       let note = viewModel.noteFor(lesson: lesson) else { continue }
 
-                let startMinutes = sortedPeriods
-                    .first(where: { $0.periodNumber == lesson.periodNumber })?
-                    .startMinutes ?? lesson.periodNumber * 60
+                let startMinutes = periodsByNumber[lesson.periodNumber]?.startMinutes
+                    ?? lesson.periodNumber * 60
                 let endPeriodNumber = lesson.periodNumber + max(1, lesson.durationPeriods) - 1
-                let endMinutes = sortedPeriods
-                    .first(where: { $0.periodNumber == endPeriodNumber })?
-                    .endMinutes ?? (startMinutes + 45)
-
-                let isPast: Bool
-                if Calendar.germanCalendar.isDate(date, inSameDayAs: now) {
-                    isPast = endMinutes <= nowMinutes
-                } else {
-                    isPast = date < now
-                }
+                let endMinutes = periodsByNumber[endPeriodNumber]?.endMinutes
+                    ?? (startMinutes + 45)
 
                 entries.append(
                     NotedLesson(
@@ -263,8 +293,7 @@ public struct NotesOverviewListView: View {
                         note: note,
                         date: date,
                         startMinutes: startMinutes,
-                        endMinutes: endMinutes,
-                        isPast: isPast
+                        endMinutes: endMinutes
                     )
                 )
             }
@@ -361,6 +390,12 @@ public struct NotesOverviewListView: View {
     }
 }
 
+/// Leichtgewichtiger Rahmen-Speicher: Scroll-Layout-Änderungen aktualisieren
+/// die Zoom-Quelle, ohne pro Kartenbewegung den SwiftUI-View-Tree neu zu rendern.
+private final class NoteOverviewCardFrameTracker {
+    var globalFrame: CGRect = .zero
+}
+
 /// Eine Notiz-Karte in der Übersicht „Nur Notizen“.
 ///
 /// Sie bietet exakt dieselben Optionen wie ein Stunden-Block im Stundenplan:
@@ -376,6 +411,7 @@ private struct NoteOverviewCard: View {
     let compact: Bool
 
     @State private var isHovered = false
+    @State private var frameTracker = NoteOverviewCardFrameTracker()
     @State private var showActions = false
     @State private var showDeleteNoteConfirmation = false
 
@@ -425,16 +461,28 @@ private struct NoteOverviewCard: View {
             x: 0,
             y: isHovered ? 4 : 2
         )
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { updateGlobalFrameIfNeeded(proxy.frame(in: .global)) }
+                    .onChange(of: proxy.frame(in: .global)) { _, newFrame in
+                        updateGlobalFrameIfNeeded(newFrame)
+                    }
+            }
+        )
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .hoverEffect(.lift)
         .onHover { hovering in
+            guard isHovered != hovering else { return }
             isHovered = hovering
         }
         .onContinuousHover { phase in
             switch phase {
             case .active(_):
+                guard !isHovered else { return }
                 isHovered = true
             case .ended:
+                guard isHovered else { return }
                 isHovered = false
             }
         }
@@ -511,9 +559,27 @@ private struct NoteOverviewCard: View {
         }
     }
 
+    private func updateGlobalFrameIfNeeded(_ newFrame: CGRect) {
+        // Während Settings oder des Zeichen-Overlays wird die Karte nicht als
+        // Animationsquelle verwendet. Beim Scrollen ignorieren wir außerdem
+        // winzige Geometrieänderungen, genau wie in der Standardübersicht.
+        guard !viewModel.isSettingsPresented, !viewModel.isDrawingOverlayPresented else { return }
+        let previousFrame = frameTracker.globalFrame
+        let threshold: CGFloat = 2
+        guard abs(previousFrame.origin.x - newFrame.origin.x) > threshold
+            || abs(previousFrame.origin.y - newFrame.origin.y) > threshold
+            || abs(previousFrame.size.width - newFrame.size.width) > threshold
+            || abs(previousFrame.size.height - newFrame.size.height) > threshold else {
+            return
+        }
+        // Kein @Published/@State-Rect: Die reine Geometrie-Aktualisierung beim
+        // Scrollen darf nicht jede sichtbare Karten-View erneut invalidieren.
+        frameTracker.globalFrame = newFrame
+    }
+
     private func openNote() {
         Haptics.tap()
-        viewModel.openNote(for: lesson, sourceFrame: .zero)
+        viewModel.openNote(for: lesson, sourceFrame: frameTracker.globalFrame)
     }
 
     /// Wechselt in den Standard-Modus und wischt automatisch zu der Woche,
@@ -535,46 +601,153 @@ private struct NoteOverviewCard: View {
 
     // MARK: - Inhalt
 
-    /// Die eigentliche Notiz: gerenderte Vorschau (Handschrift + Textfelder),
-    /// mit Text-Fallback, falls kein Vorschaubild existiert.
+    /// Die eigentliche Notiz: Das Vorschaubild wird außerhalb des Main-Threads
+    /// heruntergerechnet und gecacht. In der Übersicht muss SwiftUI daher nicht
+    /// bei jedem Karten-Render große PNGs erneut dekodieren.
     @ViewBuilder
     private func noteContent(textColor: Color) -> some View {
-        if let imageData = note.croppedImageData, let image = UIImage(data: imageData) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(
-                    // Drei kompakte Spalten, ohne zusätzlichen Außenabstand
-                    // pro Karte. Das Bild bleibt vollständig sichtbar.
-                    maxWidth: .infinity,
-                    maxHeight: compact ? 140 : 200,
-                    alignment: .leading
-                )
-                .padding(compact ? 4 : 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.white)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(Color.black.opacity(0.10), lineWidth: 0.5)
-                )
-                .shadow(color: Color.black.opacity(0.08), radius: 3, x: 0, y: 1.5)
+        if let imageData = note.croppedImageData {
+            NotePreviewImage(
+                data: imageData,
+                cacheKey: "\(note.id)|\(note.updatedAt.timeIntervalSinceReferenceDate)|\(imageData.count)",
+                compact: compact
+            ) {
+                noteTextContent(textColor: textColor)
+            }
         } else {
-            let texts = note.textBoxes
-                .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-            if !texts.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(texts.enumerated()), id: \.offset) { _, text in
-                        Text(text)
-                            .font(.system(size: compact ? 12 : 15, weight: .regular, design: .default))
-                            .foregroundColor(textColor)
-                            .multilineTextAlignment(.leading)
-                    }
+            noteTextContent(textColor: textColor)
+        }
+    }
+
+    @ViewBuilder
+    private func noteTextContent(textColor: Color) -> some View {
+        let texts = note.textBoxes
+            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !texts.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(texts.enumerated()), id: \.offset) { _, text in
+                    Text(text)
+                        .font(.system(size: compact ? 12 : 15, weight: .regular, design: .default))
+                        .foregroundColor(textColor)
+                        .multilineTextAlignment(.leading)
                 }
             }
         }
+    }
+}
+
+/// Kleine, speicherschonende Vorschauansicht für eine Notizkarte.
+private struct NotePreviewImage<Placeholder: View>: View {
+    let data: Data
+    let cacheKey: String
+    let compact: Bool
+    let placeholder: () -> Placeholder
+
+    @State private var image: UIImage?
+    @State private var didFinishLoading = false
+
+    init(
+        data: Data,
+        cacheKey: String,
+        compact: Bool,
+        @ViewBuilder placeholder: @escaping () -> Placeholder
+    ) {
+        self.data = data
+        self.cacheKey = cacheKey
+        self.compact = compact
+        self.placeholder = placeholder
+        _image = State(initialValue: NotePreviewImageCache.image(for: cacheKey))
+        _didFinishLoading = State(initialValue: NotePreviewImageCache.image(for: cacheKey) != nil)
+    }
+
+    private var maximumHeight: CGFloat { compact ? 140 : 200 }
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: maximumHeight, alignment: .leading)
+                    .padding(compact ? 4 : 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.white)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Color.black.opacity(0.10), lineWidth: 0.5)
+                    )
+                    .shadow(color: Color.black.opacity(0.08), radius: 3, x: 0, y: 1.5)
+            } else if didFinishLoading {
+                placeholder()
+            } else {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white.opacity(0.8))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: compact ? 92 : 132)
+                    .overlay {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(.secondary)
+                    }
+            }
+        }
+        .task(id: cacheKey) {
+            if let cached = NotePreviewImageCache.image(for: cacheKey) {
+                image = cached
+                didFinishLoading = true
+                return
+            }
+
+            didFinishLoading = false
+            let imageData = data
+            let key = cacheKey
+            let loadedImage = await Task.detached(priority: .utility) {
+                NotePreviewImageCache.load(data: imageData, for: key)
+            }.value
+
+            guard !Task.isCancelled else { return }
+            image = loadedImage
+            didFinishLoading = true
+        }
+    }
+}
+
+/// NSCache is thread-safe; ImageIO downsampling keeps previews cheap to retain
+/// and to composite while the lazy grid scrolls.
+private enum NotePreviewImageCache {
+    private static let images: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.totalCostLimit = 64 * 1024 * 1024
+        return cache
+    }()
+
+    static func image(for key: String) -> UIImage? {
+        images.object(forKey: key as NSString)
+    }
+
+    static func load(data: Data, for key: String) -> UIImage? {
+        if let cached = image(for: key) { return cached }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: 1_200,
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
+        }
+
+        let preview = UIImage(cgImage: thumbnail, scale: 1, orientation: .up)
+        images.setObject(
+            preview,
+            forKey: key as NSString,
+            cost: thumbnail.bytesPerRow * thumbnail.height
+        )
+        return preview
     }
 }

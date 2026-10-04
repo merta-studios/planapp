@@ -293,6 +293,7 @@ public struct SubjectCustomizationSection: View {
             } onCancel: {
                 editingSubject = nil
             }
+            .presentationDetents([.large])
         }
     }
 
