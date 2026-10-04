@@ -102,10 +102,9 @@ for width in stride(from: CGFloat(320), through: 1400, by: 8) {
 
 // MARK: - Kleinere Palette, größere Buttons, kein Überlappen/Abschneiden
 
-expect(SqueezePaletteLayout.arcRadius < 244, "Kürzerer Weg von der Hover-Position")
-expect(SqueezePaletteLayout.arcBandWidth < 76, "Schmalerer Glasbogen")
-expect(SqueezePaletteLayout.buttonSize > 40, "Größere Bedienelemente")
-expect(SqueezePaletteLayout.buttonSize >= 44, "Komfortables Standard-Touch-Ziel")
+expect(SqueezePaletteLayout.arcRadius <= 210, "Kürzerer Weg von der Hover-Position")
+expect(SqueezePaletteLayout.arcBandWidth <= 44, "Schmalerer Glasbogen")
+expect(SqueezePaletteLayout.buttonSize == 44, "Kompakte Bedienelemente behalten ein 44-pt-Touch-Ziel")
 let lastIndex = SqueezePaletteLayout.elementCount - 1
 expect(abs(SqueezePaletteLayout.angle(at: lastIndex, openingAngle: 0)
     - SqueezePaletteLayout.angle(at: 0, openingAngle: 0) - .pi / 2) < 0.0001, "Weiterhin genau ein Viertelkreis")

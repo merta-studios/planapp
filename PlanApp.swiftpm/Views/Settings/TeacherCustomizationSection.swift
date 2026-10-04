@@ -95,6 +95,7 @@ public struct TeacherCustomizationSection: View {
             } onCancel: {
                 editingTeacher = nil
             }
+            .presentationDetents([.large])
         }
     }
 

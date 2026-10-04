@@ -5,20 +5,23 @@ import SwiftUI
 /// einen Material-Fallback mit Lichtkante, Reflexion und Druck-Feedback.
 struct SqueezePaletteButtonStyle: ButtonStyle {
     var isSelected = false
+    var isHovered = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .modifier(SqueezeButtonGlassSurface(isSelected: isSelected))
+            .modifier(SqueezeButtonGlassSurface(isSelected: isSelected, isHovered: isHovered))
             .contentShape(Circle())
-            .brightness(configuration.isPressed ? -0.08 : 0)
-            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .brightness(configuration.isPressed ? -0.12 : (isHovered ? 0.035 : 0))
+            .scaleEffect(configuration.isPressed ? 0.94 : (isHovered ? 1.06 : 1))
             .animation(.easeOut(duration: 0.10), value: configuration.isPressed)
+            .animation(.easeOut(duration: 0.12), value: isHovered)
     }
 }
 
 private struct SqueezeButtonGlassSurface: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
     let isSelected: Bool
+    let isHovered: Bool
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -28,7 +31,11 @@ private struct SqueezeButtonGlassSurface: ViewModifier {
         if #available(iOS 26.0, *) {
             content
                 .glassEffect(
-                    .regular.tint(isSelected ? Color.blue.opacity(0.22) : Color.clear).interactive(),
+                    .regular.tint(
+                        isSelected
+                            ? Color.blue.opacity(0.22)
+                            : (isHovered ? Color.blue.opacity(0.12) : Color.clear)
+                    ).interactive(),
                     in: Circle()
                 )
         } else {
@@ -46,6 +53,8 @@ private struct SqueezeButtonGlassSurface: ViewModifier {
                     Circle().fill(.ultraThinMaterial)
                     if isSelected {
                         Circle().fill(Color.blue.opacity(0.20))
+                    } else if isHovered {
+                        Circle().fill(Color.blue.opacity(0.12))
                     }
                     Circle().fill(
                         LinearGradient(

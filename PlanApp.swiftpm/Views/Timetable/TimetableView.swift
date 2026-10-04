@@ -139,6 +139,12 @@ public struct TimetableView: View {
         .sheet(isPresented: $viewModel.isSettingsPresented) {
             SettingsView()
                 .environmentObject(viewModel)
+                // Der große Detent hält das Einstellungsfenster bündig am
+                // unteren Bildschirmrand. Die eingebettete App-Tastatur sitzt
+                // dadurch auch beim Bearbeiten in den Einstellungen dort und
+                // nicht innerhalb einer kleinen, schwebenden Sheet-Karte.
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
         // Fehlermeldungen beobachten
         .onChange(of: viewModel.errorMessage) { _, newError in

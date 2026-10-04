@@ -120,30 +120,67 @@ public struct TimetableHeaderView: View {
         .accessibilityHint("Öffnet die Auswahl des Ansichts-Modus")
     }
 
-    /// Stiftname erscheint erst nach echtem Pencil-Input. Das verhindert ein
-    /// leeres/irreführendes Feld, wenn kein Pencil verwendet wurde.
+    /// Stiftname und separat ausgelesener Pencil-Akku. Ein fehlender BLE-Wert
+    /// wird ausdrücklich als unbekannt markiert – niemals durch den iPad-Akku
+    /// ersetzt.
     @ViewBuilder
     private var applePencilStatus: some View {
         if let pencilName = viewModel.detectedApplePencilName {
-            Text(pencilName)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule()
-                        .fill(Color(UIColor.secondarySystemBackground).opacity(0.78))
-                )
-                .overlay(
-                    Capsule()
-                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-                )
-                .fixedSize(horizontal: true, vertical: false)
-                .accessibilityLabel(pencilName)
-                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(pencilName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+
+                HStack(spacing: 4) {
+                    Image(systemName: pencilBatterySymbol(viewModel.applePencilBatteryLevel))
+                        .font(.system(size: 10, weight: .semibold))
+                    Text(viewModel.applePencilBatteryLevel.map { "\($0)%" } ?? "–")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .monospacedDigit()
+                }
+                .foregroundColor(pencilBatteryTint(viewModel.applePencilBatteryLevel))
+                .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(Color(UIColor.secondarySystemBackground).opacity(0.78))
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(pencilBatteryAccessibilityLabel(pencilName))
+            .transition(.opacity.combined(with: .scale(scale: 0.95)))
         }
+    }
+
+    private func pencilBatterySymbol(_ level: Int?) -> String {
+        guard let level else { return "battery.slash" }
+        switch level {
+        case 0..<13: return "battery.0percent"
+        case 13..<38: return "battery.25percent"
+        case 38..<63: return "battery.50percent"
+        case 63..<88: return "battery.75percent"
+        default: return "battery.100percent"
+        }
+    }
+
+    private func pencilBatteryTint(_ level: Int?) -> Color {
+        guard let level else { return .secondary }
+        return level <= 20 ? .orange : Color(red: 0.10, green: 0.62, blue: 0.28)
+    }
+
+    private func pencilBatteryAccessibilityLabel(_ pencilName: String) -> String {
+        if let level = viewModel.applePencilBatteryLevel {
+            return "\(pencilName), Akku \(level) Prozent"
+        }
+        return "\(pencilName), Akkustand unbekannt"
     }
 
     /// Kompakte Variante des Modus-Buttons (nur Symbol) für schmale Breiten.
