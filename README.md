@@ -17,6 +17,33 @@ Das Repository enthält das fertige App-Package **`PlanApp.swiftpm`**, welches a
 
 ---
 
+## 📲 Als „richtige“ App aufs iPad – kostenlos per Windows-PC (Sideload, 7 Tage)
+
+iOS-Apps lassen sich nicht unter Windows kompilieren. Deshalb baut die GitHub-Actions-Pipeline
+[`ci/build-ipa.yml`](ci/build-ipa.yml) auf einem GitHub-macOS-Runner ein unsigniertes
+**`PlanApp.ipa`**, das anschließend mit **Sideloadly** und einer kostenlosen Apple-ID auf dem
+iPad installiert wird. Die App erscheint dann mit eigenem Icon auf dem Home-Screen und läuft
+**7 Tage** – verlängerbar per Sideloadly-Auto-Refresh oder AltStore (WLAN-Refresh).
+
+**Einmalige Einrichtung:** Die Datei [`ci/build-ipa.yml`](ci/build-ipa.yml) im GitHub-Webinterface
+nach `.github/workflows/build-ipa.yml` kopieren (*Add file → Create new file*, Pfad exakt so
+eintippen, Dateiinhalt einfügen, committen). Danach steht der Workflow im Tab **Actions** bereit.
+
+**IPA bauen & installieren:**
+
+1. GitHub → **Actions → „Build IPA (Sideload)“ → Run workflow** (nach dem Merge läuft er auch automatisch bei jedem Push auf `main`).
+2. Nach ca. 3–5 Minuten das Artefakt **`PlanApp-IPA`** herunterladen, entpacken → `PlanApp.ipa`.
+3. Am Windows-PC [Sideloadly](https://sideloadly.io) und iTunes (liefert die USB-Treiber) installieren.
+4. iPad per USB verbinden („Diesem Computer vertrauen“ bestätigen) und `PlanApp.ipa` per Drag & Drop in Sideloadly ziehen.
+5. Eine kostenlose Apple-ID eingeben (am besten eine Zweit-ID) → **Start**.
+
+> **Hinweise:** Mit einer Gratis-Apple-ID sind maximal 3 sideloaded Apps gleichzeitig möglich.
+> Beim Löschen einer abgelaufenen App gehen lokal gespeicherte Stundenpläne und Notizen verloren –
+> also rechtzeitig refreshen statt neu installieren. Auf privaten Repos kostet jeder Build
+> Actions-Minuten (macOS zählt 10×, ein Build ≈ 30–60 der 2.000 Gratis-Minuten pro Monat).
+
+---
+
 ## ✨ Features im Überblick
 
 ### 📅 1. Linienloser 6-Spalten-Stundenplan (Hauptmenü)
