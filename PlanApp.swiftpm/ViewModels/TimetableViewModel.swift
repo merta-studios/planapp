@@ -29,16 +29,33 @@ public final class TimetableViewModel: ObservableObject {
     /// aus allen gespeicherten Stunden aufzubauen.
     @Published public private(set) var notesOverviewRevision: UInt = 0
 
+    /// Version der Darstellung einer Notiz-Karte. Sie wird nur bei Änderungen
+    /// an den Kartendaten bzw. deren Beschriftung erhöht. So können die Karten
+    /// globale ViewModel-Änderungen (z. B. das Öffnen des Zeichen-Overlays)
+    /// ignorieren, statt beim Scrollen/Tippen alle Header neu aufzubauen.
+    /// Die zugrunde liegenden @Published-Eigenschaften lösen das Update aus;
+    /// diese Version selbst muss daher nicht noch ein zweites Mal publizieren.
+    public private(set) var notesOverviewPresentationRevision: UInt = 0
+
     @Published public var selectedWeekStart: Date
     @Published public var periods: [Period] = [] {
-        didSet { notesOverviewRevision &+= 1 }
+        didSet {
+            notesOverviewRevision &+= 1
+            notesOverviewPresentationRevision &+= 1
+        }
     }
     @Published public var lessons: [Lesson] = [] {
         didSet { notesOverviewRevision &+= 1 }
     }
-    @Published public var subjectCustomizations: [SubjectCustomization] = []
-    @Published public var teacherNameCustomizations: [TeacherNameCustomization] = []
-    @Published public var displaySettings: BlockDisplaySettings = .default
+    @Published public var subjectCustomizations: [SubjectCustomization] = [] {
+        didSet { notesOverviewPresentationRevision &+= 1 }
+    }
+    @Published public var teacherNameCustomizations: [TeacherNameCustomization] = [] {
+        didSet { notesOverviewPresentationRevision &+= 1 }
+    }
+    @Published public var displaySettings: BlockDisplaySettings = .default {
+        didSet { notesOverviewPresentationRevision &+= 1 }
+    }
     @Published public var drawingSettings: DrawingSettings = .default
     @Published public var untisCredentials: UntisCredentials = UntisCredentials()
     @Published public var lessonNotes: [String: LessonNote] = [:] {
@@ -75,12 +92,17 @@ public final class TimetableViewModel: ObservableObject {
     @Published public var lastSyncDate: Date? = nil
 
     // Aktive Notiz-Ansicht (Zeichnen-Overlay)
-    @Published public var activeNoteLesson: Lesson? = nil
-    @Published public var isDrawingOverlayPresented: Bool = false
-    /// Bildschirm-Rahmen (globale Koordinaten) der Fach-Karte, von der die
-    /// Zeichenfläche gerade geöffnet wurde. Wird für die Zoom-Animation
-    /// benötigt, damit die Fläche sichtbar aus der Karte heraus wächst.
-    @Published public var activeNoteSourceFrame: CGRect = .zero
+    private struct ActiveNotePresentation {
+        let lesson: Lesson
+        let sourceFrame: CGRect
+    }
+
+    @Published private var activeNotePresentation: ActiveNotePresentation? = nil
+
+    public var activeNoteLesson: Lesson? { activeNotePresentation?.lesson }
+    public var isDrawingOverlayPresented: Bool { activeNotePresentation != nil }
+    /// Bildschirm-Rahmen der Karte, aus der die Zeichenfläche geöffnet wurde.
+    public var activeNoteSourceFrame: CGRect { activeNotePresentation?.sourceFrame ?? .zero }
 
     // Navigation & UI State
     @Published public var isSettingsPresented: Bool = false
@@ -532,10 +554,9 @@ public final class TimetableViewModel: ObservableObject {
     /// Bildschirm-Rahmen der angetippten Fach-Karte (globale Koordinaten) und
     /// wird als Startpunkt der Zoom-Animation verwendet.
     public func openNote(for lesson: Lesson, sourceFrame: CGRect = .zero) {
-        self.activeNoteSourceFrame = sourceFrame
+        let presentation = ActiveNotePresentation(lesson: lesson, sourceFrame: sourceFrame)
         withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-            self.activeNoteLesson = lesson
-            self.isDrawingOverlayPresented = true
+            activeNotePresentation = presentation
         }
     }
 
@@ -573,8 +594,7 @@ public final class TimetableViewModel: ObservableObject {
         }
 
         withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
-            self.isDrawingOverlayPresented = false
-            self.activeNoteLesson = nil
+            activeNotePresentation = nil
         }
     }
 

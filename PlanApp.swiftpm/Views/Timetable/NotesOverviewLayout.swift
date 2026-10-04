@@ -7,6 +7,13 @@ enum NotesOverviewLayout {
     static let columnSpacing: CGFloat = 12
     static let rowSpacing: CGFloat = 12
     static let minimumCardWidth: CGFloat = 220
+    private static let rowsPerLazyBatch = 8
+
+    /// Hält jedes Unter-Grid klein und teilt ausschließlich an vollständigen
+    /// Kartenzeilen, damit die chronologische Rasterausrichtung erhalten bleibt.
+    static func batchSize(forColumnCount columnCount: Int) -> Int {
+        max(1, columnCount) * rowsPerLazyBatch
+    }
 
     static func columnCount(for width: CGFloat) -> Int {
         guard width.isFinite, width > 0 else { return 1 }

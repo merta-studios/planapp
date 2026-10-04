@@ -93,6 +93,12 @@ for width in [CGFloat(711), 600, 507, 480] {
 for width in [CGFloat(375), 320, 0, -10, .infinity, .nan] {
     expect(NotesOverviewLayout.columnCount(for: width) == 1, "Sicherer einspaltiger Fallback für \(width)")
 }
+for columnCount in 1...3 {
+    let batchSize = NotesOverviewLayout.batchSize(forColumnCount: columnCount)
+    expect(batchSize / columnCount == 8, "Lazy-Batches enthalten acht vollständige Zeilen bei \(columnCount) Spalten")
+    expect(batchSize % columnCount == 0, "Lazy-Batches teilen keine Kartenzeile bei \(columnCount) Spalten")
+}
+expect(NotesOverviewLayout.batchSize(forColumnCount: 0) == 8, "Ungültige Spaltenzahl bleibt sicher")
 for width in stride(from: CGFloat(320), through: 1400, by: 8) {
     let count = NotesOverviewLayout.columnCount(for: width)
     let cardWidth = (width - 2 * NotesOverviewLayout.horizontalPadding

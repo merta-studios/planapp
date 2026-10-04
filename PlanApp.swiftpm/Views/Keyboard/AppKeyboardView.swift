@@ -791,80 +791,59 @@ private struct KeyboardKeyButton<Label: View>: View {
         self.label = label()
     }
 
-    private let cornerRadius: CGFloat = 6
     private let popupHeight: CGFloat = 52
 
     var body: some View {
-        label
-            .foregroundColor(foregroundColor)
-            .frame(maxWidth: .infinity)
-            .frame(height: height)
-            .background(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(backgroundColor)
-                    .shadow(color: palette.shadow, radius: 0, x: 0, y: isVisuallyPressed ? 0 : 1)
+        // SwiftUI coalesces a very short GestureState true/false pair before
+        // drawing on some devices. ButtonStyle.isPressed is the synchronous
+        // touch-down signal, so even a quick tap gets its own dark key frame.
+        // The simultaneous drag remains responsible for accents, repeat and
+        // firing the actual key action on release.
+        Button(action: {}) {
+            label
+                .foregroundColor(foregroundColor)
+                .frame(maxWidth: .infinity)
+                .frame(height: height)
+        }
+        .buttonStyle(
+            KeyboardKeyFaceButtonStyle(
+                palette: palette,
+                isModifier: isModifier,
+                isActive: isActive,
+                gestureIsPressed: isTouchActive
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(palette.border, lineWidth: 0.5)
-            )
-            .offset(y: isVisuallyPressed ? 1 : 0)
-            .brightness(isVisuallyPressed ? -0.14 : 0)
-            // Ausschließlich der aktive Touch steuert die dunklere Fläche.
-            // `isPressed` bleibt für Wiederholen/Popup intern erhalten, darf
-            // aber nach dem Loslassen keinen visuellen Nachlauf auslösen.
-            // Ohne Animation wird die Taste beim Aufsetzen sofort dunkler und
-            // beim Loslassen im selben Frame wieder normal.
-            .transaction { transaction in
-                transaction.animation = nil
+        )
+        .simultaneousGesture(pressGesture)
+        .overlay(alignment: .top) {
+            if isPopupOpen, !accents.isEmpty {
+                popup
+                    .offset(x: popupOffset, y: -(popupHeight + 6))
             }
-            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .gesture(pressGesture)
-            .overlay(alignment: .top) {
-                if isPopupOpen, !accents.isEmpty {
-                    popup
-                        .offset(x: popupOffset, y: -(popupHeight + 6))
+        }
+        // VoiceOver does not synthesize the touch-drag gesture.
+        .accessibilityAction(.default) {
+            action()
+        }
+        .onChange(of: isTouchActive) { _, active in
+            // DragGesture.onEnded fehlt bei System-Abbruch. Keine Taste
+            // darf danach dunkel bleiben oder weiter Zeichen löschen.
+            if !active, isPressed {
+                // onEnded darf zuerst seine normale Tastenaktion ausführen.
+                DispatchQueue.main.async {
+                    if !isTouchActive, isPressed { cancelPress() }
                 }
             }
-            .onChange(of: isTouchActive) { _, active in
-                // DragGesture.onEnded fehlt bei System-Abbruch. Keine Taste
-                // darf danach dunkel bleiben oder weiter Zeichen löschen.
-                if !active, isPressed {
-                    // onEnded darf zuerst seine normale Tastenaktion ausführen.
-                    DispatchQueue.main.async {
-                        if !isTouchActive, isPressed { cancelPress() }
-                    }
-                }
-            }
-            .onDisappear { cancelPress() }
+        }
+        .onDisappear { cancelPress() }
     }
 
     // MARK: Darstellung
-
-    /// `isTouchActive` kommt direkt aus dem GestureState und beschreibt den
-    /// tatsächlichen Finger-/Pencil-Kontakt. `isPressed` bleibt absichtlich
-    /// außen vor: Es kann beim Ende einer Geste noch für die Aktion bzw. das
-    /// Akzent-Popup gesetzt sein und würde die Taste erst **nach** dem
-    /// Loslassen dunkel färben.
-    private var isVisuallyPressed: Bool {
-        isTouchActive
-    }
 
     private var foregroundColor: Color {
         if isModifier {
             return isActive ? palette.modifierTextActive : palette.modifierText
         }
         return palette.text
-    }
-
-    private var backgroundColor: Color {
-        if isModifier {
-            if isActive {
-                return isVisuallyPressed ? palette.modifierActivePressed : palette.modifierActive
-            }
-            return isVisuallyPressed ? palette.modifierPressed : palette.modifier
-        }
-        return isVisuallyPressed ? palette.keyPressed : palette.key
     }
 
     private var popup: some View {
@@ -1010,6 +989,50 @@ private struct KeyboardKeyButton<Label: View>: View {
     private func stopRepeating() {
         repeatTask?.cancel()
         repeatTask = nil
+    }
+}
+
+/// Visuelles Tastendruck-Feedback. `configuration.isPressed` stammt direkt
+/// aus dem SwiftUI-Button und reagiert schon beim Aufsetzen; der parallele
+/// GestureState deckt Pencil-/Akzent-Drags ab, auch wenn der Finger die Taste
+/// innerhalb derselben Geste verlässt.
+private struct KeyboardKeyFaceButtonStyle: ButtonStyle {
+    let palette: KeyboardPalette
+    let isModifier: Bool
+    let isActive: Bool
+    let gestureIsPressed: Bool
+
+    private let cornerRadius: CGFloat = 6
+
+    func makeBody(configuration: Configuration) -> some View {
+        let isPressed = configuration.isPressed || gestureIsPressed
+        let backgroundColor: Color
+        if isModifier {
+            if isActive {
+                backgroundColor = isPressed ? palette.modifierActivePressed : palette.modifierActive
+            } else {
+                backgroundColor = isPressed ? palette.modifierPressed : palette.modifier
+            }
+        } else {
+            backgroundColor = isPressed ? palette.keyPressed : palette.key
+        }
+
+        return configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(backgroundColor)
+                    .shadow(color: palette.shadow, radius: 0, x: 0, y: isPressed ? 0 : 1)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(palette.border, lineWidth: 0.5)
+            )
+            .offset(y: isPressed ? 1 : 0)
+            .brightness(isPressed ? -0.14 : 0)
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .transaction { transaction in
+                transaction.animation = nil
+            }
     }
 }
 

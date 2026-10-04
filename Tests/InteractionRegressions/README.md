@@ -77,6 +77,11 @@ App-Package auf dem Gerät geprüft werden.
    in den Karten, ohne unnötige leere Zeilen pro Tag.
 4. Split View verkleinern: unter 712 pt zwei Spalten, unter 480 pt eine. Rotation,
    chronologische Reihenfolge, Öffnen und Kontextmenü weiterhin prüfen.
+5. Mit einer langen Liste (mindestens 100 Karten) mehrfach über die Übergänge
+   zwischen Karten-Batches scrollen und währenddessen Karten öffnen. Reihenfolge,
+   Zeilenabstände und Jetzt-Linie bleiben korrekt; Scrollen und Öffnen dürfen
+   keine sichtbaren Hänger verursachen. Änderungen an Fach-/Lehrkraftnamen und
+   Anzeigeoptionen müssen weiterhin direkt in den Karten erscheinen.
 
 ### Custom-Tastatur
 

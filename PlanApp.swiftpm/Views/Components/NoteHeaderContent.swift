@@ -19,6 +19,7 @@ public struct NoteHeaderContent: View {
     public let isCompact: Bool
     private let teacherDisplayName: String
     private let originalTeacherDisplayName: String?
+    private let relativeTo: Date
 
     public init(
         lesson: Lesson,
@@ -29,7 +30,8 @@ public struct NoteHeaderContent: View {
         showsColorCircle: Bool = true,
         isCompact: Bool = false,
         teacherDisplayName: String? = nil,
-        originalTeacherDisplayName: String? = nil
+        originalTeacherDisplayName: String? = nil,
+        relativeTo: Date = Date()
     ) {
         self.lesson = lesson
         self.display = display
@@ -40,6 +42,7 @@ public struct NoteHeaderContent: View {
         self.isCompact = isCompact
         self.teacherDisplayName = teacherDisplayName ?? lesson.teacherRaw
         self.originalTeacherDisplayName = originalTeacherDisplayName ?? lesson.originalTeacher
+        self.relativeTo = relativeTo
     }
 
     public var body: some View {
@@ -202,6 +205,6 @@ public struct NoteHeaderContent: View {
         guard let date = Date.fromYyyyMMdd(lesson.dateString) else {
             return lesson.dateString
         }
-        return "\(date.relativeDayDescription()) • \(date.germanDateString)"
+        return "\(date.relativeDayDescription(relativeTo: relativeTo)) • \(date.germanDateString)"
     }
 }
