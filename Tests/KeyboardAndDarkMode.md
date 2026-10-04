@@ -35,16 +35,18 @@ Hardware-Kurzbefehlsstreifen und ungültige Maße.
 ## App-Tastatur
 
 Die Tastatur ist Teil der normalen Ansichts-Hierarchie – **nicht** ein eigenes
-Overlay-Fenster. Dadurch erscheint sie immer am unteren Rand der Ansicht, in
-der getippt wird (Zeichenfläche: unterer Bildschirmrand; Einstellungen und
-Bearbeiten-Sheets: unten im Sheet), ihre Tasten funktionieren zuverlässig, und
+Overlay-Fenster. In Einstellungen und Bearbeiten-Sheets dockt sie dadurch am
+unteren Rand des aktiven App-Fensters an (nicht mitten im Scroll-Inhalt); auf
+der Zeichenfläche schwebt sie über der Notiz. Ihre Tasten funktionieren
+zuverlässig, und
 Tipps auf die Tastatur können keine Gesten dahinterliegender Ebenen auslösen
 (Notiz oder Sheet schließen sich nicht ungewollt).
 
 Sie kennt zwei Darstellungen (`AppKeyboardPresentation`):
 
-- **Eingebettet** (`safeAreaInset`, Standards in Einstellungen und Sheets):
-  Der Inhalt weicht der Tastatur aus.
+- **Angedockt** (`.embedded`, Standard in Einstellungen und Sheets):
+  Die Tastatur liegt als Overlay am unteren Fensterrand; das aktive
+  Settings-Feld wird bei Bedarf oberhalb davon gescrollt.
 - **Schwebend** (Zeichenfläche): Die Tastatur liegt als abgerundete,
   durchscheinende Fläche **über** der Notiz. Die Notiz darf dabei **weder
   verkleinert noch verschoben** werden – sie bleibt beim Tippen genau dort,
@@ -58,8 +60,9 @@ Systemtastatur angezeigt wird. Unter *Einstellungen → Tastatur & Eingabe*
 **Automatisch** wählen.
 
 1. *WebUntis & Sync* öffnen und nacheinander Server, Schule, Benutzername und
-   Passwort bearbeiten. Die Tastatur erscheint unten im Einstellungen-Sheet,
-   direkt unter dem Inhalt, und bleibt beim Scrollen erhalten. Es gibt
+   Passwort bearbeiten. Die Tastatur erscheint ganz unten am aktiven
+   App-Fenster – nicht direkt unter dem gerade sichtbaren Sync-Inhalt – und
+   bleibt beim Scrollen erhalten. Es gibt
    **genau eine** App-Tastatur; Passwort bleibt maskiert. *Tastatur & Eingabe*
    darf nicht melden, dass das eigentliche App-Fenster seinen Key-Window-
    Status verliert.
@@ -68,8 +71,9 @@ Systemtastatur angezeigt wird. Unter *Einstellungen → Tastatur & Eingabe*
    richtigen Feld.
 3. *Fächer & Farben* und *Lehrkräfte* prüfen, jeweils ein neues Element
    anlegen und ein bestehendes im **zusätzlichen Bearbeiten-Sheet** ändern:
-   Das Bearbeiten-Sheet zeigt seine eigene Tastatur unten im Sheet, die
-   Einstellungen darunter zeigen keine zweite Tastatur. Textfelder und
+   Das Bearbeiten-Sheet zeigt seine eigene Tastatur am unteren Rand des
+   aktiven App-Fensters; die Einstellungen darunter zeigen keine zweite
+   Tastatur. Textfelder und
    Speichern/Abbrechen bleiben durch Scrollen erreichbar; der Cursor wird über
    der Tastatur sichtbar gehalten.
 4. Im Notiz-Overlay das Text-Werkzeug aktivieren, ein Textfeld anlegen und
@@ -204,17 +208,18 @@ Nur mit Apple Pencil Pro (iOS/iPadOS 17.5+) prüfbar.
 
 1. Notiz öffnen, den Stift in der Nähe des Zettels schweben lassen und
    **zusammendrücken**. An der letzten Hover-Position öffnet sich ein
-   **Viertelkreis** – in der Richtung, in die der Stift zeigt.
+   **kompakter, dicker Bogen** – in der Richtung, in die der Stift zeigt.
 2. Die acht runden Buttons (Rückgängig, Lasso, Stift, Textmarker, Radierer,
-   Text, Farbe und Dicke) sind größer, der Bogen schmaler und näher am Hover.
-   Über Farbe hovern öffnet den äußeren Farbbogen; Dicke halten und radial ziehen.
+   Text, Farbe und Dicke) bleiben getrennt erreichbar; der Hintergrundbogen
+   ist kleiner und näher am Hover. Über Farbe hovern öffnet den äußeren
+   Farbbogen; Dicke halten und radial ziehen.
 3. Erneuter Squeeze oder Fingertipp schließt die Palette. Bei einem Tipp auf
    den abgedunkelten Hintergrund bleibt die Notiz selbst zunächst offen.
 4. Mit dem Stift schreiben: Die Palette verschwindet automatisch.
 5. Der alte Undo-auf-Squeeze darf **nicht** mehr passieren; der Doppeltipp des
    Pencil löst weiterhin Rückgängig aus.
 6. Palette nahe am Bildschirmrand öffnen: Sie wird so verschoben/verkleinert,
-   dass der komplette Viertelkreis sichtbar bleibt.
+   dass der komplette Bogen sichtbar bleibt.
 
 ## Tipp-Feedback der App-Tastatur (Punkt 3)
 

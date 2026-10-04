@@ -1,9 +1,9 @@
 import SwiftUI
 import UIKit
 
-/// Abgerundete, viertelkreisförmige Werkzeugleiste für den Apple-Pencil-Squeeze.
-/// Die Bedienung sitzt auf einem schmalen Kreisbogen statt in einem gefüllten
-/// Tortenstück; die Mitte bleibt frei.
+/// Abgerundete, kompakte Bogen-Werkzeugleiste für den Apple-Pencil-Squeeze.
+/// Die Bedienung sitzt auf einem dicken Kreisbogen nahe der Hover-Position
+/// statt in einem gefüllten Tortenstück; die Mitte bleibt frei.
 struct PencilSqueezePaletteView: View {
     /// Hover-Anker und Fensterkoordinaten werden vom PencilKit-Wrapper geliefert.
     let anchor: CGPoint
@@ -17,6 +17,16 @@ struct PencilSqueezePaletteView: View {
     @Binding var eraserWidth: CGFloat
     @Binding var penColorSlots: [String]
     @Binding var markerColorSlots: [String]
+    /// Zuletzt ausgewählte Tintenfarben bleiben auch beim Wechsel über
+    /// Radierer/Lasso/Text erhalten. Damit öffnen beide Werkzeugleisten den
+    /// jeweiligen Stift wieder mit derselben Farbe.
+    let preferredPenColorHex: String
+    let preferredMarkerColorHex: String
+    /// Ist ein Textfeld aktiv, ist dessen Farbe die gemeinsame Quelle für
+    /// beide Werkzeugleisten – eine Farbauswahl darf nicht heimlich zum Stift
+    /// wechseln.
+    let selectedTextColorHex: String?
+    let onApplyColorToSelectedText: (String) -> Void
 
     let onUndo: () -> Void
 
@@ -82,7 +92,8 @@ struct PencilSqueezePaletteView: View {
             hoverAnchor: localAnchor,
             containerSize: containerSize,
             openingAngle: openingAngle,
-            colorCount: max(1, colorSlotsForActiveTool.count)
+            colorCount: max(1, colorSlotsForActiveTool.count),
+            includesColorArc: isColorPickerVisible
         )
     }
 
@@ -534,20 +545,24 @@ struct PencilSqueezePaletteView: View {
 
     private var fallbackPenHex: String {
         if case .pen(let color) = toolSelection { return color.toHex() }
-        return penColorSlots.first ?? "#1E1E1E"
+        return preferredPenColorHex
     }
 
     private var fallbackMarkerHex: String {
         if case .marker(let color) = toolSelection { return color.toHex() }
-        return markerColorSlots.first ?? "#FFE633"
+        return preferredMarkerColorHex
     }
 
     private var colorSlotsForActiveTool: [String] {
+        // Ein selektiertes Textfeld hat Vorrang vor dem Zeichenwerkzeug –
+        // exakt wie in der normalen Toolbar.
+        if selectedTextColorHex != nil { return penColorSlots }
         if case .marker = toolSelection { return markerColorSlots }
         return penColorSlots
     }
 
     private var currentColorHex: String {
+        if let selectedTextColorHex { return selectedTextColorHex }
         switch toolSelection {
         case .pen(let color), .marker(let color):
             return color.toHex()
@@ -557,6 +572,11 @@ struct PencilSqueezePaletteView: View {
     }
 
     private func applyColor(_ hex: String) {
+        if selectedTextColorHex != nil {
+            onApplyColorToSelectedText(hex)
+            return
+        }
+
         let color = UIColor(hex: hex)
         if case .marker = toolSelection {
             toolSelection = .marker(color: color.withAlphaComponent(0.60))

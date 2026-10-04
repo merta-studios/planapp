@@ -61,8 +61,8 @@ public struct SettingsView: View {
             }
         }
         .onAppear(perform: applyLaunchCategoryIfNeeded)
-        // Die app-eigene Tastatur liegt über der gesamten Navigation, damit
-        // sie auch auf den Unterseiten unten im Sheet erscheint.
+        // Die app-eigene Tastatur liegt über der gesamten Navigation und
+        // dockt dadurch auch auf Sync-Unterseiten am unteren Fensterrand an.
         .appKeyboardHost()
     }
 

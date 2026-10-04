@@ -16,8 +16,9 @@ die vorhandenen Tastatur-Layout-Tests, dann:
 - die strikte Grenze **über 60 Minuten**, reguläres Fünf-Minuten-Intervall und
   höchstens einen dringenden Wiederholungsversuch alle 30 Sekunden;
 - drei Notizenspalten auf normalen iPad-Breiten, zwei/eine in schmalen Fenstern;
-- Größe und Abstände aller acht Palettenbuttons sowie Randbegrenzung/Skalierung
-  einschließlich des Farbbogens für verschiedene Stiftrichtungen und Fenster.
+- Größe und Abstände aller acht Palettenbuttons sowie den dickeren, näheren
+  Squeeze-Hintergrundbogen, Randbegrenzung/Skalierung einschließlich des
+  Farbbogens für verschiedene Stiftrichtungen und Fenster.
 
 Die Tests ersetzen keinen iOS-Build und keine Hardware-Tests. Insbesondere
 Touch-Typen, UIKit-Hit-Testing, Gesture-Cancellation und Liquid Glass müssen im
@@ -91,14 +92,19 @@ App-Package auf dem Gerät geprüft werden.
 ### Pencil-Pro-Squeeze
 
 1. An verschiedenen Stellen hovern, auch Hover beenden und erst dann squeezen:
-   kompakter Viertelkreis nahe der **letzten aktiven Hover-Position**, keine
-   Sprünge zu einer leeren End-Pose. Alle acht runden Buttons sind 48 pt groß,
+   kompakter, dicker Bogen nahe der **letzten aktiven Hover-Position**, keine
+   Sprünge zu einer leeren End-Pose. Alle acht runden Buttons sind 44 pt groß,
    solange das Fenster keine Skalierung erfordert; keine Überlappung.
 2. Auf iPadOS 26 mit aktuellem SDK: natives interaktives Liquid Glass ähnlich dem
    systemeigenen Zurück-Button. Auf älteren Versionen: runder Material-Fallback
    mit Reflexen, Lichtkante und Druckreaktion. Beide Farbmodi prüfen.
 3. Mit dem Pencil alle Werkzeuge, Undo, Farb-Hover/Farbauswahl und Dicken-Ziehen
    bedienen. Squeeze erneut bzw. weiterzeichnen: Palette verschwindet wie bisher.
+   Nach jeder Auswahl müssen Werkzeug, Farbrahmen und Dicken-Vorschau der normalen
+   Toolbar sofort denselben Zustand zeigen. Umgekehrt darf ein Farb-Slot der
+   normalen Toolbar beim nächsten Squeeze nicht auf den ersten Standard-Slot
+   zurückspringen. Bei ausgewähltem Textfeld färben beide Paletten dieses Feld,
+   statt unbemerkt zum Stift zu wechseln.
 4. Mit dem Finger auf Papier, Kopfzeile, Toolbar, Textfeld oder Tastatur tippen:
    Palette wird geschlossen, eigentliche Bedienung bleibt möglich. Finger auf
    einen Palettenbutton: Aktion wird noch ausgeführt, anschließend schließen.

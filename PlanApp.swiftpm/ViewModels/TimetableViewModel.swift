@@ -506,7 +506,16 @@ public final class TimetableViewModel: ObservableObject {
     /// nächsten App-Start wieder aktiv ist.
     public func setViewMode(_ mode: TimetableViewMode) {
         guard viewMode != mode else { return }
-        withAnimation(.easeInOut(duration: 0.25)) {
+
+        // Der Wechsel zu „Nur Notizen“ kann viele heruntergerechnete
+        // Vorschauen einhängen. Eine implizite Animation hält gleichzeitig
+        // noch das komplette Drei-Wochen-Raster im Compositor und lässt beide
+        // aufwändigen Hierarchien über mehrere Frames rendern. Der Moduswechsel
+        // selbst ist deshalb bewusst unmittelbar; die Karten laden danach
+        // lazy und ohne einen UI-Frame zu blockieren.
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
             viewMode = mode
         }
         storage.saveViewMode(mode)

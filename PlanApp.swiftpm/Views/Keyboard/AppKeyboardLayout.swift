@@ -48,7 +48,7 @@ enum AppKeyboardLayout {
         return intersection.height
     }
 
-    /// Höhe der in die Ansicht eingebetteten Tastatur.
+    /// Höhe der am unteren Fensterrand angedockten App-Tastatur.
     ///
     /// Vier komfortable Tastenreihen (~58 pt), auf kleinen Fenstern
     /// (iPhone-Querformat) begrenzt auf höchstens 42 % der Fensterhöhe,

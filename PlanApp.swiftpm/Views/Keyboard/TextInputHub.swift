@@ -666,7 +666,8 @@ public final class TextInputHub: ObservableObject {
     /// erledigt das automatisch – die app-eigene Tastatur hier von Hand.
     private func revealActiveInputInScrollView() {
         DispatchQueue.main.async { [weak self] in
-            guard let view = self?.currentInputView,
+            guard let self,
+                  let view = self.currentInputView,
                   let scrollView = Self.enclosingScrollView(of: view) else { return }
             let rect = view.convert(view.bounds, to: scrollView).insetBy(dx: 0, dy: -24)
             guard !rect.isNull,
@@ -677,6 +678,41 @@ public final class TextInputHub: ObservableObject {
                   rect.size.height.isFinite,
                   rect.width > 0,
                   rect.height > 0 else { return }
+
+            // Die angedockte App-Tastatur ist nun bewusst ein Overlay bis zum
+            // unteren Fenster-Rand (kein safeAreaInset im Formular mehr). Für
+            // Settings-Textfelder muss der ScrollView deshalb den realen
+            // verdeckten Bereich selbst berücksichtigen. Textfelder auf dem
+            // Papier sind UITextViews und werden weiterhin ausschließlich von
+            // `revealEditingTextBox` der Zeichenfläche positioniert.
+            if self.isAppKeyboardVisible,
+               view is UITextField,
+               let window = view.window {
+                let inputFrame = view.convert(view.bounds, to: window)
+                let keyboardHeight = AppKeyboardLayout.embeddedHeight(
+                    windowHeight: window.bounds.height,
+                    bottomInset: window.safeAreaInsets.bottom
+                )
+                let keyboardTop = window.bounds.maxY - keyboardHeight
+                let requiredBottom = inputFrame.maxY + 24
+
+                if requiredBottom > keyboardTop {
+                    let delta = requiredBottom - keyboardTop
+                    let minimumY = -scrollView.adjustedContentInset.top
+                    let maximumY = max(
+                        minimumY,
+                        scrollView.contentSize.height - scrollView.bounds.height
+                            + scrollView.adjustedContentInset.bottom
+                    )
+                    let targetY = min(maximumY, max(minimumY, scrollView.contentOffset.y + delta))
+                    scrollView.setContentOffset(
+                        CGPoint(x: scrollView.contentOffset.x, y: targetY),
+                        animated: true
+                    )
+                    return
+                }
+            }
+
             scrollView.scrollRectToVisible(rect, animated: true)
         }
     }

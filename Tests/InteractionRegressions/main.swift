@@ -100,14 +100,15 @@ for width in stride(from: CGFloat(320), through: 1400, by: 8) {
     expect(cardWidth >= NotesOverviewLayout.minimumCardWidth, "Keine abgeschnittenen Karten bei \(width)")
 }
 
-// MARK: - Kleinere Palette, größere Buttons, kein Überlappen/Abschneiden
+// MARK: - Dichtere Squeeze-Bar, dickere Ringfläche, kein Überlappen/Abschneiden
 
-expect(SqueezePaletteLayout.arcRadius <= 210, "Kürzerer Weg von der Hover-Position")
-expect(SqueezePaletteLayout.arcBandWidth <= 44, "Schmalerer Glasbogen")
+expect(SqueezePaletteLayout.arcRadius < 210, "Kürzerer Weg von der Hover-Position")
+expect(SqueezePaletteLayout.arcBandWidth > 44, "Dickerer Glas-Hintergrundring")
 expect(SqueezePaletteLayout.buttonSize == 44, "Kompakte Bedienelemente behalten ein 44-pt-Touch-Ziel")
 let lastIndex = SqueezePaletteLayout.elementCount - 1
 expect(abs(SqueezePaletteLayout.angle(at: lastIndex, openingAngle: 0)
-    - SqueezePaletteLayout.angle(at: 0, openingAngle: 0) - .pi / 2) < 0.0001, "Weiterhin genau ein Viertelkreis")
+    - SqueezePaletteLayout.angle(at: 0, openingAngle: 0) - 2 * .pi / 3) < 0.0001,
+       "Breiterer Bogen hält die acht Tasten trotz kleinerem Radius getrennt")
 
 for index in 0..<lastIndex {
     let first = SqueezePaletteLayout.offset(
