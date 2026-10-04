@@ -241,8 +241,17 @@ public struct NotesOverviewListView: View {
     /// Aktualisiert den teuren Notiz-Snapshot nur bei echten Datenänderungen.
     /// Der Minutentimer darunter berechnet anschließend nur noch die Position
     /// der „Jetzt“-Linie, nicht erneut die gesamte Liste und jede Tagesgruppe.
+    ///
+    /// Es gibt absichtlich auch hier keine implizite Karten-Animation: Beim
+    /// ersten Öffnen der Übersicht würden sonst alle sichtbaren Bildflächen
+    /// gleichzeitig interpoliert und der erste Scroll-Frame ruckeln.
     private func refreshEntrySnapshot() {
-        entrySnapshot = collectEntries()
+        let snapshot = collectEntries()
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            entrySnapshot = snapshot
+        }
     }
 
     /// Alle Stunden mit sichtbarer Notiz, aufsteigend nach Datum und
@@ -657,11 +666,16 @@ private struct NotePreviewImage<Placeholder: View>: View {
         self.cacheKey = cacheKey
         self.compact = compact
         self.placeholder = placeholder
-        _image = State(initialValue: NotePreviewImageCache.image(for: cacheKey))
-        _didFinishLoading = State(initialValue: NotePreviewImageCache.image(for: cacheKey) != nil)
+        let maximumPixelSize = compact ? 720 : 960
+        let resolvedCacheKey = "\(cacheKey)|\(maximumPixelSize)"
+        _image = State(initialValue: NotePreviewImageCache.image(for: resolvedCacheKey))
+        _didFinishLoading = State(initialValue: NotePreviewImageCache.image(for: resolvedCacheKey) != nil)
     }
 
     private var maximumHeight: CGFloat { compact ? 140 : 200 }
+    private var resolvedCacheKey: String {
+        "\(cacheKey)|\(compact ? 720 : 960)"
+    }
 
     var body: some View {
         Group {
@@ -695,8 +709,8 @@ private struct NotePreviewImage<Placeholder: View>: View {
                     }
             }
         }
-        .task(id: cacheKey) {
-            if let cached = NotePreviewImageCache.image(for: cacheKey) {
+        .task(id: resolvedCacheKey) {
+            if let cached = NotePreviewImageCache.image(for: resolvedCacheKey) {
                 image = cached
                 didFinishLoading = true
                 return
@@ -705,8 +719,17 @@ private struct NotePreviewImage<Placeholder: View>: View {
             didFinishLoading = false
             let imageData = data
             let key = cacheKey
+            // Karten sind deutlich kleiner als die gespeicherte Zeichenfläche.
+            // Die kompakten Raster-Vorschauen werden daher nicht unnötig in
+            // 1200 px decodiert. Das spart CPU, Speicher und vor allem den
+            // ersten Scroll-Frame im Modus „Nur Notizen“.
+            let maximumPixelSize = compact ? 720 : 960
             let loadedImage = await Task.detached(priority: .utility) {
-                NotePreviewImageCache.load(data: imageData, for: key)
+                NotePreviewImageCache.load(
+                    data: imageData,
+                    for: "\(key)|\(maximumPixelSize)",
+                    maximumPixelSize: maximumPixelSize
+                )
             }.value
 
             guard !Task.isCancelled else { return }
@@ -718,7 +741,7 @@ private struct NotePreviewImage<Placeholder: View>: View {
 
 /// NSCache is thread-safe; ImageIO downsampling keeps previews cheap to retain
 /// and to composite while the lazy grid scrolls.
-private enum NotePreviewImageCache {
+enum NotePreviewImageCache {
     private static let images: NSCache<NSString, UIImage> = {
         let cache = NSCache<NSString, UIImage>()
         cache.totalCostLimit = 64 * 1024 * 1024
@@ -729,13 +752,17 @@ private enum NotePreviewImageCache {
         images.object(forKey: key as NSString)
     }
 
-    static func load(data: Data, for key: String) -> UIImage? {
+    static func load(
+        data: Data,
+        for key: String,
+        maximumPixelSize: Int = 960
+    ) -> UIImage? {
         if let cached = image(for: key) { return cached }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
 
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: 1_200,
+            kCGImageSourceThumbnailMaxPixelSize: max(1, maximumPixelSize),
             kCGImageSourceShouldCacheImmediately: true
         ]
         guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {

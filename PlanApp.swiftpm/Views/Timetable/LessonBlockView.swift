@@ -201,8 +201,8 @@ public struct LessonBlockView: View {
         .overlay(alignment: .bottomTrailing) {
             if settings.showNotesPreview,
                hasVisibleNote,
-               let imgData = note?.croppedImageData,
-               let uiImg = UIImage(data: imgData) {
+               let note,
+               let imgData = note.croppedImageData {
                 // Verfügbare Breite: komplette Blockbreite abzüglich der
                 // Paddings (Vorschau-Kasten + Blockrand).
                 let maxW = max(24, globalFrame.width - 16)
@@ -212,26 +212,24 @@ public struct LessonBlockView: View {
                 // bei kleinen Blöcken nicht direkt am letzten Text-Pixel klebt.
                 let maxH = max(18, blockHeight - 8 - textContentHeight - 8 - 14)
 
-                Image(uiImage: uiImg)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(
-                        maxWidth: maxW,
-                        maxHeight: maxH
-                    )
-                    .padding(3)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Color.white)
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(Color.black.opacity(0.12), lineWidth: 0.5)
-                    )
-                    .shadow(color: Color.black.opacity(0.10), radius: 3, x: 0, y: 1.5)
-                    .padding(5)
-                    .allowsHitTesting(false)
+                TimetableNotePreviewImage(
+                    data: imgData,
+                    cacheKey: "\(note.id)|\(note.updatedAt.timeIntervalSinceReferenceDate)|\(imgData.count)|timetable"
+                )
+                .frame(maxWidth: maxW, maxHeight: maxH)
+                .padding(3)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.white)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(Color.black.opacity(0.12), lineWidth: 0.5)
+                )
+                .shadow(color: Color.black.opacity(0.10), radius: 3, x: 0, y: 1.5)
+                .padding(5)
+                .allowsHitTesting(false)
             }
         }
         .background(
@@ -365,6 +363,48 @@ public struct LessonBlockView: View {
         Haptics.warning()
         DispatchQueue.main.async {
             showDeleteNoteConfirmation = true
+        }
+    }
+}
+
+/// Stundenblöcke werden beim Drei-Wochen-Karussell gleichzeitig aufgebaut.
+/// Ein direktes `UIImage(data:)` hätte dabei jede große PNG auf dem Main Thread
+/// decodiert. Diese kleine Ansicht lädt eine passende Vorschau im Hintergrund
+/// und teilt sich den Cache mit der Notizenübersicht.
+private struct TimetableNotePreviewImage: View {
+    let data: Data
+    let cacheKey: String
+
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Color.clear
+            }
+        }
+        .task(id: cacheKey) {
+            if let cached = NotePreviewImageCache.image(for: cacheKey) {
+                image = cached
+                return
+            }
+
+            let imageData = data
+            let key = cacheKey
+            let loadedImage = await Task.detached(priority: .utility) {
+                NotePreviewImageCache.load(
+                    data: imageData,
+                    for: key,
+                    maximumPixelSize: 480
+                )
+            }.value
+
+            guard !Task.isCancelled else { return }
+            image = loadedImage
         }
     }
 }

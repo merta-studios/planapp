@@ -40,6 +40,11 @@ public struct LessonDrawingOverlayView: View {
     @State private var drawing = PKDrawing()
     @State private var canvasHeight: CGFloat = 460
     @State private var toolSelection: DrawingToolSelection = .pen(color: UIColor(hex: "#1E1E1E"))
+    /// Die zuletzt gewählten Tintenfarben gehören zum gemeinsamen Zustand der
+    /// normalen Toolbar und der Apple-Pencil-Squeeze-Bar. Ein Werkzeugwechsel
+    /// darf diese Auswahl nicht wieder auf den ersten Slot zurücksetzen.
+    @State private var preferredPenColorHex = "#1E1E1E"
+    @State private var preferredMarkerColorHex = "#FFE633"
     @State private var penWidth: CGFloat = 3.5
     @State private var markerWidth: CGFloat = 16
     @State private var eraserWidth: CGFloat = 24
@@ -204,6 +209,12 @@ public struct LessonDrawingOverlayView: View {
                                 viewModel.saveDrawingSettings()
                             }
                         ),
+                        preferredPenColorHex: preferredPenColorHex,
+                        preferredMarkerColorHex: preferredMarkerColorHex,
+                        selectedTextColorHex: activeTextBoxColorHex,
+                        onApplyColorToSelectedText: { hex in
+                            applyColorToSelectedTextBox(hex)
+                        },
                         onUndo: { performUndo() }
                     )
                     .zIndex(30)
@@ -266,6 +277,19 @@ public struct LessonDrawingOverlayView: View {
                 revealEditingTextBox(in: viewport)
             }
             .onChange(of: toolSelection) { _, newTool in
+                // Die Farbquelle ist nicht mehr lokal in einer Toolbar
+                // dupliziert. Jeder Weg (normale Toolbar, Squeeze-Bar,
+                // Auto-Rückkehr vom Radierer) schreibt hier in denselben
+                // bevorzugten Farbzustand.
+                switch newTool {
+                case .pen(let color):
+                    preferredPenColorHex = color.toHex()
+                case .marker(let color):
+                    preferredMarkerColorHex = color.toHex()
+                case .eraser, .lasso, .text:
+                    break
+                }
+
                 // Letztes Nicht-Radierer-Werkzeug merken – dorthin wechselt die
                 // App nach dem Radieren automatisch zurück.
                 if case .eraser = newTool {
@@ -1158,6 +1182,9 @@ public struct LessonDrawingOverlayView: View {
 
         // Immer standardmäßig Stift mit der ersten Farbe aus dem Slot
         let initialHex = settings.penColorSlots.first ?? "#1E1E1E"
+        let initialMarkerHex = settings.markerColorSlots.first ?? "#FFE633"
+        preferredPenColorHex = initialHex
+        preferredMarkerColorHex = initialMarkerHex
         toolSelection = .pen(color: UIColor(hex: initialHex))
         lastInkingTool = toolSelection
         noteBackgroundStyle = settings.defaultBackgroundStyle

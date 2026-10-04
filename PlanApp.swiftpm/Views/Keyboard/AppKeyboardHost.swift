@@ -3,9 +3,9 @@ import UIKit
 
 /// Wie die app-eigene Tastatur an eine Ansicht angebunden wird.
 enum AppKeyboardPresentation: Equatable {
-    /// Unten in die Ansicht **eingebettet** (`safeAreaInset`). Der Inhalt
-    /// weicht der Tastatur aus. Passt für Einstellungen, Bearbeiten-Sheets und
-    /// jede Liste, in der das aktive Feld sichtbar bleiben soll.
+    /// Unten am **Fensterrand angedockt**. Die Tastatur liegt über dem Inhalt;
+    /// Einstellungen scrollen das aktive Feld bei Bedarf sichtbar. Passt für
+    /// WebUntis, Bearbeiten-Sheets und andere Formularlisten.
     case embedded
     /// **Schwebend** über dem Inhalt. Die Tastatur liegt als eigene Ebene über
     /// der Ansicht und verändert deren Layout nicht: Kein Safe-Area-Sprung,
@@ -16,10 +16,11 @@ enum AppKeyboardPresentation: Equatable {
 
 /// Hängt die app-eigene Tastatur unten an eine Ansicht an.
 ///
-/// Die Tastatur ist Teil der **normalen Ansichts-Hierarchie** und erscheint
-/// dadurch zuverlässig am unteren Rand der jeweiligen Ansicht: eingebettet in
-/// Einstellungen und verschachtelten Bearbeiten-Sheets, schwebend über der
-/// Zeichenfläche.
+/// Die Tastatur ist Teil der **normalen Ansichts-Hierarchie**, wird für
+/// Einstellungen aber als angedocktes Overlay bis an den unteren Fensterrand
+/// gelegt. So bleibt sie auch auf WebUntis-/Sync-Seiten und in verschachtelten
+/// Settings-Sheets am Bildschirmrand statt mitten im Scroll-Inhalt. Auf der
+/// Zeichenfläche bleibt sie weiterhin schwebend über dem Papier.
 ///
 /// Warum kein eigenes Overlay-Fenster: Eine zusätzliche `UIWindow`-Ebene über
 /// der App liegt auf echten Geräten unter bzw. über präsentierten Sheets und
@@ -64,16 +65,29 @@ struct AppKeyboardHostModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            // Der transparente Inset reserviert Scroll-Platz für das aktive
+            // Formularfeld, ohne die Tastatur selbst innerhalb des ScrollView
+            // zu platzieren. Die sichtbare Tastatur kommt ausschließlich über
+            // das nachfolgende, am Fenster ausgerichtete Overlay.
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if showsKeyboard, presentation == .embedded {
-                    AppKeyboardView(safeAreaInsets: metrics.safeInsets)
+                    Color.clear
                         .frame(height: keyboardHeight)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .allowsHitTesting(false)
                 }
             }
+            // Die Systemtastatur darf den Host nicht verkleinern. Für die
+            // eigene Tastatur wird unten immer das tatsächliche App-Fenster
+            // verwendet, nicht die sichtbare Höhe eines ScrollViews.
+            .ignoresSafeArea(.keyboard, edges: .bottom)
             .overlay(alignment: .bottom) {
-                if showsKeyboard, presentation == .floating {
-                    floatingKeyboard
+                if showsKeyboard {
+                    switch presentation {
+                    case .embedded:
+                        dockedKeyboard
+                    case .floating:
+                        floatingKeyboard
+                    }
                 }
             }
             .background(
@@ -94,6 +108,21 @@ struct AppKeyboardHostModifier: ViewModifier {
             )
             .onAppear { hub.keyboardHostDidAppear(hostID) }
             .onDisappear { hub.keyboardHostDidDisappear(hostID) }
+    }
+
+    /// Die eingebettete Variante ist visuell am unteren **Fensterrand**
+    /// angedockt, nicht Teil eines `ScrollView.safeAreaInset`. Letzteres kann
+    /// auf Detailseiten dazu führen, dass die Tastatur innerhalb der gerade
+    /// sichtbaren Formularfläche landet. Der Eingabe-Hub hält das aktive Feld
+    /// weiterhin durch Scrollen sichtbar.
+    private var dockedKeyboard: some View {
+        AppKeyboardView(safeAreaInsets: metrics.safeInsets)
+            .frame(maxWidth: .infinity)
+            .frame(height: keyboardHeight)
+            .background(Color.clear)
+            .ignoresSafeArea(.container, edges: .bottom)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .zIndex(1_000)
     }
 
     /// Die schwebende Tastatur: eine abgerundete, leicht durchscheinende
@@ -194,15 +223,18 @@ private struct HostMetricsProbe: UIViewRepresentable {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.isScheduled = false
-                // Eigene Höhe = Höhe der Host-Ansicht (ganzer Bildschirm auf
-                // der Zeichenfläche, Sheet-Karte in den Einstellungen).
-                let height = self.bounds.height > 0
-                    ? self.bounds.height
-                    : (self.window?.bounds.height ?? 0)
+                // Nicht die Höhe eines ScrollViews bzw. einer Detailseite
+                // verwenden: Die Tastatur soll immer am unteren Rand des
+                // aktiven App-Fensters andocken. Das Fenster liefert auch bei
+                // Stage Manager, Split View und verschachtelten Settings-Sheets
+                // die verlässlichen Maße.
+                let window = self.window
+                let height = window?.bounds.height ?? self.bounds.height
+                let safeInsets = window?.safeAreaInsets ?? self.safeAreaInsets
                 self.onChange?(
                     HostMetrics(
                         windowHeight: height,
-                        safeInsets: self.safeAreaInsets
+                        safeInsets: safeInsets
                     )
                 )
             }

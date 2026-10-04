@@ -70,7 +70,7 @@ Das Repository enthält das fertige App-Package **`PlanApp.swiftpm`**, welches a
 - **Werkzeuge**:
   - **Stift / Textmarker / Radierer / Lasso / Text** – mit frei wählbaren Farben aus den Farb-Slots und eigener Dicke je Werkzeug.
   - **Rückgängig & Vorwärts (Undo/Redo)** über die Werkzeugleiste, die Text-Werkzeuge und den **Doppeltipp** des Apple Pencil.
-- **Kompakte Squeeze-Werkzeugpalette**: Ein Zusammendrücken des Apple Pencil Pro öffnet nahe der **letzten aktiven Hover-Position** einen schmalen Viertelkreis. Acht runde **48-pt-Buttons** enthalten Rückgängig, Lasso, Stift, Textmarker, Radierer, Text, die Farbe (Farb-Slots erscheinen beim Hovern außen) und die Stiftdicke (durch Halten und radiales Ziehen). Unter iPadOS 26 mit aktuellem SDK wird natives interaktives Liquid Glass verwendet; ältere Versionen erhalten einen reflektierenden Material-Fallback. Erneuter Squeeze, Weiterzeichnen oder ein Fingertipp schließen die Palette. Ein Rand-Tipp schließt zunächst nur die offene Palette, nicht gleichzeitig die Notiz.
+- **Kompakte Squeeze-Werkzeugpalette**: Ein Zusammendrücken des Apple Pencil Pro öffnet nahe der **letzten aktiven Hover-Position** einen kompakten, dicken Bogen. Acht runde **44-pt-Buttons** enthalten Rückgängig, Lasso, Stift, Textmarker, Radierer, Text, die Farbe (Farb-Slots erscheinen beim Hovern außen) und die Stiftdicke (durch Halten und radiales Ziehen). Unter iPadOS 26 mit aktuellem SDK wird natives interaktives Liquid Glass verwendet; ältere Versionen erhalten einen reflektierenden Material-Fallback. Erneuter Squeeze, Weiterzeichnen oder ein Fingertipp schließen die Palette. Ein Rand-Tipp schließt zunächst nur die offene Palette, nicht gleichzeitig die Notiz.
 - **Radierer mit automatischer Rückkehr**: Nach dem Radieren und Loslassen wechselt das Werkzeug automatisch zum zuletzt benutzten Werkzeug zurück (Fallback: Stift). Der Schalter *„Radierer automatisch abwählen“* (Standard: an) sitzt unter *Zeichnen & Apple Pencil*.
 - **Apple-Pencil-Einstellung**: Standardmäßig **aus**, das heißt Finger und Pencil dürfen zeichnen. Sobald die App irgendwo einen echten Apple Pencil bemerkt (Hover, Strich oder Squeeze), schaltet sie „Nur Apple Pencil“ automatisch ein und merkt sich das.
 - **Apple Pencil Hover**: Alle Buttons und Karten unterstützen iPadOS Pointer- & Hover-Effekte (`.hoverEffect(.lift)`).
@@ -214,21 +214,22 @@ Sie ist eine normale SwiftUI-Ansicht innerhalb der App, braucht also weder die
 Systemtastatur noch Tastenereignisse von iPadOS – sie funktioniert immer, weil
 sie nur Tipps benötigt.
 
-Die Tastatur wird **unten an die jeweilige Eingabeansicht angebunden** und ist
-Teil der normalen Ansichts-Hierarchie – ihre Tasten funktionieren auf echten
-Geräten zuverlässig, und Tipps auf die Tastatur können keine Gesten
-dahinterliegender Ebenen auslösen (kein ungewolltes Schließen von Notiz oder
-Einstellungen). Der oberste sichtbare Host zeigt die Tastatur, darunterliegende
-Hosts bleiben leer – es gibt also nie zwei Tastaturen gleichzeitig. Bei
-Rotation, Split View und Stage Manager skaliert die Höhe mit der Ansicht
-(höchstens ~42 % der Ansichtshöhe, mindestens 240 pt); die unterste Tastenreihe
-bleibt oberhalb des Home-Indikators.
+Die Tastatur wird als Teil der normalen Ansichts-Hierarchie verwaltet – ihre
+Tasten funktionieren auf echten Geräten zuverlässig, und Tipps auf die Tastatur
+können keine Gesten dahinterliegender Ebenen auslösen (kein ungewolltes
+Schließen von Notiz oder Einstellungen). In Einstellungen und Sync-Formularen
+ist sie dabei **immer am unteren Rand des aktiven App-Fensters angedockt**,
+nicht innerhalb des gerade sichtbaren Scroll-Inhalts. Der oberste sichtbare Host
+zeigt die Tastatur, darunterliegende Hosts bleiben leer – es gibt also nie zwei
+Tastaturen gleichzeitig. Bei Rotation, Split View und Stage Manager skaliert die
+Höhe mit dem Fenster (höchstens ~42 % der Fensterhöhe, mindestens 240 pt); die
+unterste Tastenreihe bleibt oberhalb des Home-Indikators.
 
 Dafür gibt es **zwei Darstellungen** (`AppKeyboardPresentation`):
 
 | Darstellung | Verhalten | Verwendet in |
 | --- | --- | --- |
-| **Eingebettet** (`safeAreaInset`, Standard) | Der Inhalt weicht der Tastatur aus, das aktive Feld bleibt sichtbar | Einstellungen und Bearbeiten-Sheets |
+| **Angedockt** (`.embedded`, Standard) | Liegt als Overlay am unteren Rand des aktiven App-Fensters; das aktive Settings-Feld wird bei Bedarf dorthin gescrollt | Einstellungen und Bearbeiten-Sheets |
 | **Schwebend** (Overlay, abgerundet, mit Schatten) | Die Tastatur liegt **über** dem Inhalt, dessen Layout sich nicht ändert | Zeichenfläche (Notiz) |
 
 Auf der Zeichenfläche ist das entscheidend: Die Notiz behält beim Tippen Größe
@@ -328,8 +329,9 @@ tut – statt nur zu vermuten, dass etwas „repariert“ sei.
   Geräten keine zuverlässigen Tipps und ließ Sheets/Notizen beim Tippen auf
   die Tastatur ungewollt schließen.
 - `appKeyboardHost(presentation:)` bestimmt die Darstellung: `.embedded`
-  (Standard, `safeAreaInset`) für Einstellungen und Sheets, `.floating`
-  (Overlay über dem Inhalt) für die Zeichenfläche. Die Notiz berechnet ihre
+  (Standard, als angedocktes Overlay am unteren App-Fensterrand) für
+  Einstellungen und Sheets, `.floating` (abgerundetes Overlay über dem Inhalt)
+  für die Zeichenfläche. Die Notiz berechnet ihre
   Skalierung ausschließlich aus `geometry.size`; auf einen Wechsel der Safe
   Area reagiert sie nicht mehr, und `.ignoresSafeArea(.keyboard)` verhindert
   auch bei der Systemtastatur, dass die Zeichenfläche verkleinert wird.

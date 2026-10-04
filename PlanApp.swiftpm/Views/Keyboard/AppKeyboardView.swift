@@ -810,10 +810,14 @@ private struct KeyboardKeyButton<Label: View>: View {
             )
             .offset(y: isVisuallyPressed ? 1 : 0)
             .brightness(isVisuallyPressed ? -0.14 : 0)
-            // Der GestureState reagiert bereits auf das Aufsetzen. So wird die
-            // Taste auch bei sehr kurzem Tippen sichtbar dunkler, bevor die
-            // Aktion beim Loslassen ausgeführt wird.
-            .animation(.easeOut(duration: 0.06), value: isVisuallyPressed)
+            // Ausschließlich der aktive Touch steuert die dunklere Fläche.
+            // `isPressed` bleibt für Wiederholen/Popup intern erhalten, darf
+            // aber nach dem Loslassen keinen visuellen Nachlauf auslösen.
+            // Ohne Animation wird die Taste beim Aufsetzen sofort dunkler und
+            // beim Loslassen im selben Frame wieder normal.
+            .transaction { transaction in
+                transaction.animation = nil
+            }
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .gesture(pressGesture)
             .overlay(alignment: .top) {
@@ -837,11 +841,13 @@ private struct KeyboardKeyButton<Label: View>: View {
 
     // MARK: Darstellung
 
-    /// `isTouchActive` kommt direkt aus dem GestureState und sorgt für eine
-    /// sichtbare Rückmeldung auch bei kurzen Taps; `isPressed` deckt den
-    /// wiederholenden Backspace- und Popup-Zustand ab.
+    /// `isTouchActive` kommt direkt aus dem GestureState und beschreibt den
+    /// tatsächlichen Finger-/Pencil-Kontakt. `isPressed` bleibt absichtlich
+    /// außen vor: Es kann beim Ende einer Geste noch für die Aktion bzw. das
+    /// Akzent-Popup gesetzt sein und würde die Taste erst **nach** dem
+    /// Loslassen dunkel färben.
     private var isVisuallyPressed: Bool {
-        isPressed || isTouchActive
+        isTouchActive
     }
 
     private var foregroundColor: Color {

@@ -1,21 +1,26 @@
 import Foundation
 
-/// Ein enger Viertelkreis mit acht gleichmäßig verteilten, 44-pt-großen
-/// Bedienelementen. Keine leeren Trennzeichen-Plätze: So bleibt die Palette
-/// kompakt, ohne dass sich die Touch-Ziele überschneiden.
+/// Ein kurzer, dichter Bogen mit acht gleichmäßig verteilten, 44-pt-großen
+/// Bedienelementen. Der Bogen ist bewusst näher am Pencil-Hover als die alte
+/// Viertelkreis-Palette; sein etwas weiterer Winkel erhält dennoch getrennte,
+/// zuverlässig treffbare Ziele ohne Zwischenräume.
 struct SqueezePaletteLayout {
-    static let arcRadius: CGFloat = 210
-    static let arcBandWidth: CGFloat = 44
-    static let arcHalfAngle: CGFloat = .pi / 4
+    /// Deutlich näher am Hover-Anker als die vorherigen 210 pt.
+    static let arcRadius: CGFloat = 176
+    /// Breiterer Glas-Hintergrundring: Die Palette wirkt dadurch wie eine
+    /// kompakte Squeeze-Bar statt wie eine dünne Linie hinter den Buttons.
+    static let arcBandWidth: CGFloat = 60
+    /// 120° geben acht 44-pt-Tasten auf dem kleineren Radius genug Abstand.
+    static let arcHalfAngle: CGFloat = .pi / 3
     static let buttonSize: CGFloat = 44
-    static let colorBandWidth: CGFloat = 44
+    static let colorBandWidth: CGFloat = 48
     static let colorSwatchSize: CGFloat = 28
     static let margin: CGFloat = 14
     static let elementCount = 8
     static let colorElementIndex = 6
 
     static var colorArcRadius: CGFloat {
-        arcRadius + arcBandWidth / 2 + colorBandWidth / 2 + 8
+        arcRadius + arcBandWidth / 2 + colorBandWidth / 2 + 6
     }
 
     static func colorHalfAngle(for count: Int) -> CGFloat {
@@ -37,7 +42,13 @@ struct SqueezePaletteLayout {
     /// Inklusive Schatten und aufgeklappter Farben, relativ zum Hover-Anker.
     let bounds: CGRect
 
-    init(hoverAnchor: CGPoint, containerSize: CGSize, openingAngle: CGFloat, colorCount: Int) {
+    init(
+        hoverAnchor: CGPoint,
+        containerSize: CGSize,
+        openingAngle: CGFloat,
+        colorCount: Int,
+        includesColorArc: Bool = true
+    ) {
         var bounds = CGRect.zero
         func includeArc(radius: CGFloat, centerAngle: CGFloat, halfAngle: CGFloat, padding: CGFloat) {
             for step in 0...80 {
@@ -53,12 +64,18 @@ struct SqueezePaletteLayout {
             radius: Self.arcRadius, centerAngle: openingAngle, halfAngle: Self.arcHalfAngle,
             padding: max(Self.arcBandWidth, Self.buttonSize) / 2 + 10
         )
-        includeArc(
-            radius: Self.colorArcRadius,
-            centerAngle: Self.angle(at: Self.colorElementIndex, openingAngle: openingAngle),
-            halfAngle: Self.colorHalfAngle(for: colorCount),
-            padding: max(Self.colorBandWidth, Self.buttonSize) / 2 + 10
-        )
+        // Solange die Farbauswahl geschlossen ist, darf ihr unsichtbarer
+        // Außenbogen den Anker nicht vorsorglich vom Pencil wegschieben.
+        // Erst beim Öffnen wird der größere Bereich in die Randbegrenzung
+        // einbezogen.
+        if includesColorArc {
+            includeArc(
+                radius: Self.colorArcRadius,
+                centerAngle: Self.angle(at: Self.colorElementIndex, openingAngle: openingAngle),
+                halfAngle: Self.colorHalfAngle(for: colorCount),
+                padding: max(Self.colorBandWidth, Self.buttonSize) / 2 + 10
+            )
+        }
         self.bounds = bounds
 
         let availableWidth = max(1, containerSize.width - Self.margin * 2)

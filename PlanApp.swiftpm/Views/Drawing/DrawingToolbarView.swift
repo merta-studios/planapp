@@ -33,8 +33,6 @@ public struct DrawingToolbarView: View {
     @State private var showClearConfirmation = false
     @State private var editingPenSlotIndex: Int? = nil
     @State private var editingMarkerSlotIndex: Int? = nil
-    @State private var selectedPenSlotIndex: Int = 0
-    @State private var selectedMarkerSlotIndex: Int = 0
 
     private let buttonSize: CGFloat = 40
     private let buttonCornerRadius: CGFloat = 10
@@ -131,17 +129,12 @@ public struct DrawingToolbarView: View {
 
             ForEach(Array(penColorSlots.enumerated()), id: \.offset) { index, hex in
                 let slotColor = UIColor(hex: hex)
-                let isSelected: Bool = {
-                    // Ist ein Textfeld ausgewählt, zeigt der Slot an, ob
-                    // dessen Textfarbe dieser Farbe entspricht.
-                    if let textHex = selectedTextColorHex {
-                        return textHex.caseInsensitiveCompare(hex) == .orderedSame
-                    }
-                    if case .pen = toolSelection {
-                        return selectedPenSlotIndex == index
-                    }
-                    return false
-                }()
+                // Nicht mehr über einen lokalen Slot-Index entscheiden:
+                // Die Squeeze-Palette ändert `toolSelection` direkt. Eine
+                // Ableitung aus dem gemeinsamen Werkzeugzustand hält beide
+                // Werkzeugleisten deshalb jederzeit synchron – auch nach
+                // Radierer/Lasso/Text oder einer externen Farbänderung.
+                let isSelected = isSelectedPenColor(hex)
                 // Die Papierfläche bleibt weiß, daher bleibt auch Schwarz im
                 // Farbfeld und beim Zeichnen schwarz – unabhängig vom Dark Mode.
                 let swatch = Color(hex: hex)
@@ -157,7 +150,6 @@ public struct DrawingToolbarView: View {
                         editingPenSlotIndex = index
                     } else {
                         Haptics.select()
-                        selectedPenSlotIndex = index
                         toolSelection = .pen(color: slotColor)
                     }
                 } label: {
@@ -230,15 +222,10 @@ public struct DrawingToolbarView: View {
 
             ForEach(Array(markerColorSlots.enumerated()), id: \.offset) { index, hex in
                 let slotColor = UIColor(hex: hex).withAlphaComponent(0.60)
-                let isSelected: Bool = {
-                    if let textHex = selectedTextColorHex {
-                        return textHex.caseInsensitiveCompare(hex) == .orderedSame
-                    }
-                    if case .marker = toolSelection {
-                        return selectedMarkerSlotIndex == index
-                    }
-                    return false
-                }()
+                // Wie bei den Stift-Slots immer aus dem gemeinsamen
+                // `toolSelection` ableiten statt einen zweiten lokalen
+                // Auswahlzustand zu pflegen.
+                let isSelected = isSelectedMarkerColor(hex)
                 let swatch = Color(hex: hex)
 
                 Button {
@@ -250,7 +237,6 @@ public struct DrawingToolbarView: View {
                         editingMarkerSlotIndex = index
                     } else {
                         Haptics.select()
-                        selectedMarkerSlotIndex = index
                         toolSelection = .marker(color: slotColor)
                     }
                 } label: {
@@ -308,7 +294,6 @@ public struct DrawingToolbarView: View {
         guard penColorSlots.indices.contains(index) else { return }
         let normalized = normalizedHex(newHex)
         penColorSlots[index] = normalized
-        selectedPenSlotIndex = index
         toolSelection = .pen(color: UIColor(hex: normalized))
     }
 
@@ -316,12 +301,30 @@ public struct DrawingToolbarView: View {
         guard markerColorSlots.indices.contains(index) else { return }
         let normalized = normalizedHex(newHex)
         markerColorSlots[index] = normalized
-        selectedMarkerSlotIndex = index
         toolSelection = .marker(color: UIColor(hex: normalized).withAlphaComponent(0.60))
     }
 
     private func normalizedHex(_ hex: String) -> String {
         UIColor(hex: hex).toHex().uppercased()
+    }
+
+    /// Aus genau derselben Quelle wie die Squeeze-Palette ableiten. Die
+    /// Alpha-Komponente des Markers ist für die Slot-Zuordnung absichtlich
+    /// irrelevant; `toHex()` liefert nur die sichtbare RGB-Farbe.
+    private func isSelectedPenColor(_ hex: String) -> Bool {
+        if let textHex = selectedTextColorHex {
+            return textHex.caseInsensitiveCompare(hex) == .orderedSame
+        }
+        guard case .pen(let color) = toolSelection else { return false }
+        return color.toHex().caseInsensitiveCompare(hex) == .orderedSame
+    }
+
+    private func isSelectedMarkerColor(_ hex: String) -> Bool {
+        if let textHex = selectedTextColorHex {
+            return textHex.caseInsensitiveCompare(hex) == .orderedSame
+        }
+        guard case .marker(let color) = toolSelection else { return false }
+        return color.toHex().caseInsensitiveCompare(hex) == .orderedSame
     }
 
     // MARK: - Text-Werkzeug

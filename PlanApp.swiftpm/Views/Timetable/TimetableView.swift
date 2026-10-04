@@ -72,13 +72,15 @@ public struct TimetableView: View {
                     // einfach leer.
                     if showsUntisSetupGuide {
                         UntisSetupGuideView()
-                            .transition(.opacity.combined(with: .scale(scale: 0.985)))
                     } else if viewModel.viewMode == .notesOnly {
+                        // Kein Übergangs-Overlay: Ein animierter Wechsel hielt
+                        // bisher das komplette Drei-Wochen-Raster neben der
+                        // Vorschauübersicht gleichzeitig am Leben. Das führte
+                        // besonders bei vielen handschriftlichen Notizen zu
+                        // deutlichen Rucklern beim Umschalten.
                         NotesOverviewListView(noteNamespace: noteNamespace)
-                            .transition(.opacity.combined(with: .scale(scale: 0.985)))
                     } else {
                         weekCarousel(availableWidth: availableWidth, calculatedRowHeight: calculatedRowHeight)
-                            .transition(.opacity.combined(with: .scale(scale: 0.985)))
                     }
                 }
 
