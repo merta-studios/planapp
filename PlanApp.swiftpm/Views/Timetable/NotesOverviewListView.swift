@@ -76,7 +76,12 @@ public struct NotesOverviewListView: View {
             case .full(let item):
                 return "full_\(item.id)"
             case .cards(let entries):
-                return "cards_" + entries.map(\.id).joined(separator: "_")
+                // Die Gruppe kann hunderte Notizen enthalten. Ihre Identität
+                // darf beim Update keine vollständige, große ID-Zeichenkette
+                // aus allen Karten zusammensetzen.
+                let firstID = entries.first?.id ?? "empty"
+                let lastID = entries.last?.id ?? "empty"
+                return "cards_\(firstID)_\(lastID)_\(entries.count)"
             }
         }
     }
@@ -127,6 +132,7 @@ public struct NotesOverviewListView: View {
             repeating: GridItem(.flexible(), spacing: columnSpacing, alignment: .top),
             count: max(1, columnCount)
         )
+        let relativeDay = Calendar.germanCalendar.startOfDay(for: date)
         let visibleItems = items.filter { item in
             if columnCount > 1, case .dayHeader = item { return false }
             return true
@@ -141,22 +147,47 @@ public struct NotesOverviewListView: View {
                 case .full(let item):
                     fullWidthItem(item, relativeTo: date)
                 case .cards(let entries):
-                    LazyVGrid(columns: columns, alignment: .leading, spacing: rowSpacing) {
-                        ForEach(entries) { entry in
-                            noteRow(entry: entry, compact: columnCount > 1)
-                                .frame(
-                                    maxWidth: .infinity,
-                                    maxHeight: .infinity,
-                                    alignment: .topLeading
-                                )
-                        }
-                    }
-                    .padding(.horizontal, horizontalPadding)
+                    cardsSection(
+                        entries,
+                        columns: columns,
+                        columnCount: columnCount,
+                        relativeDay: relativeDay
+                    )
                 }
             }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
+    }
+
+    /// Unterteilt einen potenziell sehr großen Abschnitt in kleine, zeilenweise
+    /// Batches. So muss beim Scrollen nicht ein einziges Grid mit hunderten
+    /// Karten gleichzeitig layoutet werden.
+    private func cardsSection(
+        _ entries: [NotedLesson],
+        columns: [GridItem],
+        columnCount: Int,
+        relativeDay: Date
+    ) -> some View {
+        let batchSize = NotesOverviewLayout.batchSize(forColumnCount: columnCount)
+        let batchStarts = Array(stride(from: 0, to: entries.count, by: batchSize))
+
+        return LazyVStack(alignment: .leading, spacing: rowSpacing) {
+            ForEach(batchStarts, id: \.self) { start in
+                let end = min(start + batchSize, entries.count)
+                LazyVGrid(columns: columns, alignment: .leading, spacing: rowSpacing) {
+                    ForEach(entries[start..<end]) { entry in
+                        noteRow(
+                            entry: entry,
+                            compact: columnCount > 1,
+                            relativeDay: relativeDay
+                        )
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                }
+                .padding(.horizontal, horizontalPadding)
+            }
+        }
     }
 
     /// Ein Element über die volle Rasterbreite (Tagesüberschrift oder
@@ -173,7 +204,7 @@ public struct NotesOverviewListView: View {
                 .padding(.top, 6)
         case .row(let entry):
             // Kann nur auftreten, wenn Reihen nicht gruppiert wurden.
-            noteRow(entry: entry, compact: false)
+            noteRow(entry: entry, compact: false, relativeDay: Calendar.germanCalendar.startOfDay(for: date))
                 .padding(.horizontal, horizontalPadding)
         }
     }
@@ -375,9 +406,23 @@ public struct NotesOverviewListView: View {
         return "Jetzt • \(formatter.string(from: date)) Uhr"
     }
 
-    /// Eine Zeile: Titel exakt wie über der Zeichenfläche, darunter die Notiz.
-    private func noteRow(entry: NotedLesson, compact: Bool) -> some View {
-        NoteOverviewCard(lesson: entry.lesson, note: entry.note, compact: compact)
+    /// Eine Karte: Ihre aufwendige Darstellung wird nur aktualisiert, wenn
+    /// sich die Karte selbst oder eine ihrer sichtbaren Einstellungen ändert.
+    private func noteRow(
+        entry: NotedLesson,
+        compact: Bool,
+        relativeDay: Date
+    ) -> some View {
+        NoteOverviewCard(
+            viewModel: viewModel,
+            lesson: entry.lesson,
+            note: entry.note,
+            compact: compact,
+            contentRevision: viewModel.notesOverviewRevision,
+            presentationRevision: viewModel.notesOverviewPresentationRevision,
+            relativeDay: relativeDay
+        )
+        .equatable()
     }
 
     /// Leerer Zustand, wenn es noch keine Notizen gibt.
@@ -412,17 +457,35 @@ private final class NoteOverviewCardFrameTracker {
 /// - **Apple Pencil Pro**: beim Hovern über der Karte einmal *squeezen*
 ///   (oder beim Pencil 2 doppeltippen) öffnet dieselben Optionen.
 /// - Antippen öffnet die Notiz direkt zum Bearbeiten.
-private struct NoteOverviewCard: View {
-    @EnvironmentObject private var viewModel: TimetableViewModel
-
+private struct NoteOverviewCard: View, Equatable {
+    /// Absichtlich kein `@EnvironmentObject`: Das gesamte ViewModel publiziert
+    /// auch für Overlay-, Timer- und Navigationsänderungen. Die Darstellung der
+    /// Karte wird über ihre gezielten Versionswerte aktualisiert und durch
+    /// `.equatable()` vor diesen globalen Invalidierungen geschützt.
+    let viewModel: TimetableViewModel
     let lesson: Lesson
     let note: LessonNote
     let compact: Bool
+    let contentRevision: UInt
+    let presentationRevision: UInt
+    let relativeDay: Date
 
     @State private var isHovered = false
     @State private var frameTracker = NoteOverviewCardFrameTracker()
     @State private var showActions = false
     @State private var showDeleteNoteConfirmation = false
+
+    static func == (lhs: NoteOverviewCard, rhs: NoteOverviewCard) -> Bool {
+        lhs.lesson == rhs.lesson
+            && lhs.note.id == rhs.note.id
+            && lhs.note.updatedAt == rhs.note.updatedAt
+            && lhs.note.croppedImageData?.count == rhs.note.croppedImageData?.count
+            && lhs.note.textBoxes == rhs.note.textBoxes
+            && lhs.compact == rhs.compact
+            && lhs.contentRevision == rhs.contentRevision
+            && lhs.presentationRevision == rhs.presentationRevision
+            && lhs.relativeDay == rhs.relativeDay
+    }
 
     var body: some View {
         let display = viewModel.resolveSubjectDisplay(for: lesson)
@@ -442,7 +505,8 @@ private struct NoteOverviewCard: View {
                 showsColorCircle: false,
                 isCompact: compact,
                 teacherDisplayName: viewModel.resolveTeacherName(lesson.teacherRaw),
-                originalTeacherDisplayName: lesson.originalTeacher.map { viewModel.resolveTeacherName($0) }
+                originalTeacherDisplayName: lesson.originalTeacher.map { viewModel.resolveTeacherName($0) },
+                relativeTo: relativeDay
             )
 
             noteContent(textColor: textColor)
