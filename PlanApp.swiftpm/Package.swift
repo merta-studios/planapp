@@ -14,13 +14,13 @@ let package = Package(
     ],
     products: [
         .iOSApplication(
-            name: "PlanApp",
+            name: "Untis Planner PLUS",
             targets: ["AppModule"],
             bundleIdentifier: "com.planapp.stundenplan",
             teamIdentifier: "",
             displayVersion: "1.0",
-            bundleVersion: "1",
-            appIcon: .placeholder(icon: .calendar),
+            bundleVersion: "2",
+            appIcon: .asset("AppIcon"),
             accentColor: .presetColor(.blue),
             supportedDeviceFamilies: [
                 .pad,
@@ -45,7 +45,8 @@ let package = Package(
             name: "AppModule",
             path: ".",
             resources: [
-                .process("Resources")
+                .process("Resources"),
+                .process("Assets.xcassets")
             ]
         )
     ]

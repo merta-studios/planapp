@@ -24,6 +24,8 @@ iOS-Apps lassen sich nicht unter Windows kompilieren. Deshalb baut die GitHub-Ac
 **`PlanApp.ipa`**, das anschließend mit **Sideloadly** und einer kostenlosen Apple-ID auf dem
 iPad installiert wird. Die App erscheint dann mit eigenem Icon auf dem Home-Screen und läuft
 **7 Tage** – verlängerbar per Sideloadly-Auto-Refresh oder AltStore (WLAN-Refresh).
+Name und Icon der Sideload-App werden in `PlanApp.swiftpm/Package.swift` bzw.
+`PlanApp.swiftpm/Assets.xcassets` konfiguriert; aktuell heißt sie **„Untis Planner PLUS“**.
 
 **Einmalige Einrichtung:** Die Datei [`ci/build-ipa.yml`](ci/build-ipa.yml) im GitHub-Webinterface
 nach `.github/workflows/build-ipa.yml` kopieren (*Add file → Create new file*, Pfad exakt so
