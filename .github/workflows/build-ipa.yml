@@ -1,0 +1,62 @@
+name: Build IPA (Sideload)
+
+# Baut aus dem PlanApp.swiftpm-Paket ein unsigniertes .ipa,
+# das z. B. mit Sideloadly oder AltStore (Windows/Mac) auf dem iPad
+# mit einer kostenlosen Apple-ID signiert & installiert werden kann.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build-ipa:
+    name: PlanApp.ipa bauen
+    runs-on: macos-26
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Neuestes Xcode auswählen
+        run: |
+          XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)
+          if [ -z "$XCODE" ]; then
+            echo "::error::Kein Xcode gefunden"
+            exit 1
+          fi
+          echo "Verwende: $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Verfügbare Schemes anzeigen
+        working-directory: PlanApp.swiftpm
+        run: xcodebuild -list
+
+      - name: PlanApp bauen (unsigniert)
+        working-directory: PlanApp.swiftpm
+        run: |
+          xcodebuild \
+            -scheme PlanApp \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$GITHUB_WORKSPACE/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build
+
+      - name: IPA paketieren
+        run: |
+          APP_DIR=$(find DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -n 1)
+          echo "App-Bundle: $APP_DIR"
+          mkdir Payload
+          cp -R "$APP_DIR" Payload/
+          zip -qry PlanApp.ipa Payload
+          ls -lh PlanApp.ipa
+
+      - name: IPA als Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: PlanApp-IPA
+          path: PlanApp.ipa
+          if-no-files-found: error
+          retention-days: 90
