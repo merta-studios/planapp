@@ -53,11 +53,13 @@ public enum NoteUndoSessionPolicy {
     public static let maximumSteps = 40
     public static let linearTickSpacing: Double = 32
 
-    /// Der runde Scrubber kann höchstens einen vollen Kreis laufen. Jeder
-    /// Schritt hat einen **festen** Winkel: Gibt es weniger Schritte, ist der
-    /// neue Kreisrand einfach kürzer (Teilbogen) statt auf 360° gestreckt.
+    /// Ein voller Kreis entspricht einer Umdrehung. Jeder Schritt hat einen
+    /// **festen** Winkel: Gibt es weniger Schritte, ist der neue Kreisrand
+    /// einfach kürzer (Teilbogen) statt auf 360° gestreckt. Gibt es mehr
+    /// Schritte, läuft der Scrubber einfach **mehrere Umdrehungen** weiter –
+    /// bis zum letzten gespeicherten Schritt.
     public static let circularSweepAngle: Double = 2 * .pi
-    /// So viele Undo-Stufen passen auf den vollen Kreis (18° je Stufe).
+    /// So viele Undo-Stufen passen auf eine Umdrehung (18° je Stufe).
     public static let circularMaxTicks = 20
 
     /// Fester Winkel eines Schritts (unabhängig von der Anzahl).
@@ -85,9 +87,69 @@ public enum NoteUndoSessionPolicy {
         return min(undoCount, Int(availableHeight / tickSpacing))
     }
 
-    /// Höchstens `circularMaxTicks` Stufen – der Scrubber macht rückgängig
-    /// (und innerhalb derselben Sitzung wiederherstellen).
+    /// Stufen einer einzelnen Umdrehung – höchstens `circularMaxTicks`.
     public static func circularTickCount(undoCount: Int, maxTicks: Int = circularMaxTicks) -> Int {
         min(max(0, undoCount), max(0, maxTicks))
+    }
+
+    /// Freie Stufen auf dem Ring, wenn bereits `undoTickCount` Undo-Stufen
+    /// sichtbar sind. So viel Platz bleibt für Wiederhol-Stufen – der Rest der
+    /// Umdrehung läuft über die dünnen Innenringe.
+    public static func circularRedoRoom(
+        undoTickCount: Int,
+        maxTicks: Int = circularMaxTicks
+    ) -> Int {
+        max(0, max(0, maxTicks) - max(0, undoTickCount))
+    }
+
+    /// Wie viele Wiederhol-Stufen über den Knopf des linearen Balkens passen.
+    /// Der Platz bis zur Oberkante begrenzt die Anzeige – so läuft der Balken
+    /// nie aus dem Bild.
+    public static func linearRedoLimit(
+        originY: Double,
+        spacing: Double = linearTickSpacing
+    ) -> Int {
+        guard originY.isFinite, spacing > 0 else { return 0 }
+        return max(0, Int(max(0, originY - 40) / spacing))
+    }
+
+    /// Sichtbare Stufen: die in dieser Sitzung bereits angewandten Schritte
+    /// **plus** die jetzt noch möglichen. Wird bei jeder Bewegung neu
+    /// berechnet, damit die Anzeige nie einen veralteten Stand zeigt.
+    public static func scrubTickCount(applied: Int, available: Int, limit: Int? = nil) -> Int {
+        let total = max(0, applied) + max(0, available)
+        guard let limit else { return total }
+        return min(total, max(0, limit))
+    }
+
+    /// Wie viele Umdrehungen der Kreis-Scrubber für so viele Schritte braucht
+    /// (0 ohne Schritte).
+    public static func circularRevolutionCount(
+        undoCount: Int,
+        maxTicks: Int = circularMaxTicks
+    ) -> Int {
+        guard undoCount > 0, maxTicks > 0 else { return 0 }
+        return (undoCount + maxTicks - 1) / maxTicks
+    }
+
+    /// Füllstände der zusätzlichen Umdrehungen (jeder Wert in Stufen, höchstens
+    /// `circularMaxTicks`). Die **laufende** Umdrehung steht nicht in dieser
+    /// Liste – für sie gibt es die Ticks auf dem Ring selbst. So bleibt
+    /// sichtbar, dass nach dem vollen Kreis noch weitere Schritte möglich
+    /// sind (mehrere Umdrehungen bis zum letzten gespeicherten Schritt).
+    public static func circularOverflowTicks(
+        applied: Int,
+        available: Int,
+        maxTicks: Int = circularMaxTicks
+    ) -> [Int] {
+        guard maxTicks > 0 else { return [] }
+        let openInCurrentRevolution = max(0, maxTicks - max(0, applied))
+        var remaining = max(0, available) - openInCurrentRevolution
+        var result: [Int] = []
+        while remaining > 0 {
+            result.append(min(maxTicks, remaining))
+            remaining -= maxTicks
+        }
+        return result
     }
 }

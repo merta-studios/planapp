@@ -161,6 +161,10 @@ public struct LessonDrawingOverlayView: View {
     /// Tag dieser Notiz (nur mit aktivem Tag-System).
     @State private var noteTagID: UUID? = nil
     @State private var isTagPickerPresented = false
+    /// Größen-Animation der Mini-Tag-Auswahl: Das Fenster wächst aus der
+    /// Tag-Pille heraus und schrumpft wieder dorthin – statt ein-/auszublenden.
+    @State private var isTagPickerExpanded = false
+    @State private var tagPickerCloseWorkItem: DispatchWorkItem? = nil
     /// Farbe neuer Textfelder (iPhone: die Farb-Slots sind Textfarben).
     @State private var preferredTextColorHex = NoteTextBox.defaultColorHex
     /// Bestätigung vor dem Einfügen einer kopierten Notiz.
@@ -322,6 +326,11 @@ public struct LessonDrawingOverlayView: View {
 
                     PalmSafeBackdropDismissView(
                         isEnabled: isExpanded && showsEditor && !isMovingFromHeader && !isResizing,
+                        // Auch ein bewusster Apple-Pencil-Tipp an der Seite
+                        // schließt die Notiz – die Handballenerkennung bleibt
+                        // unverändert streng (Radius, Dauer, Bewegung,
+                        // Mehrfachkontakte, Zeichen-Cooldown).
+                        allowsPencilTap: true,
                         canDismiss: {
                             let state = canvasView?.drawingGestureRecognizer.state
                             return drawingInputActivity.permitsBackdropTap(
@@ -1769,15 +1778,37 @@ public struct LessonDrawingOverlayView: View {
     }
 
     private func presentTagPicker() {
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-            isTagPickerPresented = true
+        tagPickerCloseWorkItem?.cancel()
+        tagPickerCloseWorkItem = nil
+        if isTagPickerPresented {
+            // Das Fenster hängt noch (gerade am Schrumpfen): direkt aus dem
+            // aktuellen Zustand wieder aufwachsen. `onAppear` käme hier nicht
+            // erneut, das Fenster bliebe sonst winzig stehen.
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.80)) {
+                isTagPickerExpanded = true
+            }
+            return
         }
+        // Erst winzig an der Pille einhängen; das Aufwachsen übernimmt
+        // `onAppear` des Panels (siehe `tagPickerOverlay`). So ist es wirklich
+        // eine Größen-Animation aus der Pille heraus – kein Ein-/Ausblenden.
+        isTagPickerPresented = true
+        isTagPickerExpanded = false
     }
 
     private func dismissTagPicker() {
-        withAnimation(.easeOut(duration: 0.16)) {
+        guard isTagPickerPresented else { return }
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+            isTagPickerExpanded = false
+        }
+        tagPickerCloseWorkItem?.cancel()
+        let item = DispatchWorkItem {
+            guard !isTagPickerExpanded else { return }
             isTagPickerPresented = false
         }
+        tagPickerCloseWorkItem = item
+        // Nach der Schrumpf-Animation wird das Fenster abgebaut.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24, execute: item)
     }
 
     /// Kleine Tag-Auswahl direkt an der Tag-Pille. `pillFrame` kommt aus dem
@@ -1818,24 +1849,11 @@ public struct LessonDrawingOverlayView: View {
         // wurde der Inhalt doppelt verschoben – Tags und „Tag entfernen“
         // rutschten dadurch aus dem Fenster.
         let bodyRect = bubble.bodyRect(in: CGRect(origin: .zero, size: panel.size))
-        // Anker der Skalierung: der Zungenspitzen-Punkt, also genau dort, wo
-        // die Pille liegt. Die Blase wächst von der Pille hinein und wieder
-        // heraus – kein einfaches Ein-/Ausblenden.
-        //
-        // Achtung: Die Skalierung wird AUF die bereits per `.offset`
-        // positionierte View angewandt; der Anker ist also in deren
-        // Layout-Fläche zu geben (dort liegt die Zungenspitze bei
-        // panel.minX + tailCenterX·W bzw. panel.minY bzw. panel.minY + H).
-        let anchorUnit = UnitPoint(
-            x: panel.width > 0 ? tailCenterX + panel.minX / panel.width : 0.5,
-            y: tailOnTop
-                ? (panel.height > 0 ? panel.minY / panel.height : 0)
-                : (panel.height > 0 ? 1 + panel.minY / panel.height : 1)
-        )
 
         ZStack(alignment: .topLeading) {
             Color.black.opacity(0.001)
                 .contentShape(Rectangle())
+                .allowsHitTesting(isTagPickerExpanded)
                 .onTapGesture {
                     dismissTagPicker()
                 }
@@ -1863,13 +1881,23 @@ public struct LessonDrawingOverlayView: View {
                 .offset(x: bodyRect.minX, y: bodyRect.minY)
             }
             .frame(width: panel.width, height: panel.height, alignment: .topLeading)
-            .offset(x: panel.minX, y: panel.minY)
-            .transition(
-                .asymmetric(
-                    insertion: .scale(scale: 0.4, anchor: anchorUnit).combined(with: .opacity),
-                    removal: .scale(scale: 0.4, anchor: anchorUnit).combined(with: .opacity)
-                )
+            // Größen-Animation aus der Tag-Pille heraus: Der Skalierungs-Anker
+            // liegt auf der Zungenspitze – also exakt dort, wo die Pille steht.
+            // Das `.scaleEffect` sitzt VOR dem `.offset`, damit der Anker
+            // eindeutig in der eigenen Rahmenfläche liegt (die Verschiebung
+            // wird danach angewendet).
+            .scaleEffect(
+                isTagPickerExpanded ? 1 : 0.02,
+                anchor: UnitPoint(x: tailCenterX, y: tailOnTop ? 0 : 1)
             )
+            .offset(x: panel.minX, y: panel.minY)
+            .allowsHitTesting(isTagPickerExpanded)
+            .onAppear {
+                // Direkt nach dem Einhängen aus der Pille heraus aufwachsen.
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.80)) {
+                    isTagPickerExpanded = true
+                }
+            }
         }
     }
 
@@ -2035,20 +2063,27 @@ public struct LessonDrawingOverlayView: View {
     // MARK: - Undo-Scrubber
 
     private func beginLinearUndoScrub(buttonWindowOrigin: CGPoint) {
+        // Ein noch laufender Takt einer früheren Sitzung darf die neue nicht
+        // mehr verändern.
+        scrubStepWorkItem?.cancel()
+        scrubStepWorkItem = nil
         let origin = overlayPoint(fromGlobal: buttonWindowOrigin)
         // Wiederholbare Schritte nach OBEN (über den Knopf) begrenzen: Der
         // verfügbare Platz bis zur Oberkante bestimmt, wie weit der Scrubber
         // in die Redo-Richtung laufen darf.
-        let redoSpace = max(0, origin.y - 40)
         let redoTicks = min(
             editingHistory.redoCount,
-            Int(redoSpace / CGFloat(NoteUndoSessionPolicy.linearTickSpacing))
+            NoteUndoSessionPolicy.linearRedoLimit(originY: Double(origin.y))
         )
+        // Die möglichen Schritte werden **beim Halten** frisch gezählt – nicht
+        // beim Einblenden irgendeiner Bar und nicht aus einem alten Stand.
         undoScrubSession = UndoScrubSession(
             origin: origin,
             style: .linear,
-            startUndoCount: editingHistory.undoCount,
-            startRedoCount: redoTicks,
+            undoCapacity: editingHistory.undoCount,
+            redoCapacity: redoTicks,
+            availableUndoCount: editingHistory.undoCount,
+            availableRedoCount: editingHistory.redoCount,
             currentOffset: 0,
             targetOffset: 0,
             circleStartAngle: 0,
@@ -2060,17 +2095,50 @@ public struct LessonDrawingOverlayView: View {
 
     private func updateLinearUndoScrub(translationY: CGFloat) {
         guard var session = undoScrubSession, session.style == .linear else { return }
+        refreshScrubAvailability(&session)
         let available = max(0, session.containerHeight - session.origin.y - 28)
         let undoTicks = NoteUndoSessionPolicy.linearTickCount(
-            undoCount: session.startUndoCount,
+            undoCount: NoteUndoSessionPolicy.scrubTickCount(
+                applied: session.currentOffset,
+                available: session.availableUndoCount
+            ),
             availableHeight: available
+        )
+        // Die Grenze bleibt der Vorrat der Sitzung: Er wächst mit jedem
+        // rückgängig gemachten Schritt mit, sodass man genau dorthin zurück
+        // kann, wo die Sitzung begann – begrenzt durch den Platz über dem
+        // Knopf, damit der Balken im Bild bleibt.
+        let redoTicks = min(
+            max(0, session.availableRedoCount),
+            NoteUndoSessionPolicy.linearRedoLimit(originY: Double(session.origin.y))
         )
         let offset = UndoScrubMath.linearOffset(
             translationY: translationY,
             undoTicks: undoTicks,
-            redoTicks: session.startRedoCount
+            redoTicks: redoTicks
         )
         applyScrubOffset(offset, to: &session)
+    }
+
+    /// Liest die möglichen Schritte immer **wieder neu** aus der echten
+    /// Historie. Das ist der Unterschied zwischen „beim Halten aktuell“ und
+    /// „beim Einblenden eingefroren“: Nach dem Loslassen und erneutem Halten
+    /// (und während des Haltens) zeigt die Bar damit nie zu viele oder zu
+    /// wenige Stufen – auch keine blauen Redo-Stufen dort, wo nichts mehr
+    /// geht.
+    private func refreshScrubAvailability(_ session: inout UndoScrubSession) {
+        // Rückgängig: so viele Schritte, wie die Historie hergibt – begrenzt
+        // auf das, was die Sitzung selbst rückgängig machen kann (der Stand
+        // beim Halten; Wiederholtes zählt wieder dazu).
+        session.availableUndoCount = min(
+            max(0, editingHistory.undoCount),
+            session.maximumUndoOffset
+        )
+        // Wiederholen: der echte, **jetzt** vorhandene Vorrat. Wie viel davon
+        // in die Anzeige passt, entscheiden Balken und Ring (Platz bzw.
+        // freie Stufen) – dort wird dieselbe Zahl begrenzt, damit Knopf und
+        // Anzeige immer übereinstimmen.
+        session.availableRedoCount = max(0, editingHistory.redoCount)
     }
 
     private func beginCircularUndoScrub(
@@ -2097,16 +2165,28 @@ public struct LessonDrawingOverlayView: View {
         }
         let startAngle = atan2(button.y - center.y, button.x - center.x)
         undoScrubRotation.reset()
+        // Ein noch laufender Takt einer früheren Sitzung darf die neue nicht
+        // mehr verändern.
+        scrubStepWorkItem?.cancel()
+        scrubStepWorkItem = nil
+        // Die möglichen Schritte werden **beim Halten** frisch gezählt (nicht
+        // beim Einblenden der Kreis-Bar): Nach einem vorherigen Scrub stimmen
+        // Undo- und Redo-Vorrat damit wieder exakt.
         undoScrubSession = UndoScrubSession(
             origin: button,
             style: .circular,
-            startUndoCount: editingHistory.undoCount,
+            undoCapacity: editingHistory.undoCount,
             // Undo- und Redo-Bereich teilen sich höchstens einen vollen Kreis.
-            startRedoCount: min(
+            redoCapacity: min(
                 editingHistory.redoCount,
-                max(0, NoteUndoSessionPolicy.circularMaxTicks
-                    - NoteUndoSessionPolicy.circularTickCount(undoCount: editingHistory.undoCount))
+                NoteUndoSessionPolicy.circularRedoRoom(
+                    undoTickCount: NoteUndoSessionPolicy.circularTickCount(
+                        undoCount: editingHistory.undoCount
+                    )
+                )
             ),
+            availableUndoCount: editingHistory.undoCount,
+            availableRedoCount: editingHistory.redoCount,
             currentOffset: 0,
             targetOffset: 0,
             circleStartAngle: startAngle,
@@ -2156,23 +2236,47 @@ public struct LessonDrawingOverlayView: View {
         }
         undoScrubRotation.lastAngle = current
 
-        let undoTicks = NoteUndoSessionPolicy.circularTickCount(undoCount: session.startUndoCount)
-        let stepAngle = CGFloat(NoteUndoSessionPolicy.circularStepAngle(undoCount: session.startUndoCount))
+        // Vor jeder Auswertung den echten Stand der Historie übernehmen: Die
+        // Anzeige folgt damit den tatsächlich möglichen Schritten, nicht einem
+        // Stand vom Einblenden der Bar.
+        refreshScrubAvailability(&session)
+
+        // `undoTicks` ist bewusst die **Gesamtzahl** der Schritte, nicht nur
+        // eine Umdrehung: Nach einem vollen Kreis läuft der Scrubber weiter
+        // (mehrere Umdrehungen) – bis zum letzten gespeicherten Schritt.
+        let undoTicks = max(0, session.undoCapacity)
+        // Der Redo-Bereich reicht genau so weit, wie die Bar ihn zeichnet:
+        // der **jetzt** mögliche Vorrat, begrenzt auf die freien Stufen des
+        // Rings. So gibt es keine blauen Stufen, die der Knopf nicht erreicht.
+        let maxTicks = max(1, NoteUndoSessionPolicy.circularMaxTicks)
+        let ticksInRevolution = NoteUndoSessionPolicy.scrubTickCount(
+            applied: session.stepsInCurrentRevolution,
+            available: session.availableUndoCount,
+            limit: maxTicks
+        )
+        let redoTicks = min(
+            max(0, session.availableRedoCount),
+            NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: ticksInRevolution)
+        )
+        let stepAngle = CGFloat(NoteUndoSessionPolicy.circularStepAngle(undoCount: 0))
         let offset = UndoScrubMath.circularOffset(
             accumulatedAngle: undoScrubRotation.accumulatedAngle,
             undoTicks: undoTicks,
             stepAngle: stepAngle,
-            redoTicks: session.startRedoCount
+            redoTicks: redoTicks
         )
         applyScrubOffset(offset, to: &session)
     }
 
     private func applyScrubOffset(_ offset: Int, to session: inout UndoScrubSession) {
-        // Vorwärts (0 … Undo-Schritte): Rückgängig. Rückwärts
-        // (-Redo-Schritte … -1): Wiederholen – aber nur so weit, wie in
-        // dieser Sitzung gestartet wurde (damit sind genau die Schritte
-        // wiederherstellbar, die der Scrubber selbst rückgängig gemacht hat).
-        let clamped = min(max(offset, -session.startRedoCount), session.startUndoCount)
+        // Vorwärts (0 … Undo-Schritte): Rückgängig – bis zum letzten
+        // gespeicherten Schritt, notfalls über mehrere Umdrehungen. Rückwärts
+        // (-Redo-Schritte … -1): Wiederholen, so weit der **jetzt** mögliche
+        // Vorrat reicht – dieselbe Zahl, die die Bar als blaue Stufen zeigt.
+        let clamped = min(
+            max(offset, -max(0, session.availableRedoCount)),
+            session.undoCapacity
+        )
         guard clamped != session.targetOffset else { return }
 
         // Der Finger bestimmt das **Ziel**, nicht den sofort angewandten
@@ -2180,6 +2284,8 @@ public struct LessonDrawingOverlayView: View {
         // einzeln hinterher (siehe `driveScrubSteps`). So springt die Anzeige
         // nicht mehr mit einem Ruck mehrere Schritte auf einmal zurück.
         session.targetOffset = clamped
+        // Die möglichen Schritte werden bei **jeder** Bewegung neu gezählt.
+        refreshScrubAvailability(&session)
         withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
             undoScrubSession = session
         }
@@ -2198,7 +2304,12 @@ public struct LessonDrawingOverlayView: View {
     }
 
     private func stepScrub(towards session: UndoScrubSession) {
-        guard let live = undoScrubSession, live.startUndoCount == session.startUndoCount else { return }
+        // Die Sitzungs-Kennung verhindert, dass ein noch laufender Takt einer
+        // alten Sitzung Sprünge in einer neuen verursacht (seltene, aber
+        // sichtbare Fehlanzeige der Kreis-Bar).
+        guard let live = undoScrubSession,
+              live.id == session.id,
+              live.style == session.style else { return }
         let delta = session.targetOffset - live.currentOffset
         guard delta != 0 else { return }
 
@@ -2206,8 +2317,9 @@ public struct LessonDrawingOverlayView: View {
         guard applied else {
             // Kein Schritt mehr verfügbar (z. B. Historie erschöpft): Ziel
             // korrigieren, damit die Anzeige nicht über den Vorrat hinausläuft.
-            var corrected = live
+            guard var corrected = undoScrubSession, corrected.id == session.id else { return }
             corrected.targetOffset = live.currentOffset
+            refreshScrubAvailability(&corrected)
             undoScrubSession = corrected
             return
         }
@@ -2216,6 +2328,7 @@ public struct LessonDrawingOverlayView: View {
         updated.currentOffset += delta > 0 ? 1 : -1
         // Die hervorgehobene Stufe wandert kurz hinterher – der Knopf selbst
         // gleitet bereits zum Finger.
+        refreshScrubAvailability(&updated)
         withAnimation(.easeOut(duration: 0.12)) {
             undoScrubSession = updated
         }
@@ -2225,7 +2338,7 @@ public struct LessonDrawingOverlayView: View {
         guard updated.currentOffset != session.targetOffset else { return }
         // Ein Schritt pro Takt: Der Knopf wandert sichtbar über den Bogen.
         let item = DispatchWorkItem { [self] in
-            guard let next = undoScrubSession else { return }
+            guard let next = undoScrubSession, next.id == session.id else { return }
             stepScrub(towards: next)
         }
         scrubStepWorkItem = item

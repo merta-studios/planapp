@@ -116,6 +116,33 @@ public enum InteractionPolicies {
     public static func shouldResetFiltersWhenEnteringNotesOnly(previousMode: String, newMode: String) -> Bool {
         newMode == "notesOnly" && previousMode != "notesOnly"
     }
+
+    // MARK: - Stiftdicke: gemessenes Verhältnis
+
+    /// Gemessenes Verhältnis zwischen einem echten PencilKit-Strich und einer
+    /// von der App **selbst berechneten** Breite (gerade Linie, Vorschau):
+    /// Der Vergleich lag bei exakt 50 % – die selbst gezeichnete Linie war
+    /// halb so dick wie der echte Stift. Deshalb wird jede solche Zielbreite
+    /// mit dem Faktor 2 gerechnet.
+    public static let strokeWidthMatchFactor: Double = 2.0
+
+    /// Zielbreite für alles, was die App selbst zeichnet (gerade Linien,
+    /// Vorschau-Punkte). Ein echter `PKInkingTool` bekommt weiterhin die
+    /// eingestellte Werkzeugbreite.
+    ///
+    /// Stift und Monoline brauchen den gemessenen Faktor. Textmarker und
+    /// Radierer haben ihre **eigene**, bereits passende Umrechnung der
+    /// PencilKit-Punktdicke (siehe `DrawingStrokeMetrics`) und bleiben
+    /// deshalb unverändert.
+    public static func matchedStrokeWidth(
+        _ width: Double,
+        isMarker: Bool = false,
+        isEraser: Bool = false
+    ) -> Double {
+        guard width.isFinite, width > 0 else { return 0.1 }
+        guard !isMarker, !isEraser else { return width }
+        return width * strokeWidthMatchFactor
+    }
 }
 
 // MARK: - Scrubber-Mathematik
@@ -148,15 +175,16 @@ public enum UndoScrubMath {
         return delta
     }
 
-    /// Winkelgeste auf dem vollen Kreis. `accumulatedAngle` ist die
-    /// kontinuierlich mitaddierte Gesamtdrehung seit Scrub-Start (vorzeichen-
-    /// getreu in Kreis-Koordinaten, UIKit-Convention: positiv = im
-    /// Uhrzeigersinn). In Bogenrichtung drehen macht rückgängig
-    /// (`0 ... undoTicks`), gegen die Bogenrichtung drehen stellt die in
-    /// dieser Sitzung rückgängig gemachten Schritte wieder her
-    /// (`-redoTicks ... -1`). Die Kreisticks laufen über genau einen vollen
-    /// Umlauf, deshalb laufen beide Richtungen über denselben Bogen – der
-    /// Knopf wandert nur spiegelbildlich.
+    /// Winkelgeste auf dem Kreis. `accumulatedAngle` ist die kontinuierlich
+    /// mitaddierte Gesamtdrehung seit Scrub-Start (vorzeichengetreu in
+    /// Kreis-Koordinaten, UIKit-Convention: positiv = im Uhrzeigersinn). In
+    /// Bogenrichtung drehen macht rückgängig (`0 ... undoTicks`), gegen die
+    /// Bogenrichtung drehen stellt Schritte wieder her (`-redoTicks ... -1`).
+    ///
+    /// `undoTicks` ist die **Gesamtzahl** der in dieser Sitzung erreichbaren
+    /// Schritte und darf über eine Umdrehung hinausgehen: Der Knopf läuft dann
+    /// mehrere Umdrehungen weiter, bis der letzte gespeicherte Schritt erreicht
+    /// ist. Die Begrenzung auf einen vollen Kreis gibt es bewusst nicht mehr.
     public static func circularOffset(
         accumulatedAngle: CGFloat,
         undoTicks: Int,

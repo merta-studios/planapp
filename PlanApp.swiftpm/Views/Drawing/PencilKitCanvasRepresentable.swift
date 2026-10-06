@@ -385,6 +385,13 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// Vergleich nicht „hängen bleiben“ und den nächsten echten Strich
         /// verschlucken.
         private var lastExternalDrawing: PKDrawing?
+        /// Striche, die ein externer Stand (Undo/Redo/„Seite leeren“/Text-
+        /// Umwandlung) gerade **entfernt** hat. PencilKit liefert den alten
+        /// Stand gelegentlich asynchron nach; dann tauchten rückgängig
+        /// gemachte Striche beim nächsten Zeichnen wieder auf. Solche
+        /// Rückläufer werden am Canvas verworfen (siehe
+        /// `sanitizedAgainstResurrectedStrokes`).
+        private var removedByExternalApply: [PKStroke] = []
         /// Anzahl der Striche auf der Zeichenfläche beim Beginn eines Stift-/
         /// Marker-Strichs. Damit lässt sich prüfen, ob PencilKit den neuen
         /// Strich auf einen veralteten Stand (mit rückgängig gemachten
@@ -392,12 +399,135 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         private var pendingInkBeginCount: Int?
 
         /// Setzt eine Zeichnung von außen – ohne Write-back in die Historie.
+        ///
+        /// Dabei wird gemerkt, welche Striche dieser Stand **entfernt** hat.
+        /// PencilKit kann einen älteren Stand (z. B. den gerade beendeten
+        /// Strich über der alten Zeichnung) asynchron nachliefern – ohne diese
+        /// Liste tauchten rückgängig gemachte Striche beim nächsten Zeichnen
+        /// wieder auf. Ein späteres Redo setzt die Liste passend neu, weil es
+        /// gerade nichts entfernt.
         func applyExternalDrawing(_ newDrawing: PKDrawing) {
+            // Ein neuer, externer Stand entscheidet selbst über den Inhalt:
+            // eine eventuell noch offene Strich-Reparatur ist damit erledigt.
+            pendingInkBeginCount = nil
+            guard let canvasView else {
+                lastExternalDrawing = newDrawing
+                return
+            }
+            let previous = canvasView.drawing
+            guard previous != newDrawing else {
+                lastExternalDrawing = newDrawing
+                return
+            }
+            lastExternalDrawing = newDrawing
+            // Liste der entfernten Striche fortschreiben: neu entfernte kommen
+            // hinzu, **bewusst wiederhergestellte** (Redo) fallen heraus. Ohne
+            // diese Pflege würde ein per Redo zurückgeholter Strich bei der
+            // nächsten Rückläufer-Prüfung fälschlich wieder verworfen.
+            var retired = removedByExternalApply.filter { old in
+                !newDrawing.strokes.contains { Self.sameStroke($0, old) }
+            }
+            for removedNow in Self.strokes(in: previous, missingFrom: newDrawing)
+            where !retired.contains(where: { Self.sameStroke($0, removedNow) }) {
+                retired.append(removedNow)
+            }
+            removedByExternalApply = retired
+            // Läuft gerade das Geradeziehen, wird dessen Basis der neue Stand:
+            // Sonst brächte das Abheben des Stifts die eben rückgängig
+            // gemachten Striche zurück.
+            let needsRebase = straightSession != nil
+            canvasView.drawing = newDrawing
+            if needsRebase {
+                rebaseStraightSession(to: newDrawing)
+            }
+        }
+
+        /// Schreibt eine Zeichnung in die Fläche, ohne die Undo-Buchhaltung
+        /// (entfernte Striche, Sitzungs-Basis) anzufassen. Nur für den
+        /// eigenen Neuaufbau der geraden Linie.
+        private func writeCanvasDrawingWithoutBookkeeping(_ newDrawing: PKDrawing) {
             lastExternalDrawing = newDrawing
             guard let canvasView else { return }
             if canvasView.drawing != newDrawing {
                 canvasView.drawing = newDrawing
             }
+        }
+
+        /// Striche aus `drawing`, die in `other` fehlen. Der Vergleich läuft
+        /// über eine inhaltliche Signatur (`sameStroke`) statt über
+        /// Objektidentität: `PKStroke`-Werte, die PencilKit erneut aus seinem
+        /// internen Stand liefert, sind nicht dieselben Instanzen.
+        static func strokes(in drawing: PKDrawing, missingFrom other: PKDrawing) -> [PKStroke] {
+            guard !drawing.strokes.isEmpty, drawing.strokes.count > other.strokes.count else {
+                return []
+            }
+            return drawing.strokes.filter { candidate in
+                !other.strokes.contains { sameStroke($0, candidate) }
+            }
+        }
+
+        /// Inhaltliche Gleichheit zweier Striche (Tinte, Punktzahl, Endpunkte).
+        /// Reicht völlig, um einen Rückläufer desselben Strichs zu erkennen –
+        /// und kann einen neu gezeichneten Strich nicht zufällig verschlucken,
+        /// weil dessen Punkte nie exakt auf denselben Werten liegen.
+        static func sameStroke(_ lhs: PKStroke, _ rhs: PKStroke) -> Bool {
+            guard lhs.ink.inkType == rhs.ink.inkType,
+                  lhs.ink.color == rhs.ink.color else {
+                return false
+            }
+            let leftPoints = points(of: lhs)
+            let rightPoints = points(of: rhs)
+            guard leftPoints.count == rightPoints.count, leftPoints.count > 1 else {
+                return false
+            }
+            let tolerance: CGFloat = 0.5
+            let sampleIndices = [0, leftPoints.count / 2, leftPoints.count - 1]
+            for index in sampleIndices {
+                let left = leftPoints[index].location
+                let right = rightPoints[index].location
+                guard abs(left.x - right.x) <= tolerance,
+                      abs(left.y - right.y) <= tolerance else {
+                    return false
+                }
+            }
+            return true
+        }
+
+        /// Alle Punkte eines PencilKit-Strichs in Reihenfolge.
+        static func points(of stroke: PKStroke) -> [PKStrokePoint] {
+            var points: [PKStrokePoint] = []
+            points.reserveCapacity(stroke.path.count)
+            stroke.path.forEach { points.append($0) }
+            return points
+        }
+
+        /// Der extern gesetzte Stand wird zur neuen Basis einer laufenden
+        /// Gerade-Linie-Sitzung. Die gerade Linie selbst bleibt dabei stehen,
+        /// die rückgängig gemachten Striche bleiben verschwunden.
+        private func rebaseStraightSession(to drawing: PKDrawing) {
+            guard var session = straightSession else { return }
+            session.base = drawing
+            session.realStroke = nil
+            session.slanted = nil
+            session.straight = nil
+            straightSession = session
+            rebuildStraightLine(force: true)
+        }
+
+        /// Verwirft Striche, die ein externer Stand entfernt hat, aus einem
+        /// Canvas-Rückläufer. Alles, was darüber hinaus neu ist (z. B. der
+        /// gerade gezeichnete Strich), bleibt erhalten.
+        private func sanitizedAgainstResurrectedStrokes(_ drawing: PKDrawing) -> PKDrawing? {
+            guard !removedByExternalApply.isEmpty else { return nil }
+            let resurrected = drawing.strokes.filter { candidate in
+                removedByExternalApply.contains { Self.sameStroke($0, candidate) }
+            }
+            guard !resurrected.isEmpty else { return nil }
+            let kept = drawing.strokes.filter { candidate in
+                !removedByExternalApply.contains { Self.sameStroke($0, candidate) }
+            }
+            guard kept.count != drawing.strokes.count else { return nil }
+            return PKDrawing(strokes: kept)
         }
 
         init(_ parent: PencilKitCanvasRepresentable) {
@@ -673,7 +803,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             straightSession?.straight = straight
             straightSession?.lastStraightBuild = now
             guard let straight else { return }
-            applyExternalDrawing(PKDrawing(strokes: session.base.strokes + [straight]))
+            writeCanvasDrawingWithoutBookkeeping(
+                PKDrawing(strokes: session.base.strokes + [straight])
+            )
         }
 
         /// Der Strich, den PencilKit gerade zeichnet – falls die Zeichenfläche
@@ -693,10 +825,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
         /// Alle Punkte eines PencilKit-Strichs in Reihenfolge.
         private func strokePoints(of stroke: PKStroke) -> [PKStrokePoint] {
-            var points: [PKStrokePoint] = []
-            points.reserveCapacity(stroke.path.count)
-            stroke.path.forEach { points.append($0) }
-            return points
+            Self.points(of: stroke)
         }
 
         /// Legt die Punkte eines echten Strichs auf die Gerade `start` → `end`.
@@ -746,10 +875,19 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// Textmarker. Diese Umkehrung liefert die Punktgröße, die PencilKit
         /// so dick zeichnet wie die eingestellte Breite.
         ///
+        /// Zusätzlich gilt das gemessene Verhältnis aus
+        /// `DrawingStrokeMetrics.inkWidthMatchFactor`: Ein PencilKit-Strich ist
+        /// rund doppelt so dick wie ein aus der Werkzeugbreite berechneter –
+        /// die gerade Linie war sonst exakt 50 % zu dünn.
+        ///
         /// (Nur der Rückfall, wenn kein echter PencilKit-Strich vorliegt.)
         private func syntheticPointSize(for ink: PKInk, width: CGFloat) -> CGSize {
-            let w = max(0.5, width)
-            if ink.inkType == .marker {
+            let isMarker = ink.inkType == .marker
+            let w = max(
+                0.5,
+                DrawingStrokeMetrics.targetInkWidth(width: width, isMarker: isMarker)
+            )
+            if isMarker {
                 // Breite × 0.4375 und Höhe × 1.225 ergeben die eingezeichnete
                 // Dicke – die Umkehrung gleicht das aus.
                 return CGSize(width: w / 0.4375, height: w / 1.225)
@@ -894,6 +1032,21 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 // übernommen: Dann liefert er jetzt die echten Stiftdaten für
                 // die gerade Linie und wird anschließend durch sie ersetzt.
                 adoptCommittedStroke(from: canvasView)
+                return
+            }
+            // Rückläufer eines älteren Stands (PencilKit liefert den vor dem
+            // Undo begonnenen Strich nachträglich über die ganze alte
+            // Zeichnung): Die eben rückgängig gemachten Striche werden
+            // verworfen, alles wirklich Neue bleibt. Ohne diese Prüfung
+            // wanderten sie über das Binding zurück in die Zeichenfläche und
+            // tauchten beim nächsten Zeichnen wieder auf.
+            if let sanitized = sanitizedAgainstResurrectedStrokes(canvasView.drawing) {
+                applyExternalDrawing(sanitized)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.parent.drawing = sanitized
+                    self.parent.onStrokeMutation()
+                }
                 return
             }
             lastExternalDrawing = nil

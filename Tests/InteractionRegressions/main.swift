@@ -246,6 +246,9 @@ expect(UndoScrubMath.linearOffset(translationY: 40, undoTicks: 0) == 0, "Ohne Sc
 expect(UndoScrubMath.linearOffset(translationY: -64, undoTicks: 10, redoTicks: 4) == -2, "Zurückziehen wiederholt Sitzungsschritte")
 expect(UndoScrubMath.linearOffset(translationY: -400, undoTicks: 10, redoTicks: 4) == -4, "Redo stoppt am Vorrat der Sitzung")
 expect(UndoScrubMath.linearOffset(translationY: -32, undoTicks: 0, redoTicks: 4) == -1, "Redo-only-Sitzung ohne Undo-Schritte")
+expect(NoteUndoSessionPolicy.linearRedoLimit(originY: 200) == 5, "Platz über dem Knopf: fünf Wiederhol-Stufen")
+expect(NoteUndoSessionPolicy.linearRedoLimit(originY: 30) == 0, "Oben kein Platz: kein Wiederhol-Bereich")
+expect(NoteUndoSessionPolicy.linearRedoLimit(originY: .nan) == 0, "Ungültige Höhe ergibt keine Stufen")
 
 // Winkel-Addition über die ±180°-Grenze hinweg: Der Weg wird gemessen,
 // nicht die Position – an der Kreismitte / Startposition springt nichts.
@@ -300,7 +303,7 @@ expect(
         accumulatedAngle: accumulatedAngle(steps: 14, undoDirection: true),
         undoTicks: 8, stepAngle: CGFloat(scrubStepAngle)
     ) == 8,
-    "Mehr als ein voller Umlauf wird begrenzt"
+    "Ohne weitere Schritte endet der Umlauf am Vorrat"
 )
 expect(
     UndoScrubMath.circularOffset(
@@ -308,6 +311,122 @@ expect(
         undoTicks: 4, stepAngle: CGFloat(scrubStepAngle)
     ) == 4,
     "Umlauf endet an der letzten vorhandenen Stufe"
+)
+
+// Mehrere Umdrehungen: Ein voller Kreis ist kein Deckel mehr. Wer weiterdreht,
+// macht weiter rückgängig – bis zum letzten gespeicherten Schritt.
+expect(
+    UndoScrubMath.circularOffset(
+        accumulatedAngle: accumulatedAngle(steps: 20, undoDirection: true),
+        undoTicks: 45, stepAngle: CGFloat(scrubStepAngle)
+    ) == 20,
+    "Ein voller Umlauf zählt weiter, wenn mehr Schritte vorhanden sind"
+)
+expect(
+    UndoScrubMath.circularOffset(
+        accumulatedAngle: accumulatedAngle(steps: 30, undoDirection: true),
+        undoTicks: 45, stepAngle: CGFloat(scrubStepAngle)
+    ) == 30,
+    "Zweite Umdrehung macht weitere Schritte rückgängig"
+)
+expect(
+    UndoScrubMath.circularOffset(
+        accumulatedAngle: accumulatedAngle(steps: 60, undoDirection: true),
+        undoTicks: 45, stepAngle: CGFloat(scrubStepAngle)
+    ) == 45,
+    "Der Scrubber endet erst am letzten gespeicherten Schritt"
+)
+
+expect(
+    NoteUndoSessionPolicy.circularRevolutionCount(undoCount: 0) == 0,
+    "Ohne Schritte keine Umdrehung"
+)
+expect(
+    NoteUndoSessionPolicy.circularRevolutionCount(undoCount: 20) == 1,
+    "Zwanzig Schritte sind eine Umdrehung"
+)
+expect(
+    NoteUndoSessionPolicy.circularRevolutionCount(undoCount: 21) == 2,
+    "Ein Schritt darüber beginnt die zweite Umdrehung"
+)
+expect(
+    NoteUndoSessionPolicy.circularRevolutionCount(undoCount: 45) == 3,
+    "Fünfundvierzig Schritte brauchen drei Umdrehungen"
+)
+
+// Platz für Wiederhol-Stufen: nur die freien Stufen der Umdrehung. So zeigt
+// weder der Ring noch der Balken blaue Stufen, die der Knopf nicht erreicht.
+expect(
+    NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: 0) == 20,
+    "Ohne Undo-Stufen bleibt der ganze Ring für Wiederholungen"
+)
+expect(
+    NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: 8) == 12,
+    "Acht Undo-Stufen lassen zwölf Wiederhol-Stufen zu"
+)
+expect(
+    NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: 20) == 0,
+    "Ein voller Ring lässt keine Wiederhol-Stufe zu"
+)
+expect(
+    NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: 30) == 0,
+    "Über den Ring hinaus bleibt kein Platz"
+)
+
+// Füllstände der zusätzlichen Umdrehungen (laufende Umdrehung = Ring-Ticks).
+expect(
+    NoteUndoSessionPolicy.circularOverflowTicks(applied: 0, available: 20).isEmpty,
+    "Eine volle Umdrehung braucht keinen Innenring"
+)
+expect(
+    NoteUndoSessionPolicy.circularOverflowTicks(applied: 0, available: 25) == [5],
+    "Fünf Schritte über den Kreis hinaus: ein angebrochener Innenring"
+)
+expect(
+    NoteUndoSessionPolicy.circularOverflowTicks(applied: 18, available: 25) == [20, 3],
+    "Innenringe folgen dem echten Vorrat, nicht der Umdrehungszahl"
+)
+expect(
+    NoteUndoSessionPolicy.circularOverflowTicks(applied: 4, available: 2).isEmpty,
+    "Weniger als eine Umdrehung: kein Innenring"
+)
+
+// Live gezählte Stufen: angewandte + jetzt mögliche Schritte. Wird bei jeder
+// Bewegung neu gelesen – nicht beim Einblenden der Bar.
+expect(
+    NoteUndoSessionPolicy.scrubTickCount(applied: 3, available: 5) == 8,
+    "Angewandte und mögliche Schritte ergeben die sichtbaren Stufen"
+)
+expect(
+    NoteUndoSessionPolicy.scrubTickCount(applied: 5, available: 40, limit: 20) == 20,
+    "Auf dem Ring sind höchstens eine Umdrehung Stufen zu sehen"
+)
+expect(
+    NoteUndoSessionPolicy.scrubTickCount(applied: -2, available: 4) == 4,
+    "Negative (Redo-)Werte erzeugen keine Stufen"
+)
+
+// MARK: - Stiftdicke: gemessenes Verhältnis (gerade Linien & Vorschauen)
+
+expect(
+    InteractionPolicies.strokeWidthMatchFactor == 2,
+    "Gemessenes Verhältnis: selbst berechnete Striche waren 50 % zu dünn"
+)
+expect(
+    InteractionPolicies.matchedStrokeWidth(3.5) == 7,
+    "Eine 3,5-pt-Werkzeugbreite ergibt 7 pt für gerade Linie und Vorschau"
+)
+expect(
+    InteractionPolicies.matchedStrokeWidth(16, isMarker: true) == 16,
+    "Der Textmarker behält seine eigene, bereits passende Umrechnung"
+)
+expect(
+    InteractionPolicies.matchedStrokeWidth(24, isEraser: true) == 24,
+    "Der Radierer radiert mit der eingestellten Breite"
+)
+expect(
+    InteractionPolicies.matchedStrokeWidth(0) == 0.1,
+    "Ungültige Breiten fallen auf den Mindestwert zurück"
 )
 
 // MARK: - „Nächste Woche“ am Wochenende und nach der letzten Stunde am Freitag
