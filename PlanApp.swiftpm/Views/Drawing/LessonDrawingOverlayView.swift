@@ -2127,14 +2127,18 @@ public struct LessonDrawingOverlayView: View {
     /// wenige Stufen – auch keine blauen Redo-Stufen dort, wo nichts mehr
     /// geht.
     private func refreshScrubAvailability(_ session: inout UndoScrubSession) {
+        // Rückgängig: so viele Schritte, wie die Historie hergibt – begrenzt
+        // auf das, was die Sitzung selbst rückgängig machen kann (der Stand
+        // beim Halten; Wiederholtes zählt wieder dazu).
         session.availableUndoCount = min(
             max(0, editingHistory.undoCount),
             session.maximumUndoOffset
         )
-        session.availableRedoCount = min(
-            max(0, editingHistory.redoCount),
-            max(0, session.redoCapacity + session.currentOffset)
-        )
+        // Wiederholen: der echte, **jetzt** vorhandene Vorrat. Wie viel davon
+        // in die Anzeige passt, entscheiden Balken und Ring (Platz bzw.
+        // freie Stufen) – dort wird dieselbe Zahl begrenzt, damit Knopf und
+        // Anzeige immer übereinstimmen.
+        session.availableRedoCount = max(0, editingHistory.redoCount)
     }
 
     private func beginCircularUndoScrub(
@@ -2175,8 +2179,11 @@ public struct LessonDrawingOverlayView: View {
             // Undo- und Redo-Bereich teilen sich höchstens einen vollen Kreis.
             redoCapacity: min(
                 editingHistory.redoCount,
-                max(0, NoteUndoSessionPolicy.circularMaxTicks
-                    - NoteUndoSessionPolicy.circularTickCount(undoCount: editingHistory.undoCount))
+                NoteUndoSessionPolicy.circularRedoRoom(
+                    undoTickCount: NoteUndoSessionPolicy.circularTickCount(
+                        undoCount: editingHistory.undoCount
+                    )
+                )
             ),
             availableUndoCount: editingHistory.undoCount,
             availableRedoCount: editingHistory.redoCount,
@@ -2238,12 +2245,25 @@ public struct LessonDrawingOverlayView: View {
         // eine Umdrehung: Nach einem vollen Kreis läuft der Scrubber weiter
         // (mehrere Umdrehungen) – bis zum letzten gespeicherten Schritt.
         let undoTicks = max(0, session.undoCapacity)
+        // Der Redo-Bereich reicht genau so weit, wie die Bar ihn zeichnet:
+        // der **jetzt** mögliche Vorrat, begrenzt auf die freien Stufen des
+        // Rings. So gibt es keine blauen Stufen, die der Knopf nicht erreicht.
+        let maxTicks = max(1, NoteUndoSessionPolicy.circularMaxTicks)
+        let ticksInRevolution = NoteUndoSessionPolicy.scrubTickCount(
+            applied: session.stepsInCurrentRevolution,
+            available: session.availableUndoCount,
+            limit: maxTicks
+        )
+        let redoTicks = min(
+            max(0, session.availableRedoCount),
+            NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: ticksInRevolution)
+        )
         let stepAngle = CGFloat(NoteUndoSessionPolicy.circularStepAngle(undoCount: 0))
         let offset = UndoScrubMath.circularOffset(
             accumulatedAngle: undoScrubRotation.accumulatedAngle,
             undoTicks: undoTicks,
             stepAngle: stepAngle,
-            redoTicks: max(0, session.redoCapacity)
+            redoTicks: redoTicks
         )
         applyScrubOffset(offset, to: &session)
     }
@@ -2251,8 +2271,12 @@ public struct LessonDrawingOverlayView: View {
     private func applyScrubOffset(_ offset: Int, to session: inout UndoScrubSession) {
         // Vorwärts (0 … Undo-Schritte): Rückgängig – bis zum letzten
         // gespeicherten Schritt, notfalls über mehrere Umdrehungen. Rückwärts
-        // (-Redo-Schritte … -1): Wiederholen.
-        let clamped = min(max(offset, -session.redoCapacity), session.undoCapacity)
+        // (-Redo-Schritte … -1): Wiederholen, so weit der **jetzt** mögliche
+        // Vorrat reicht – dieselbe Zahl, die die Bar als blaue Stufen zeigt.
+        let clamped = min(
+            max(offset, -max(0, session.availableRedoCount)),
+            session.undoCapacity
+        )
         guard clamped != session.targetOffset else { return }
 
         // Der Finger bestimmt das **Ziel**, nicht den sofort angewandten

@@ -354,6 +354,25 @@ expect(
     "Fünfundvierzig Schritte brauchen drei Umdrehungen"
 )
 
+// Platz für Wiederhol-Stufen: nur die freien Stufen der Umdrehung. So zeigt
+// weder der Ring noch der Balken blaue Stufen, die der Knopf nicht erreicht.
+expect(
+    NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: 0) == 20,
+    "Ohne Undo-Stufen bleibt der ganze Ring für Wiederholungen"
+)
+expect(
+    NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: 8) == 12,
+    "Acht Undo-Stufen lassen zwölf Wiederhol-Stufen zu"
+)
+expect(
+    NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: 20) == 0,
+    "Ein voller Ring lässt keine Wiederhol-Stufe zu"
+)
+expect(
+    NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: 30) == 0,
+    "Über den Ring hinaus bleibt kein Platz"
+)
+
 // Füllstände der zusätzlichen Umdrehungen (laufende Umdrehung = Ring-Ticks).
 expect(
     NoteUndoSessionPolicy.circularOverflowTicks(applied: 0, available: 20).isEmpty,

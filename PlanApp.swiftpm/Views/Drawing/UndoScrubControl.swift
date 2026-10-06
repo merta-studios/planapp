@@ -534,7 +534,7 @@ struct UndoScrubOverlay: View {
         let stepAngle = CGFloat(NoteUndoSessionPolicy.circularStepAngle(undoCount: 0))
         let redoTicks = min(
             max(0, session.availableRedoCount),
-            max(0, maxTicks - ticksInRevolution)
+            NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: ticksInRevolution)
         )
         let lineWidth = CGFloat(InteractionPolicies.circularRingLineWidth)
         let undoSweep = CGFloat(ticksInRevolution) * stepAngle * sign

@@ -92,6 +92,16 @@ public enum NoteUndoSessionPolicy {
         min(max(0, undoCount), max(0, maxTicks))
     }
 
+    /// Freie Stufen auf dem Ring, wenn bereits `undoTickCount` Undo-Stufen
+    /// sichtbar sind. So viel Platz bleibt für Wiederhol-Stufen – der Rest der
+    /// Umdrehung läuft über die dünnen Innenringe.
+    public static func circularRedoRoom(
+        undoTickCount: Int,
+        maxTicks: Int = circularMaxTicks
+    ) -> Int {
+        max(0, max(0, maxTicks) - max(0, undoTickCount))
+    }
+
     /// Wie viele Wiederhol-Stufen über den Knopf des linearen Balkens passen.
     /// Der Platz bis zur Oberkante begrenzt die Anzeige – so läuft der Balken
     /// nie aus dem Bild.
