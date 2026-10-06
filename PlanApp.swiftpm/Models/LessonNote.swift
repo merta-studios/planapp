@@ -10,6 +10,10 @@ public struct LessonNote: Identifiable, Codable, Equatable {
     public var lineCount: Int         // Anzahl der Zeilen auf dem Zettel (max. 10)
     public var textBoxes: [NoteTextBox] // Frei bewegliche Textfelder
     public var backgroundStyle: NoteBackgroundStyle // Hintergrund der Zeichenfläche
+    /// Skalierung des Hintergrund-Musters (1 = Standardgröße, 0.5–2).
+    public var backgroundScale: Double
+    /// Zugewiesener Tag (siehe `NoteTag`); `nil` = kein Tag.
+    public var tagID: UUID?
     public var updatedAt: Date
 
     public init(
@@ -19,6 +23,8 @@ public struct LessonNote: Identifiable, Codable, Equatable {
         lineCount: Int = 6,
         textBoxes: [NoteTextBox] = [],
         backgroundStyle: NoteBackgroundStyle = .blank,
+        backgroundScale: Double = 1,
+        tagID: UUID? = nil,
         updatedAt: Date = Date()
     ) {
         self.id = id
@@ -27,11 +33,13 @@ public struct LessonNote: Identifiable, Codable, Equatable {
         self.lineCount = max(3, min(10, lineCount))
         self.textBoxes = textBoxes
         self.backgroundStyle = backgroundStyle
+        self.backgroundScale = NoteBackgroundMetrics.clampedScale(backgroundScale)
+        self.tagID = tagID
         self.updatedAt = updatedAt
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, drawingData, croppedImageData, lineCount, textBoxes, backgroundStyle, updatedAt
+        case id, drawingData, croppedImageData, lineCount, textBoxes, backgroundStyle, backgroundScale, tagID, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -43,6 +51,9 @@ public struct LessonNote: Identifiable, Codable, Equatable {
         self.lineCount = max(3, min(10, decodedLineCount))
         self.textBoxes = try container.decodeIfPresent([NoteTextBox].self, forKey: .textBoxes) ?? []
         self.backgroundStyle = try container.decodeIfPresent(NoteBackgroundStyle.self, forKey: .backgroundStyle) ?? .blank
+        let decodedScale = try container.decodeIfPresent(Double.self, forKey: .backgroundScale) ?? 1
+        self.backgroundScale = NoteBackgroundMetrics.clampedScale(decodedScale)
+        self.tagID = try container.decodeIfPresent(UUID.self, forKey: .tagID)
         self.updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }
 
@@ -54,6 +65,8 @@ public struct LessonNote: Identifiable, Codable, Equatable {
         try container.encode(lineCount, forKey: .lineCount)
         try container.encode(textBoxes, forKey: .textBoxes)
         try container.encode(backgroundStyle, forKey: .backgroundStyle)
+        try container.encode(backgroundScale, forKey: .backgroundScale)
+        try container.encodeIfPresent(tagID, forKey: .tagID)
         try container.encode(updatedAt, forKey: .updatedAt)
     }
 
@@ -83,10 +96,11 @@ public struct LessonNote: Identifiable, Codable, Equatable {
         hasInkContent || hasTextContent
     }
 
-    /// Prüft, ob die Notiz sichtbaren Inhalt hat (Striche oder Textfelder).
-    /// Das Vorschaubild ist nur Cache und zählt bewusst nicht als Inhalt, damit
-    /// alte leer gespeicherte Vorschaubilder keine "Geister-Notizen" erzeugen.
+    /// Prüft, ob die Notiz sichtbaren Inhalt hat (Striche, Textfelder oder
+    /// ein zugewiesener Tag). Das Vorschaubild ist nur Cache und zählt bewusst
+    /// nicht als Inhalt, damit alte leer gespeicherte Vorschaubilder keine
+    /// "Geister-Notizen" erzeugen.
     public var hasVisibleContent: Bool {
-        hasInkContent || hasTextContent
+        hasInkContent || hasTextContent || tagID != nil
     }
 }

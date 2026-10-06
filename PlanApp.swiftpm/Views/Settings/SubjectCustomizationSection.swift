@@ -124,7 +124,21 @@ public struct SubjectCustomizationSection: View {
                     }
                     .lightButton(cornerRadius: 10, tint: .blue, isFilled: true)
                     .foregroundColor(.white)
-                    .disabled(originalSubjectInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(
+                        originalSubjectInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            || !viewModel.canAddSubjectCustomization
+                    )
+                }
+
+                if !viewModel.canAddSubjectCustomization {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 12, weight: .regular, design: .default))
+                        Text("Maximal \(TimetableViewModel.maximumSubjectCustomizations) Fächer erreicht. Lösche ein Fach, um ein neues anzulegen.")
+                            .font(.system(size: 12, weight: .regular, design: .default))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .foregroundColor(.orange)
                 }
             }
             .padding(14)
@@ -176,7 +190,7 @@ public struct SubjectCustomizationSection: View {
 
             // 3. LISTE DER KONFIGURIERTEN FÄCHER
             HStack {
-                Text("Eingestellte Fächer (\(viewModel.subjectCustomizations.count)):")
+                Text("Eingestellte Fächer (\(viewModel.subjectCustomizations.count)/\(TimetableViewModel.maximumSubjectCustomizations)):")
                     .font(.system(size: 13, weight: .regular, design: .default))
                     .foregroundColor(.secondary)
                 Spacer()
@@ -470,9 +484,6 @@ struct EditSubjectSheet: View {
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
-        // Auch verschachtelte Sheets bekommen ihre eigene Tastatur unten im
-        // Sheet; sichtbar ist immer nur die des obersten Hosts.
-        .appKeyboardHost()
     }
 
     private func saveChanges() {

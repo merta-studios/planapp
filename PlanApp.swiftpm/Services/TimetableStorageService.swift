@@ -42,6 +42,7 @@ public final class TimetableStorageService {
         static let drawingSettings = "planapp_drawing_settings"
         static let viewMode = "planapp_timetable_view_mode"
         static let appearance = "planapp_app_appearance"
+        static let tagSettings = "planapp_note_tag_settings"
     }
 
     private var documentsDirectory: URL {
@@ -134,6 +135,16 @@ public final class TimetableStorageService {
         return appearance
     }
 
+    // MARK: - Tag-System
+
+    public func saveTagSettings(_ settings: NoteTagSettings) {
+        persist(settings, key: Keys.tagSettings)
+    }
+
+    public func loadTagSettings() -> NoteTagSettings {
+        return restore(NoteTagSettings.self, key: Keys.tagSettings) ?? NoteTagSettings()
+    }
+
     // MARK: - Periods
 
     public func savePeriods(_ periods: [Period]) {
@@ -176,13 +187,26 @@ public final class TimetableStorageService {
         }
 
         var metadata = loadNotesMetadata()
-        metadata[note.id] = [
+        var entry: [String: Any] = [
             "lineCount": note.lineCount,
             "updatedAt": note.updatedAt.timeIntervalSince1970,
             "hasDrawing": note.hasVisibleContent,
-            "backgroundStyle": note.backgroundStyle.rawValue
+            "backgroundStyle": note.backgroundStyle.rawValue,
+            "backgroundScale": note.backgroundScale
         ]
+        if let tagID = note.tagID {
+            entry["tagID"] = tagID.uuidString
+        }
+        metadata[note.id] = entry
         defaults.set(metadata, forKey: Keys.notesMetadata)
+    }
+
+    /// Ersetzt sämtliche Notizen auf einen Schlag (Import einer Sicherung).
+    public func replaceAllLessonNotes(with notes: [LessonNote]) {
+        deleteAllLessonNotes()
+        for note in notes {
+            saveLessonNote(note)
+        }
     }
 
     public func loadLessonNote(for noteKey: String) -> LessonNote? {
@@ -209,6 +233,8 @@ public final class TimetableStorageService {
         let date = Date(timeIntervalSince1970: timeInterval)
         let backgroundRaw = metadata?["backgroundStyle"] as? String
         let backgroundStyle = backgroundRaw.flatMap(NoteBackgroundStyle.init(rawValue:)) ?? .blank
+        let backgroundScale = metadata?["backgroundScale"] as? Double ?? NoteBackgroundMetrics.defaultScale
+        let tagID = (metadata?["tagID"] as? String).flatMap(UUID.init(uuidString:))
 
         return LessonNote(
             id: noteKey,
@@ -217,6 +243,8 @@ public final class TimetableStorageService {
             lineCount: lineCount,
             textBoxes: textBoxes,
             backgroundStyle: backgroundStyle,
+            backgroundScale: backgroundScale,
+            tagID: tagID,
             updatedAt: date
         )
     }

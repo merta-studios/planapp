@@ -36,10 +36,24 @@ struct PencilGesturesSection: View {
                 )
 
                 hintRow(
-                    icon: "keyboard",
+                    icon: "lineweight",
+                    tint: .teal,
+                    title: "Squeeze-Palette: Dicke ändern",
+                    text: "Apple Pencil Pro zusammendrücken, dann den Dicken-Knopf halten und vom Kreis weg ziehen (dicker) oder zum Kreis hin (dünner). Beim Halten zeigen Hilfslinien die beiden Richtungen – sie verschwinden nach den ersten erfolgreichen Anpassungen."
+                )
+
+                hintRow(
+                    icon: "line.diagonal",
                     tint: .purple,
+                    title: "Gerade Linien",
+                    text: "Stift oder Marker am Ende eines Strichs etwa 2 Sekunden still halten: Der Strich rastet als gerade Linie ein, der Apple Pencil Pro bestätigt das mit einem kurzen Vibrieren."
+                )
+
+                hintRow(
+                    icon: "keyboard",
+                    tint: .gray,
                     title: "Text auf der Zeichenfläche",
-                    text: "Beim Bearbeiten eines Textfelds blendet die App bei Bedarf ihre eigene Tastatur ein – auch wenn iPadOS in Swift Playgrounds keine Systemtastatur zeigt."
+                    text: "Textfelder nutzen die normale Systemtastatur von iPadOS. In Swift Playgrounds kann die Systemtastatur gelegentlich ausbleiben – in der installierten App (z. B. per Sideloadly) funktioniert sie zuverlässig."
                 )
             }
         }

@@ -50,6 +50,18 @@ public struct LessonDrawingOverlayView: View {
     @State private var eraserWidth: CGFloat = 24
     @State private var canvasView: PKCanvasView?
     @State private var noteBackgroundStyle: NoteBackgroundStyle = .blank
+    /// Größe des Hintergrund-Musters dieser Notiz (1 = Standard).
+    @State private var noteBackgroundScale: Double = NoteBackgroundMetrics.defaultScale
+    /// Tag dieser Notiz (nur mit aktivem Tag-System).
+    @State private var noteTagID: UUID? = nil
+    @State private var isTagPickerPresented = false
+    /// Farbe neuer Textfelder (iPhone: die Farb-Slots sind Textfarben).
+    @State private var preferredTextColorHex = NoteTextBox.defaultColorHex
+    /// Bestätigung vor dem Einfügen einer kopierten Notiz.
+    @State private var showPasteConfirmation = false
+
+    /// iPhone: keine Apple-Pencil-Werkzeuge, nur Lasso/Text/Radierer per Finger.
+    private let isPhoneLayout = DeviceLayout.isPhone
 
     // Squeeze-Palette (Apple Pencil Pro): abgerundete Bogen-Werkzeugleiste
     // an der letzten Hover-Position des Stifts.
@@ -110,6 +122,8 @@ public struct LessonDrawingOverlayView: View {
     @State private var isExpanded = false
     @State private var showsEditor = false
     @State private var didInitialize = false
+    /// Aktuell von der Systemtastatur verdeckte Höhe am unteren Rand.
+    @State private var systemKeyboardCoveredHeight: CGFloat = 0
 
     private let paperWidth: CGFloat = 640
     private let headerHeight: CGFloat = 64
@@ -259,19 +273,21 @@ public struct LessonDrawingOverlayView: View {
                 guard didInitialize else { return }
                 normalizeTransform(in: viewport)
             }
-            // Die Tastatur ist auf der Zeichenfläche **schwebend** (siehe
-            // `appKeyboardHost(presentation: .floating)`): Sie verändert weder
-            // Safe Area noch Größe der Zeichenfläche. Deshalb gibt es hier
-            // bewusst keine Reaktion auf `safeAreaInsets` mehr – die Notiz
-            // behält beim Tippen Größe und Position.
-            .onReceive(TextInputHub.shared.$isAppKeyboardVisible) { isVisible in
-                // Einzige Ausnahme: Steht das gerade bearbeitete Textfeld
-                // hinter der Tastatur, wird die Notiz so weit nach oben
-                // geschoben, dass das Feld sichtbar ist – ohne Skalierung.
-                guard isVisible, didInitialize else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            // Die Systemtastatur verändert weder Safe Area noch Größe der
+            // Zeichenfläche (`ignoresSafeArea(.keyboard)`). Die Notiz behält
+            // beim Tippen Größe und Position. Einzige Ausnahme: Steht das
+            // gerade bearbeitete Textfeld hinter der Tastatur, wird die Notiz
+            // so weit nach oben geschoben, dass das Feld sichtbar ist – ohne
+            // Skalierung.
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+                systemKeyboardCoveredHeight = Self.keyboardCoveredHeight(from: notification)
+                guard systemKeyboardCoveredHeight > 0, didInitialize else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     revealEditingTextBox(in: viewport)
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                systemKeyboardCoveredHeight = 0
             }
             .onChange(of: editingTextBoxID) { _, _ in
                 revealEditingTextBox(in: viewport)
@@ -352,16 +368,9 @@ public struct LessonDrawingOverlayView: View {
                 Text(exportAlertMessage ?? "")
             }
         }
-        // Kein Platz für die Systemtastatur reservieren: Auch sie darf die
+        // Kein Platz für die Systemtastatur reservieren: Sie darf die
         // Zeichenfläche nicht verkleinern oder verschieben.
         .ignoresSafeArea(.keyboard, edges: .bottom)
-        // App-eigene Tastatur für das Text-Werkzeug: Sie erscheint unten auf
-        // der Zeichenfläche, wenn iPadOS keine Systemtastatur einblendet.
-        // **Schwebend**, damit die Notiz beim Tippen genau dort bleibt, wo sie
-        // ist, und ihre Größe nicht ändert. Ohne Tipp-Überwachung, damit die
-        // PencilKit-Eingabe völlig unberührt bleibt – das Textfeld meldet sich
-        // hier ausdrücklich selbst an.
-        .appKeyboardHost(monitorsTaps: false, presentation: .floating)
     }
 
     // MARK: - Editor panel
@@ -391,7 +400,7 @@ public struct LessonDrawingOverlayView: View {
 
                 // A lightly separated writing surface keeps all Pencil colors
                 // readable while the selected lesson itself visibly turns grey.
-                DrawingCanvasBackgroundView(style: noteBackgroundStyle)
+                DrawingCanvasBackgroundView(style: noteBackgroundStyle, scale: noteBackgroundScale)
                     .frame(
                         width: paperWidth - 16,
                         height: max(180, canvasHeight - headerHeight - 8)
@@ -406,7 +415,10 @@ public struct LessonDrawingOverlayView: View {
                     markerWidth: markerWidth,
                     eraserWidth: eraserWidth,
                     colorScheme: colorScheme,
-                    pencilOnlyDrawing: viewModel.drawingSettings.applePencilOnly,
+                    // iPhone: Es wird mit dem Finger radiert/ausgewählt – die
+                    // Pencil-Beschränkung ist dort nie aktiv.
+                    pencilOnlyDrawing: isPhoneLayout ? false : viewModel.drawingSettings.applePencilOnly,
+                    dynamicPenWidth: viewModel.drawingSettings.dynamicPenWidth,
                     onCanvasCreated: { createdCanvas in
                         canvasView = createdCanvas
                     },
@@ -422,6 +434,8 @@ public struct LessonDrawingOverlayView: View {
                     onPencilInputDetected: {
                         // Sobald echter Pencil-Input ankommt, wird die allgemeine
                         // Bezeichnung gemerkt und „Nur Apple Pencil“ aktiviert.
+                        // (Auf dem iPhone gibt es keinen Apple Pencil.)
+                        guard !isPhoneLayout else { return }
                         viewModel.registerObservedApplePencilInput()
                     },
                     onPencilSqueeze: { anchor, direction in
@@ -462,7 +476,8 @@ public struct LessonDrawingOverlayView: View {
                     ),
                     registerUndo: { before, after in
                         textUndo.push(before: before, after: after)
-                    }
+                    },
+                    newTextColorHex: preferredTextColorHex
                 )
                 .frame(
                     width: paperWidth,
@@ -540,7 +555,12 @@ public struct LessonDrawingOverlayView: View {
             // Karten-Animation bleibt der Text auf der Fach-Farbe schwarz.
             primaryColor: isExpanded ? .primary : display.color.contrastingTextColor,
             teacherDisplayName: viewModel.resolveTeacherName(lesson.teacherRaw),
-            originalTeacherDisplayName: lesson.originalTeacher.map { viewModel.resolveTeacherName($0) }
+            originalTeacherDisplayName: lesson.originalTeacher.map { viewModel.resolveTeacherName($0) },
+            accessory: {
+                if viewModel.tagSettings.isEnabled && showsEditor {
+                    tagAccessory
+                }
+            }
         )
         .padding(.horizontal, 20)
         .frame(width: paperWidth, height: headerHeight)
@@ -652,6 +672,9 @@ public struct LessonDrawingOverlayView: View {
                     }
                 ),
                 backgroundStyle: $noteBackgroundStyle,
+                backgroundScale: $noteBackgroundScale,
+                textColorHex: $preferredTextColorHex,
+                isPhoneLayout: isPhoneLayout,
                 previewScale: max(0.01, scale),
                 selectedTextColorHex: activeTextBoxColorHex,
                 onApplyColorToSelectedText: { hex in
@@ -663,7 +686,11 @@ public struct LessonDrawingOverlayView: View {
                 onCopyTextToClipboard: { copyNoteTextToClipboard() },
                 onUndo: { performUndo() },
                 onRedo: { performRedo() },
-                onClear: { clearPage() }
+                onClear: { clearPage() },
+                canCopyNote: hasCopyableContent,
+                canPasteNote: viewModel.hasCopiedNote,
+                onCopyNote: { copyCurrentNote() },
+                onPasteNote: { pasteCopiedNote() }
             )
             Spacer(minLength: 0)
         }
@@ -738,18 +765,28 @@ public struct LessonDrawingOverlayView: View {
         offset = clampedOffset(candidate, scale: scale, height: canvasHeight, in: viewport)
     }
 
-    // MARK: - Textfeld über der schwebenden Tastatur sichtbar halten
+    // MARK: - Textfeld über der Systemtastatur sichtbar halten
 
-    /// Höhe, die die schwebende App-Tastatur am unteren Rand verdeckt.
-    /// Sie wird nur benutzt, um ein Textfeld sichtbar zu halten – die Notiz
-    /// selbst wird dadurch nicht skaliert.
+    /// Höhe, die die Systemtastatur am unteren Bildschirmrand verdeckt
+    /// (0, wenn sie ausgeblendet ist oder frei schwebt). Sie wird nur benutzt,
+    /// um ein Textfeld sichtbar zu halten – die Notiz selbst wird dadurch
+    /// nicht skaliert.
+    private static func keyboardCoveredHeight(from notification: Notification) -> CGFloat {
+        guard let frameValue = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else {
+            return 0
+        }
+        let frame = frameValue.cgRectValue
+        let screenBounds = UIScreen.main.bounds
+        guard frame.width >= screenBounds.width * 0.8 else {
+            // Schwebende oder geteilte iPad-Tastatur: verdeckt nichts
+            // Vorhersagbares, die Notiz bleibt wo sie ist.
+            return 0
+        }
+        return max(0, screenBounds.maxY - frame.minY)
+    }
+
     private func keyboardCoveredHeight(in viewport: DrawingViewport) -> CGFloat {
-        guard TextInputHub.shared.isAppKeyboardVisible,
-              AppKeyboardPreferences.shared.mode != .off else { return 0 }
-        return AppKeyboardLayout.floatingHeight(
-            windowHeight: viewport.size.height,
-            bottomInset: viewport.safeAreaInsets.bottom
-        ) + AppKeyboardLayout.floatingBottomMargin
+        systemKeyboardCoveredHeight
     }
 
     /// Schiebt die Notiz so weit nach oben, dass das bearbeitete Textfeld
@@ -907,6 +944,7 @@ public struct LessonDrawingOverlayView: View {
                 drawing: currentDrawing.cropped(to: canvasRect),
                 textBoxes: visibleBoxes,
                 backgroundStyle: noteBackgroundStyle,
+                backgroundScale: noteBackgroundScale,
                 clipRect: canvasRect
               ) else {
             Haptics.warning()
@@ -1188,11 +1226,20 @@ public struct LessonDrawingOverlayView: View {
         toolSelection = .pen(color: UIColor(hex: initialHex))
         lastInkingTool = toolSelection
         noteBackgroundStyle = settings.defaultBackgroundStyle
+        noteBackgroundScale = NoteBackgroundMetrics.clampedScale(settings.defaultBackgroundScale)
+        preferredTextColorHex = initialHex
+
+        if isPhoneLayout {
+            // iPhone: ohne Apple Pencil startet die Notiz direkt im
+            // Text-Werkzeug; Stift und Textmarker gibt es dort nicht.
+            toolSelection = .text
+            lastInkingTool = .text
+        }
 
         // Entspricht die System-Einstellung „Nur mit Apple Pencil zeichnen“,
         // gilt das als bemerkener Pencil-Input und der Schalter wird – wie vom
         // Nutzer gewünscht – automatisch aktiviert.
-        if UIPencilInteraction.prefersPencilOnlyDrawing {
+        if !isPhoneLayout, UIPencilInteraction.prefersPencilOnlyDrawing {
             viewModel.registerApplePencilUsage()
             toolSelection = .pen(color: UIColor(hex: initialHex))
             lastInkingTool = toolSelection
@@ -1265,6 +1312,8 @@ public struct LessonDrawingOverlayView: View {
         )
         resizeStartHeight = canvasHeight
         noteBackgroundStyle = note.backgroundStyle
+        noteBackgroundScale = NoteBackgroundMetrics.clampedScale(note.backgroundScale)
+        noteTagID = viewModel.tagSettings.tag(withID: note.tagID)?.id
 
         let canvasSize = CGSize(
             width: paperWidth,
@@ -1317,10 +1366,13 @@ public struct LessonDrawingOverlayView: View {
             drawing: croppedDrawing,
             textBoxes: cleanedTextBoxes,
             backgroundStyle: noteBackgroundStyle,
+            backgroundScale: noteBackgroundScale,
             clipRect: canvasRect
         )
         let drawingData = croppedDrawing.dataRepresentation()
         let calculatedLines = max(3, min(10, Int((canvasHeight - headerHeight) / 56)))
+        let backgroundScale = noteBackgroundScale
+        let tagID = noteTagID
 
         withAnimation(.easeOut(duration: 0.12)) {
             showsEditor = false
@@ -1341,8 +1393,143 @@ public struct LessonDrawingOverlayView: View {
                 croppedImageData: croppedImage?.pngData(),
                 lineCount: calculatedLines,
                 textBoxes: cleanedTextBoxes,
-                backgroundStyle: noteBackgroundStyle
+                backgroundStyle: noteBackgroundStyle,
+                backgroundScale: backgroundScale,
+                tagID: tagID
             )
         }
+    }
+
+    // MARK: - Tag der Notiz
+
+    /// Pille neben dem Fachnamen: „+ Tag hinzufügen“ oder der gesetzte Tag.
+    /// Ein Tipp öffnet die kleine Auswahl; dort lässt sich der Tag wechseln
+    /// oder entfernen.
+    private var tagAccessory: some View {
+        Button {
+            Haptics.tap()
+            isTagPickerPresented = true
+        } label: {
+            if let tag = viewModel.tagSettings.tag(withID: noteTagID) {
+                NoteTagPill(tag: tag, size: .regular)
+            } else {
+                AddTagPill(size: .regular)
+            }
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isTagPickerPresented, arrowEdge: .bottom) {
+            NoteTagPickerView(
+                tags: viewModel.tagSettings.tags,
+                selectedTagID: noteTagID,
+                onSelect: { newID in
+                    noteTagID = newID
+                    isTagPickerPresented = false
+                }
+            )
+            .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    // MARK: - Notiz kopieren & einfügen
+
+    /// Aktueller Editor-Zustand als speicherbare Notiz (zugeschnitten auf die
+    /// Zeichenfläche) – Grundlage fürs Kopieren.
+    private func currentNoteSnapshot() -> LessonNote {
+        let currentDrawing = canvasView?.drawing ?? drawing
+        let canvasRect = CGRect(origin: .zero, size: recognitionCanvasSize)
+        let croppedDrawing = currentDrawing.cropped(to: canvasRect)
+        let cleanedTextBoxes = textBoxes.compactMap { box -> NoteTextBox? in
+            guard !box.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return box.sanitized(in: canvasRect.size)
+        }
+        let image = PencilKitCanvasRepresentable.renderNotePreview(
+            drawing: croppedDrawing,
+            textBoxes: cleanedTextBoxes,
+            backgroundStyle: noteBackgroundStyle,
+            backgroundScale: noteBackgroundScale,
+            clipRect: canvasRect
+        )
+        return LessonNote(
+            id: lesson.noteKey,
+            drawingData: croppedDrawing.dataRepresentation(),
+            croppedImageData: image?.pngData(),
+            lineCount: max(3, min(10, Int((canvasHeight - headerHeight) / 56))),
+            textBoxes: cleanedTextBoxes,
+            backgroundStyle: noteBackgroundStyle,
+            backgroundScale: noteBackgroundScale,
+            tagID: noteTagID,
+            updatedAt: Date()
+        )
+    }
+
+    private var hasCopyableContent: Bool {
+        let currentDrawing = canvasView?.drawing ?? drawing
+        if !currentDrawing.strokes.isEmpty { return true }
+        return textBoxes.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    private func copyCurrentNote() {
+        selectedTextBoxID = nil
+        editingTextBoxID = nil
+        let snapshot = currentNoteSnapshot()
+        guard snapshot.hasVisibleContent else {
+            Haptics.warning()
+            showToast("Diese Notiz ist noch leer.")
+            return
+        }
+        viewModel.copyNote(snapshot)
+        Haptics.success()
+        showToast("Notiz kopiert.")
+    }
+
+    /// Ersetzt den kompletten Inhalt dieser Notiz durch die kopierte Notiz
+    /// (Zeichnung, Textfelder, Hintergrund, Mustergröße, Tag). Ein einziger
+    /// Rückgängig-Schritt stellt den vorherigen Zustand wieder her.
+    private func pasteCopiedNote() {
+        guard let copied = viewModel.copiedNote, copied.hasVisibleContent else {
+            Haptics.warning()
+            showToast("Keine kopierte Notiz vorhanden.")
+            return
+        }
+
+        selectedTextBoxID = nil
+        editingTextBoxID = nil
+
+        let beforeBoxes = textBoxes
+        let beforeDrawing = (canvasView?.drawing ?? drawing).dataRepresentation()
+
+        canvasHeight = max(
+            minimumCanvasHeight,
+            min(maximumCanvasHeight, CGFloat(copied.lineCount) * 56 + headerHeight + 40)
+        )
+        resizeStartHeight = canvasHeight
+        noteBackgroundStyle = copied.backgroundStyle
+        noteBackgroundScale = NoteBackgroundMetrics.clampedScale(copied.backgroundScale)
+        noteTagID = viewModel.tagSettings.tag(withID: copied.tagID)?.id
+
+        let canvasSize = recognitionCanvasSize
+        var seenIDs = Set<UUID>()
+        textBoxes = copied.textBoxes.compactMap { box in
+            // Neue IDs: Dieselbe Notiz kann mehrfach eingefügt werden, ohne
+            // dass sich Textfeld-IDs doppeln.
+            var copy = box
+            copy.id = UUID()
+            guard seenIDs.insert(copy.id).inserted else { return nil }
+            return copy.sanitized(in: canvasSize)
+        }
+
+        let pastedDrawing = (try? PKDrawing(data: copied.drawingData)) ?? PKDrawing()
+        drawing = pastedDrawing
+        canvasView?.drawing = pastedDrawing
+        canvasView?.undoManager?.removeAllActions()
+        lastStrokeMutation = .distantPast
+
+        textUndo.push(
+            before: NoteUndoSnapshot(textBoxes: beforeBoxes, drawingData: beforeDrawing),
+            after: NoteUndoSnapshot(textBoxes: textBoxes, drawingData: pastedDrawing.dataRepresentation())
+        )
+
+        Haptics.success()
+        showToast("Notiz eingefügt.")
     }
 }

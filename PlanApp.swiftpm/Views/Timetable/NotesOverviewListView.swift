@@ -4,41 +4,76 @@ import ImageIO
 
 /// Ansichts-Modus "Nur Notizen": chronologische, scrollbare **Raster**-Übersicht
 /// aller Stunden, die eine Notiz enthalten (Hausaufgaben, Tests, ...). Der Titel
-/// jeder Karte sieht exakt so aus wie die Kopfzeile über der Zeichenfläche;
-/// darunter steht die Notiz selbst. Antippen öffnet die Notiz zum Bearbeiten
-/// – genau wie im Stundenplan. Tage/Stunden ohne Notiz erscheinen hier nicht
-/// und können auch nicht neu befüllt werden: Die Übersicht zeigt nur
-/// vorhandene Notizen. Eine grüne Linie markiert den aktuellen Moment (davor
+/// jeder Karte sieht aus wie die Kopfzeile über der Zeichenfläche; darunter
+/// steht die Notiz selbst. Antippen öffnet die Notiz zum Bearbeiten – genau
+/// wie im Stundenplan. Eine grüne Linie markiert den aktuellen Moment (davor
 /// liegen die abgelaufenen Einträge).
 ///
-/// Auf normalen iPad-Breiten stehen drei kompakte Karten nebeneinander.
-/// Schmale Fenster weichen auf zwei bzw. eine Spalte aus. Die grüne Linie
-/// liegt zwischen getrennten Rastern und läuft über die gesamte Fensterbreite.
+/// ## Warum diese Ansicht bewusst „flach“ gebaut ist
 ///
-/// Gedrückt halten öffnet die Optionen, darunter „Im Standard-Modus anzeigen“:
-/// Damit wechselt die App in den Standard-Modus und wischt automatisch zur
-/// Woche dieser Stunde.
+/// Frühere Fassungen ruckelten ab etwa zehn Notizen. Ursachen waren nicht die
+/// Daten, sondern die Darstellung jeder einzelnen Karte:
+///
+/// * Ein `.shadow` auf dem **kompletten** Karteninhalt (inkl. Vorschaubild) und
+///   ein zweiter Schatten auf dem Bild selbst. Solche Schatten müssen bei jedem
+///   Bildschirm-Frame aus dem gerenderten Inhalt neu geblurrt werden – bei zehn
+///   sichtbaren Bildern ist das mehr, als eine flüssige Scroll-Animation
+///   verträgt. Jetzt liegt der Schatten ausschließlich auf der
+///   Hintergrund-**Form** (wie bei den Stundenplan-Blöcken), nie auf Bildern.
+/// * Ein `GeometryReader` pro Karte, dessen `onChange(frame in .global)` bei
+///   jedem Scroll-Frame für alle sichtbaren Karten feuerte. Der Rahmen für die
+///   Zoom-Animation wird jetzt erst beim Antippen aus einer winzigen UIView
+///   gelesen – ohne jegliche Arbeit beim Scrollen.
+/// * Verschachtelte `LazyVStack → LazyVStack → LazyVGrid`-Container, zwei
+///   `confirmationDialog`s, Hover-Zustand und eine eigene UIKit-Pencil-Brücke
+///   **pro Karte**. Jetzt gibt es einen einzigen flachen `LazyVStack` aus
+///   vorberechneten Zeilen, die Dialoge liegen einmal auf Listenebene und die
+///   Squeeze-Brücke existiert genau einmal.
+/// * Jede Karte trug die vollständige `LessonNote` (inkl. PKDrawing-Daten).
+///   Die Karten bekommen nur noch ein leichtgewichtiges, `Equatable`
+///   Eintrags-Modell.
 public struct NotesOverviewListView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
-    @State private var entrySnapshot: [NotedLesson] = []
 
     public let noteNamespace: Namespace.ID
+
+    @State private var entrySnapshot: [NotedLesson] = []
+    /// Auf volle Minuten gerundet: ändert sich nur, wenn sich die Position der
+    /// „Jetzt“-Linie wirklich ändern kann.
+    @State private var currentMinute: Date = NotesOverviewListView.truncatedToMinute(Date())
+    /// Ziel des „Optionen“-Dialogs (Squeeze / Doppeltipp des Apple Pencil).
+    @State private var optionsTarget: Lesson? = nil
+    /// Ziel des Lösch-Dialogs.
+    @State private var deleteTarget: Lesson? = nil
+    /// Welche Karte der Apple Pencil gerade überfährt (für Squeeze).
+    @State private var hoverTracker = NotesOverviewHoverTracker()
 
     public init(noteNamespace: Namespace.ID) {
         self.noteNamespace = noteNamespace
     }
 
+    // MARK: - Modelle
+
     /// Eine Stunde mit sichtbarer Notiz samt abgeleiteter Zeitinformation.
-    private struct NotedLesson: Identifiable {
+    /// Bewusst **ohne** Zeichnungsdaten – nur das, was die Karte anzeigt.
+    struct NotedLesson: Identifiable, Equatable {
         let lesson: Lesson
-        let note: LessonNote
+        let noteKey: String
+        let updatedAt: Date
+        let previewData: Data?
+        let texts: [String]
+        let tagID: UUID?
         let date: Date
         let startMinutes: Int
-        /// Uhrzeit (Minute des Tages), ab der der Eintrag als abgelaufen gilt
+        /// Minute des Tages, ab der der Eintrag als abgelaufen gilt
         /// (Ende der letzten Stunde des Blocks).
         let endMinutes: Int
 
-        var id: String { lesson.noteKey }
+        var id: String { noteKey }
+
+        var previewCacheKey: String {
+            "\(noteKey)|\(updatedAt.timeIntervalSinceReferenceDate)|\(previewData?.count ?? 0)"
+        }
 
         func isPast(relativeTo now: Date, nowMinutes: Int) -> Bool {
             if Calendar.germanCalendar.isDate(date, inSameDayAs: now) {
@@ -46,14 +81,22 @@ public struct NotesOverviewListView: View {
             }
             return date < now
         }
+
+        static func == (lhs: NotedLesson, rhs: NotedLesson) -> Bool {
+            lhs.noteKey == rhs.noteKey
+                && lhs.updatedAt == rhs.updatedAt
+                && lhs.lesson == rhs.lesson
+                && lhs.tagID == rhs.tagID
+                && lhs.previewData?.count == rhs.previewData?.count
+                && lhs.texts == rhs.texts
+        }
     }
 
-    /// Flaches Modell der Liste: Tagesüberschriften, Notiz-Zeilen und die
-    /// grüne "Jetzt"-Linie an der richtigen Position dazwischen.
-    private enum ListItem: Identifiable {
+    /// Eine Zeile des flachen Rasters.
+    private enum OverviewRow: Identifiable {
         case nowLine
         case dayHeader(Date)
-        case row(NotedLesson)
+        case cards([NotedLesson])
 
         var id: String {
             switch self {
@@ -61,47 +104,49 @@ public struct NotesOverviewListView: View {
                 return "planapp_now_line"
             case .dayHeader(let date):
                 return "header_\(date.yyyyMMddString)"
-            case .row(let entry):
-                return entry.id
-            }
-        }
-    }
-
-    private enum OverviewLayoutRow: Identifiable {
-        case full(ListItem)
-        case cards([NotedLesson])
-
-        var id: String {
-            switch self {
-            case .full(let item):
-                return "full_\(item.id)"
             case .cards(let entries):
-                // Die Gruppe kann hunderte Notizen enthalten. Ihre Identität
-                // darf beim Update keine vollständige, große ID-Zeichenkette
-                // aus allen Karten zusammensetzen.
-                let firstID = entries.first?.id ?? "empty"
-                let lastID = entries.last?.id ?? "empty"
-                return "cards_\(firstID)_\(lastID)_\(entries.count)"
+                return "cards_\(entries.first?.id ?? "empty")"
             }
         }
     }
+
+    // MARK: - Body
 
     public var body: some View {
         GeometryReader { geometry in
-            TimelineView(.periodic(from: .now, by: 60)) { timeline in
-                let items = buildListItems(from: entrySnapshot, relativeTo: timeline.date)
-                let columns = NotesOverviewLayout.columnCount(for: geometry.size.width)
+            let columnCount = NotesOverviewLayout.columnCount(for: geometry.size.width, isPhone: DeviceLayout.isPhone)
+            let filteredEntries = applyTagFilter(to: entrySnapshot)
+            let rows = buildRows(from: filteredEntries, relativeTo: currentMinute, columnCount: columnCount)
+            let relativeDay = Calendar.germanCalendar.startOfDay(for: currentMinute)
+
+            VStack(spacing: 0) {
+                if viewModel.tagSettings.isEnabled, !viewModel.tagSettings.tags.isEmpty {
+                    tagFilterBar
+                    Divider().padding(.horizontal, NotesOverviewLayout.horizontalPadding)
+                }
 
                 ScrollView(.vertical, showsIndicators: true) {
-                    if items.isEmpty {
-                        emptyState
+                    if rows.isEmpty {
+                        emptyState(isFiltered: !entrySnapshot.isEmpty)
                             .frame(maxWidth: .infinity)
                             .padding(.top, 60)
                     } else {
-                        gridOverview(
-                            items: items,
-                            columnCount: columns,
-                            relativeTo: timeline.date
+                        LazyVStack(alignment: .leading, spacing: NotesOverviewLayout.rowSpacing) {
+                            ForEach(rows) { row in
+                                rowView(row, columnCount: columnCount, relativeDay: relativeDay)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        // Apple Pencil Pro: genau EINE Squeeze-Brücke für die
+                        // gesamte Liste. Welche Karte gemeint ist, weiß der
+                        // Hover-Tracker.
+                        .background(
+                            PencilSqueezeActionAttachment {
+                                guard let lesson = hoverTracker.hoveredLesson else { return }
+                                Haptics.tap()
+                                optionsTarget = lesson
+                            }
                         )
                     }
                 }
@@ -113,171 +158,196 @@ public struct NotesOverviewListView: View {
         .onChange(of: viewModel.notesOverviewRevision) { _, _ in
             refreshEntrySnapshot()
         }
-    }
-
-    // MARK: - Raster
-
-    private let horizontalPadding = NotesOverviewLayout.horizontalPadding
-    private let columnSpacing = NotesOverviewLayout.columnSpacing
-    private let rowSpacing = NotesOverviewLayout.rowSpacing
-
-    /// Die einspaltige Übersicht behält ihre Tagesüberschriften. Im
-    /// Mehrspaltenraster stehen Datum und Stunde direkt auf jeder Karte.
-    private func gridOverview(
-        items: [ListItem],
-        columnCount: Int,
-        relativeTo date: Date
-    ) -> some View {
-        let columns = Array(
-            repeating: GridItem(.flexible(), spacing: columnSpacing, alignment: .top),
-            count: max(1, columnCount)
-        )
-        let relativeDay = Calendar.germanCalendar.startOfDay(for: date)
-        let visibleItems = items.filter { item in
-            if columnCount > 1, case .dayHeader = item { return false }
-            return true
-        }
-
-        // LazyVGrid unterstützt gridCellColumns nicht. Deshalb bekommt jede
-        // Seite der Jetzt-Linie ein eigenes Grid; die Linie ist ein Geschwister-
-        // Element im Stack und kann niemals eine Karten-Zelle belegen.
-        return LazyVStack(alignment: .leading, spacing: rowSpacing) {
-            ForEach(buildOverviewRows(from: visibleItems)) { row in
-                switch row {
-                case .full(let item):
-                    fullWidthItem(item, relativeTo: date)
-                case .cards(let entries):
-                    cardsSection(
-                        entries,
-                        columns: columns,
-                        columnCount: columnCount,
-                        relativeDay: relativeDay
-                    )
+        .task {
+            // Minutentakt für die „Jetzt“-Linie – ohne TimelineView, damit kein
+            // Zeitplan bei jeder Neubewertung des Bodys neu startet.
+            while !Task.isCancelled {
+                let now = Date()
+                let next = NotesOverviewListView.truncatedToMinute(now).addingTimeInterval(60)
+                let delay = max(1, next.timeIntervalSince(now))
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard !Task.isCancelled else { break }
+                let minute = NotesOverviewListView.truncatedToMinute(Date())
+                if minute != currentMinute {
+                    currentMinute = minute
                 }
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
+        .confirmationDialog(
+            "Optionen",
+            isPresented: Binding(
+                get: { optionsTarget != nil },
+                set: { if !$0 { optionsTarget = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: optionsTarget
+        ) { lesson in
+            NoteOverviewActions(
+                viewModel: viewModel,
+                lesson: lesson,
+                sourceFrame: { hoverTracker.frame(for: lesson) },
+                requestDelete: { deleteTarget = lesson }
+            )
+            Button("Abbrechen", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "Notiz löschen?",
+            isPresented: Binding(
+                get: { deleteTarget != nil },
+                set: { if !$0 { deleteTarget = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: deleteTarget
+        ) { lesson in
+            Button("Notiz löschen", role: .destructive) {
+                Haptics.warning()
+                viewModel.deleteNote(for: lesson)
+            }
+            Button("Abbrechen", role: .cancel) {}
+        } message: { _ in
+            Text("Diese Notiz wird dauerhaft entfernt.")
+        }
     }
 
-    /// Unterteilt einen potenziell sehr großen Abschnitt in kleine, zeilenweise
-    /// Batches. So muss beim Scrollen nicht ein einziges Grid mit hunderten
-    /// Karten gleichzeitig layoutet werden.
-    private func cardsSection(
-        _ entries: [NotedLesson],
-        columns: [GridItem],
-        columnCount: Int,
-        relativeDay: Date
-    ) -> some View {
-        let batchSize = NotesOverviewLayout.batchSize(forColumnCount: columnCount)
-        let batchStarts = Array(stride(from: 0, to: entries.count, by: batchSize))
+    // MARK: - Zeilen
 
-        return LazyVStack(alignment: .leading, spacing: rowSpacing) {
-            ForEach(batchStarts, id: \.self) { start in
-                let end = min(start + batchSize, entries.count)
-                LazyVGrid(columns: columns, alignment: .leading, spacing: rowSpacing) {
-                    ForEach(entries[start..<end]) { entry in
-                        noteRow(
-                            entry: entry,
-                            compact: columnCount > 1,
-                            relativeDay: relativeDay
-                        )
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
+    @ViewBuilder
+    private func rowView(_ row: OverviewRow, columnCount: Int, relativeDay: Date) -> some View {
+        switch row {
+        case .nowLine:
+            nowLine(relativeTo: currentMinute)
+                .padding(.vertical, 2)
+        case .dayHeader(let date):
+            dayHeader(for: date)
+                .padding(.horizontal, NotesOverviewLayout.horizontalPadding)
+                .padding(.top, 6)
+        case .cards(let entries):
+            HStack(alignment: .top, spacing: NotesOverviewLayout.columnSpacing) {
+                ForEach(entries) { entry in
+                    NoteOverviewCard(
+                        viewModel: viewModel,
+                        entry: entry,
+                        tag: viewModel.tag(forNoteKey: entry.noteKey),
+                        compact: columnCount > 1,
+                        presentationRevision: viewModel.notesOverviewPresentationRevision,
+                        relativeDay: relativeDay,
+                        hoverTracker: hoverTracker,
+                        optionsTarget: $optionsTarget,
+                        deleteTarget: $deleteTarget
+                    )
+                    .equatable()
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                // Unvollständige Zeilen behalten die Spaltenbreite.
+                if entries.count < columnCount {
+                    ForEach(0..<(columnCount - entries.count), id: \.self) { _ in
+                        Color.clear.frame(maxWidth: .infinity, maxHeight: 1)
                     }
                 }
-                .padding(.horizontal, horizontalPadding)
             }
+            .padding(.horizontal, NotesOverviewLayout.horizontalPadding)
         }
     }
 
-    /// Ein Element über die volle Rasterbreite (Tagesüberschrift oder
-    /// „Jetzt“-Linie).
-    @ViewBuilder
-    private func fullWidthItem(_ item: ListItem, relativeTo date: Date) -> some View {
-        switch item {
-        case .nowLine:
-            nowLine(relativeTo: date)
-                .padding(.vertical, 2)
-        case .dayHeader(let headerDate):
-            dayHeader(for: headerDate)
-                .padding(.horizontal, horizontalPadding)
-                .padding(.top, 6)
-        case .row(let entry):
-            // Kann nur auftreten, wenn Reihen nicht gruppiert wurden.
-            noteRow(entry: entry, compact: false, relativeDay: Calendar.germanCalendar.startOfDay(for: date))
-                .padding(.horizontal, horizontalPadding)
-        }
-    }
-
-    /// Gruppiert die flache Liste in Rasterabschnitte: Die Jetzt-Linie trennt
-    /// immer zwei Raster, auch mitten in einer unvollständigen Kartenzeile.
-    /// Nur einspaltig trennen zusätzlich die Tagesüberschriften die Abschnitte.
-    /// Die Reihenfolge bleibt chronologisch (zeilenweise von links nach rechts).
-    private func buildOverviewRows(from items: [ListItem]) -> [OverviewLayoutRow] {
-        var rows: [OverviewLayoutRow] = []
-        var pendingCards: [NotedLesson] = []
-
-        func flushPendingCards() {
-            guard !pendingCards.isEmpty else { return }
-            rows.append(.cards(pendingCards))
-            pendingCards.removeAll()
+    /// Baut die flachen Zeilen: Karten in Zeilen zu `columnCount` Stück, die
+    /// grüne Linie zwischen dem letzten abgelaufenen und dem ersten anstehenden
+    /// Eintrag (auch mitten in einer unvollständigen Kartenzeile) sowie – nur
+    /// einspaltig – Tagesüberschriften. Die Zeilenlogik selbst steckt in
+    /// `NotesOverviewLayout.rowPlan` und wird in den Regressions-Tests geprüft.
+    private func buildRows(
+        from entries: [NotedLesson],
+        relativeTo now: Date,
+        columnCount: Int
+    ) -> [OverviewRow] {
+        guard !entries.isEmpty else { return [] }
+        let columns = max(1, columnCount)
+        let nowMinutes = minutesOfDay(at: now)
+        let plan = NotesOverviewLayout.rowPlan(entries: entries, columnCount: columns) { entry in
+            entry.isPast(relativeTo: now, nowMinutes: nowMinutes)
         }
 
-        for item in items {
+        var rows: [OverviewRow] = []
+        rows.reserveCapacity(plan.count + 8)
+        var lastDateString: String? = nil
+
+        for item in plan {
             switch item {
-            case .row(let entry):
-                pendingCards.append(entry)
-            case .dayHeader, .nowLine:
-                flushPendingCards()
-                rows.append(.full(item))
+            case .nowLine:
+                rows.append(.nowLine)
+            case .cards(let cards):
+                // Einspaltig enthält jede Zeile genau eine Karte – davor steht
+                // bei einem Datumswechsel die Tagesüberschrift.
+                if columns == 1, let entry = cards.first, lastDateString != entry.lesson.dateString {
+                    lastDateString = entry.lesson.dateString
+                    rows.append(.dayHeader(entry.date))
+                }
+                rows.append(.cards(cards))
             }
         }
-        flushPendingCards()
-
         return rows
+    }
+
+    // MARK: - Tag-Filter
+
+    private func applyTagFilter(to entries: [NotedLesson]) -> [NotedLesson] {
+        guard viewModel.tagSettings.isEnabled, !viewModel.activeTagFilter.isEmpty else {
+            return entries
+        }
+        let filter = viewModel.activeTagFilter
+        return entries.filter { entry in
+            guard let tagID = entry.tagID else { return false }
+            return filter.contains(tagID)
+        }
+    }
+
+    /// Mehrfachauswahl: Keine Auswahl = alle Notizen.
+    private var tagFilterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundColor(.secondary)
+
+                Button {
+                    Haptics.select()
+                    viewModel.activeTagFilter.removeAll()
+                } label: {
+                    Text("Alle")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(viewModel.activeTagFilter.isEmpty ? .white : .primary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule().fill(viewModel.activeTagFilter.isEmpty ? Color.blue : Color.secondary.opacity(0.15))
+                        )
+                }
+                .buttonStyle(.plain)
+
+                ForEach(viewModel.tagSettings.tags) { tag in
+                    let isSelected = viewModel.activeTagFilter.contains(tag.id)
+                    Button {
+                        Haptics.select()
+                        viewModel.toggleTagFilter(tag.id)
+                    } label: {
+                        NoteTagPill(tag: tag, size: .small, isDimmed: !isSelected)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
+            }
+            .padding(.horizontal, NotesOverviewLayout.horizontalPadding)
+            .padding(.vertical, 8)
+        }
     }
 
     // MARK: - Datensammlung
 
-    /// Baut die fertige Liste inkl. Tagesüberschriften und der grünen Linie
-    /// zwischen dem letzten abgelaufenen und dem ersten anstehenden Eintrag.
-    private func buildListItems(from entries: [NotedLesson], relativeTo now: Date) -> [ListItem] {
-        guard !entries.isEmpty else { return [] }
-        let nowMinutes = minutesOfDay(at: now)
-
-        var items: [ListItem] = []
-        var lastDateString: String? = nil
-        var insertedNowLine = false
-
-        for entry in entries {
-            if !insertedNowLine, !entry.isPast(relativeTo: now, nowMinutes: nowMinutes) {
-                items.append(.nowLine)
-                insertedNowLine = true
-            }
-            if lastDateString != entry.lesson.dateString {
-                lastDateString = entry.lesson.dateString
-                items.append(.dayHeader(entry.date))
-            }
-            items.append(.row(entry))
-        }
-
-        // Alles liegt in der Vergangenheit → Linie ans Ende.
-        if !insertedNowLine {
-            items.append(.nowLine)
-        }
-
-        return items
-    }
-
-    /// Aktualisiert den teuren Notiz-Snapshot nur bei echten Datenänderungen.
-    /// Der Minutentimer darunter berechnet anschließend nur noch die Position
-    /// der „Jetzt“-Linie, nicht erneut die gesamte Liste und jede Tagesgruppe.
-    ///
-    /// Es gibt absichtlich auch hier keine implizite Karten-Animation: Beim
-    /// ersten Öffnen der Übersicht würden sonst alle sichtbaren Bildflächen
-    /// gleichzeitig interpoliert und der erste Scroll-Frame ruckeln.
+    /// Aktualisiert den Notiz-Snapshot nur bei echten Datenänderungen. Kein
+    /// Animations-Kontext: Beim ersten Öffnen würden sonst alle sichtbaren
+    /// Bildflächen gleichzeitig interpoliert.
     private func refreshEntrySnapshot() {
         let snapshot = collectEntries()
+        guard snapshot != entrySnapshot else { return }
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
@@ -287,11 +357,6 @@ public struct NotesOverviewListView: View {
 
     /// Alle Stunden mit sichtbarer Notiz, aufsteigend nach Datum und
     /// Startzeit sortiert (Doppelstunden bleiben ein Eintrag).
-    ///
-    /// Die Stunden werden einmal nach Datum gruppiert und dann lokal
-    /// zusammengeführt. `lessonsFor(day:)` würde hier für jeden Schultag erneut
-    /// die komplette Stundenliste filtern und sortieren – bei vielen
-    /// gespeicherten Wochen summiert sich das unnötig.
     private func collectEntries() -> [NotedLesson] {
         let lessonsByDate = Dictionary(grouping: viewModel.lessons, by: \.dateString)
         let periodsByNumber = Dictionary(
@@ -327,10 +392,18 @@ public struct NotesOverviewListView: View {
                 let endMinutes = periodsByNumber[endPeriodNumber]?.endMinutes
                     ?? (startMinutes + 45)
 
+                let texts = note.textBoxes
+                    .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+
                 entries.append(
                     NotedLesson(
                         lesson: lesson,
-                        note: note,
+                        noteKey: note.id,
+                        updatedAt: note.updatedAt,
+                        previewData: note.croppedImageData,
+                        texts: texts,
+                        tagID: note.tagID,
                         date: date,
                         startMinutes: startMinutes,
                         endMinutes: endMinutes
@@ -350,6 +423,11 @@ public struct NotesOverviewListView: View {
     private func minutesOfDay(at date: Date) -> Int {
         let components = Calendar.current.dateComponents([.hour, .minute], from: date)
         return (components.hour ?? 0) * 60 + (components.minute ?? 0)
+    }
+
+    private static func truncatedToMinute(_ date: Date) -> Date {
+        let interval = date.timeIntervalSinceReferenceDate
+        return Date(timeIntervalSinceReferenceDate: (interval / 60).rounded(.down) * 60)
     }
 
     // MARK: - Listen-Elemente
@@ -382,7 +460,7 @@ public struct NotesOverviewListView: View {
         HStack(spacing: 8) {
             Rectangle()
                 .fill(Color.green.opacity(0.8))
-                .frame(width: horizontalPadding, height: 2)
+                .frame(width: NotesOverviewLayout.horizontalPadding, height: 2)
             Circle()
                 .fill(Color.green)
                 .frame(width: 9, height: 9)
@@ -406,35 +484,18 @@ public struct NotesOverviewListView: View {
         return "Jetzt • \(formatter.string(from: date)) Uhr"
     }
 
-    /// Eine Karte: Ihre aufwendige Darstellung wird nur aktualisiert, wenn
-    /// sich die Karte selbst oder eine ihrer sichtbaren Einstellungen ändert.
-    private func noteRow(
-        entry: NotedLesson,
-        compact: Bool,
-        relativeDay: Date
-    ) -> some View {
-        NoteOverviewCard(
-            viewModel: viewModel,
-            lesson: entry.lesson,
-            note: entry.note,
-            compact: compact,
-            contentRevision: viewModel.notesOverviewRevision,
-            presentationRevision: viewModel.notesOverviewPresentationRevision,
-            relativeDay: relativeDay
-        )
-        .equatable()
-    }
-
-    /// Leerer Zustand, wenn es noch keine Notizen gibt.
-    private var emptyState: some View {
+    /// Leerer Zustand, wenn es (passende) Notizen nicht gibt.
+    private func emptyState(isFiltered: Bool) -> some View {
         VStack(spacing: 14) {
-            Image(systemName: "note.text")
+            Image(systemName: isFiltered ? "tag.slash" : "note.text")
                 .font(.system(size: 44, weight: .regular, design: .default))
                 .foregroundColor(.blue.opacity(0.7))
-            Text("Keine Notizen vorhanden")
+            Text(isFiltered ? "Keine Notizen mit diesen Tags" : "Keine Notizen vorhanden")
                 .font(.system(size: 19, weight: .semibold, design: .default))
                 .foregroundColor(.primary)
-            Text("Sobald du im Stundenplan Notizen zu Stunden hinzufügst, findest du sie hier chronologisch sortiert – vergangene oberhalb, kommende unterhalb der grünen Linie.")
+            Text(isFiltered
+                 ? "Wähle oben andere Tags aus oder tippe auf „Alle“, um wieder alle Notizen zu sehen."
+                 : "Sobald du im Stundenplan Notizen zu Stunden hinzufügst, findest du sie hier chronologisch sortiert – vergangene oberhalb, kommende unterhalb der grünen Linie.")
                 .font(.system(size: 14, weight: .regular, design: .default))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -444,174 +505,72 @@ public struct NotesOverviewListView: View {
     }
 }
 
-/// Leichtgewichtiger Rahmen-Speicher: Scroll-Layout-Änderungen aktualisieren
-/// die Zoom-Quelle, ohne pro Kartenbewegung den SwiftUI-View-Tree neu zu rendern.
-private final class NoteOverviewCardFrameTracker {
-    var globalFrame: CGRect = .zero
+// MARK: - Hover-Tracker & Rahmen-Sonde
+
+/// Merkt sich (ohne SwiftUI-Invalidierung), welche Karte der Apple Pencil
+/// gerade überfährt und wo sie auf dem Bildschirm liegt.
+final class NotesOverviewHoverTracker {
+    var hoveredLesson: Lesson? = nil
+    private var frameHolders: [String: NoteCardFrameHolder] = [:]
+
+    func register(_ holder: NoteCardFrameHolder, for noteKey: String) {
+        frameHolders[noteKey] = holder
+    }
+
+    func frame(for lesson: Lesson) -> CGRect {
+        frameHolders[lesson.noteKey]?.currentFrame ?? .zero
+    }
 }
 
-/// Eine Notiz-Karte in der Übersicht „Nur Notizen“.
-///
-/// Sie bietet exakt dieselben Optionen wie ein Stunden-Block im Stundenplan:
-/// - **Gedrückt halten** (Finger oder Apple Pencil) öffnet das Kontextmenü.
-/// - **Apple Pencil Pro**: beim Hovern über der Karte einmal *squeezen*
-///   (oder beim Pencil 2 doppeltippen) öffnet dieselben Optionen.
-/// - Antippen öffnet die Notiz direkt zum Bearbeiten.
-private struct NoteOverviewCard: View, Equatable {
-    /// Absichtlich kein `@EnvironmentObject`: Das gesamte ViewModel publiziert
-    /// auch für Overlay-, Timer- und Navigationsänderungen. Die Darstellung der
-    /// Karte wird über ihre gezielten Versionswerte aktualisiert und durch
-    /// `.equatable()` vor diesen globalen Invalidierungen geschützt.
+/// Hält eine schwache Referenz auf eine unsichtbare UIView in der Karte. Der
+/// Bildschirm-Rahmen wird erst beim Antippen berechnet – beim Scrollen
+/// entsteht dadurch keinerlei Arbeit.
+final class NoteCardFrameHolder {
+    weak var view: UIView?
+
+    var currentFrame: CGRect {
+        guard let view, let window = view.window else { return .zero }
+        return view.convert(view.bounds, to: window)
+    }
+}
+
+private struct NoteCardFrameProbe: UIViewRepresentable {
+    let holder: NoteCardFrameHolder
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        holder.view = view
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        holder.view = uiView
+    }
+}
+
+// MARK: - Aktionen
+
+/// Die Optionen einer Notiz-Karte – identisch im Kontextmenü (gedrückt
+/// halten) und im „Optionen“-Dialog (Apple Pencil Squeeze / Doppeltipp).
+private struct NoteOverviewActions: View {
     let viewModel: TimetableViewModel
     let lesson: Lesson
-    let note: LessonNote
-    let compact: Bool
-    let contentRevision: UInt
-    let presentationRevision: UInt
-    let relativeDay: Date
-
-    @State private var isHovered = false
-    @State private var frameTracker = NoteOverviewCardFrameTracker()
-    @State private var showActions = false
-    @State private var showDeleteNoteConfirmation = false
-
-    static func == (lhs: NoteOverviewCard, rhs: NoteOverviewCard) -> Bool {
-        lhs.lesson == rhs.lesson
-            && lhs.note.id == rhs.note.id
-            && lhs.note.updatedAt == rhs.note.updatedAt
-            && lhs.note.croppedImageData?.count == rhs.note.croppedImageData?.count
-            && lhs.note.textBoxes == rhs.note.textBoxes
-            && lhs.compact == rhs.compact
-            && lhs.contentRevision == rhs.contentRevision
-            && lhs.presentationRevision == rhs.presentationRevision
-            && lhs.relativeDay == rhs.relativeDay
-    }
+    let sourceFrame: () -> CGRect
+    let requestDelete: () -> Void
 
     var body: some View {
-        let display = viewModel.resolveSubjectDisplay(for: lesson)
-        let hasGradient = display.gradientEndColor != nil
-        let backgroundColors = lesson.isCancelled
-            ? [Color.gray.opacity(0.35), Color.gray.opacity(0.45)]
-            : [display.color, display.gradientEndColor ?? display.color.opacity(0.88)]
-        let textColor = lesson.isCancelled ? Color.secondary : display.color.contrastingTextColor
-
-        return VStack(alignment: .leading, spacing: compact ? 6 : 10) {
-            NoteHeaderContent(
-                lesson: lesson,
-                display: display,
-                displaySettings: viewModel.displaySettings,
-                periods: viewModel.periods,
-                primaryColor: textColor,
-                showsColorCircle: false,
-                isCompact: compact,
-                teacherDisplayName: viewModel.resolveTeacherName(lesson.teacherRaw),
-                originalTeacherDisplayName: lesson.originalTeacher.map { viewModel.resolveTeacherName($0) },
-                relativeTo: relativeDay
-            )
-
-            noteContent(textColor: textColor)
-        }
-        .padding(.horizontal, compact ? 10 : 14)
-        .padding(.vertical, compact ? 8 : 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: backgroundColors,
-                        startPoint: hasGradient ? .top : .topLeading,
-                        endPoint: hasGradient ? .bottom : .bottomTrailing
-                    )
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.white.opacity(isHovered ? 0.45 : 0.24), lineWidth: 1)
-        )
-        .shadow(
-            color: display.color.opacity(lesson.isCancelled ? 0 : (isHovered ? 0.30 : 0.18)),
-            radius: isHovered ? 10 : 6,
-            x: 0,
-            y: isHovered ? 4 : 2
-        )
-        .background(
-            GeometryReader { proxy in
-                Color.clear
-                    .onAppear { updateGlobalFrameIfNeeded(proxy.frame(in: .global)) }
-                    .onChange(of: proxy.frame(in: .global)) { _, newFrame in
-                        updateGlobalFrameIfNeeded(newFrame)
-                    }
-            }
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .hoverEffect(.lift)
-        .onHover { hovering in
-            guard isHovered != hovering else { return }
-            isHovered = hovering
-        }
-        .onContinuousHover { phase in
-            switch phase {
-            case .active(_):
-                guard !isHovered else { return }
-                isHovered = true
-            case .ended:
-                guard isHovered else { return }
-                isHovered = false
-            }
-        }
-        // Apple Pencil Pro: Squeeze beim Hovern öffnet dieselben Optionen
-        // wie langes Drücken.
-        .background(
-            PencilSqueezeActionAttachment {
-                guard isHovered else { return }
-                Haptics.tap()
-                showActions = true
-            }
-        )
-        // Gedrückt halten (Finger oder Apple Pencil) → Kontextmenü.
-        .contextMenu {
-            noteActionButtons
-        }
-        .confirmationDialog(
-            "Optionen",
-            isPresented: $showActions,
-            titleVisibility: .visible
-        ) {
-            noteActionButtons
-            Button("Abbrechen", role: .cancel) {}
-        }
-        .confirmationDialog(
-            "Notiz löschen?",
-            isPresented: $showDeleteNoteConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Notiz löschen", role: .destructive) {
-                Haptics.warning()
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    viewModel.deleteNote(for: lesson)
-                }
-            }
-            Button("Abbrechen", role: .cancel) {}
-        } message: {
-            Text("Diese Notiz wird dauerhaft entfernt.")
-        }
-        .onTapGesture {
-            openNote()
-        }
-    }
-
-    // MARK: - Optionen
-
-    @ViewBuilder
-    private var noteActionButtons: some View {
         Button {
-            showInStandardMode()
+            Haptics.tap()
+            viewModel.revealLessonInStandardMode(lesson)
         } label: {
             Label("Im Standard-Modus anzeigen", systemImage: "rectangle.grid.3x2")
         }
 
         Button {
-            openNote()
+            Haptics.tap()
+            viewModel.openNote(for: lesson, sourceFrame: sourceFrame())
         } label: {
             Label("Notiz bearbeiten", systemImage: "square.and.pencil")
         }
@@ -625,64 +584,159 @@ private struct NoteOverviewCard: View, Equatable {
             Label("Notiz für die nächste Stunde erstellen", systemImage: "calendar.badge.plus")
         }
 
+        Button {
+            Haptics.tap()
+            viewModel.copyNote(for: lesson)
+        } label: {
+            Label("Kopieren", systemImage: "doc.on.doc")
+        }
+
+        if viewModel.hasCopiedNote {
+            Button {
+                Haptics.tap()
+                viewModel.pasteCopiedNote(into: lesson)
+            } label: {
+                Label("Einfügen", systemImage: "doc.on.clipboard")
+            }
+        }
+
         Button(role: .destructive) {
-            requestDeleteConfirmation()
+            Haptics.warning()
+            // Erst nach dem Schließen des Menüs/Dialogs präsentieren.
+            DispatchQueue.main.async {
+                requestDelete()
+            }
         } label: {
             Label("Notiz löschen", systemImage: "trash")
         }
     }
+}
 
-    private func updateGlobalFrameIfNeeded(_ newFrame: CGRect) {
-        // Während Settings oder des Zeichen-Overlays wird die Karte nicht als
-        // Animationsquelle verwendet. Beim Scrollen ignorieren wir außerdem
-        // winzige Geometrieänderungen, genau wie in der Standardübersicht.
-        guard !viewModel.isSettingsPresented, !viewModel.isDrawingOverlayPresented else { return }
-        let previousFrame = frameTracker.globalFrame
-        let threshold: CGFloat = 2
-        guard abs(previousFrame.origin.x - newFrame.origin.x) > threshold
-            || abs(previousFrame.origin.y - newFrame.origin.y) > threshold
-            || abs(previousFrame.size.width - newFrame.size.width) > threshold
-            || abs(previousFrame.size.height - newFrame.size.height) > threshold else {
-            return
+// MARK: - Karte
+
+/// Eine Notiz-Karte in der Übersicht „Nur Notizen“.
+///
+/// - **Antippen** öffnet die Notiz direkt zum Bearbeiten.
+/// - **Gedrückt halten** (Finger oder Apple Pencil) öffnet das Kontextmenü.
+/// - **Apple Pencil Pro**: beim Hovern über der Karte einmal *squeezen*
+///   (oder beim Pencil 2 doppeltippen) öffnet dieselben Optionen.
+private struct NoteOverviewCard: View, Equatable {
+    /// Absichtlich kein `@EnvironmentObject`: Das gesamte ViewModel publiziert
+    /// auch für Overlay-, Timer- und Navigationsänderungen. Die Karte wird über
+    /// ihr Eintrags-Modell und die Darstellungs-Version aktualisiert und durch
+    /// `.equatable()` vor diesen globalen Invalidierungen geschützt.
+    let viewModel: TimetableViewModel
+    let entry: NotesOverviewListView.NotedLesson
+    let tag: NoteTag?
+    let compact: Bool
+    let presentationRevision: UInt
+    let relativeDay: Date
+    let hoverTracker: NotesOverviewHoverTracker
+    @Binding var optionsTarget: Lesson?
+    @Binding var deleteTarget: Lesson?
+
+    @State private var frameHolder = NoteCardFrameHolder()
+
+    static func == (lhs: NoteOverviewCard, rhs: NoteOverviewCard) -> Bool {
+        lhs.entry == rhs.entry
+            && lhs.tag == rhs.tag
+            && lhs.compact == rhs.compact
+            && lhs.presentationRevision == rhs.presentationRevision
+            && lhs.relativeDay == rhs.relativeDay
+    }
+
+    private var lesson: Lesson { entry.lesson }
+
+    var body: some View {
+        let display = viewModel.resolveSubjectDisplay(for: lesson)
+        let hasGradient = display.gradientEndColor != nil
+        let backgroundColors = lesson.isCancelled
+            ? [Color.gray.opacity(0.35), Color.gray.opacity(0.45)]
+            : [display.color, display.gradientEndColor ?? display.color.opacity(0.88)]
+        let textColor = lesson.isCancelled ? Color.secondary : display.color.contrastingTextColor
+
+        VStack(alignment: .leading, spacing: compact ? 6 : 10) {
+            NoteHeaderContent(
+                lesson: lesson,
+                display: display,
+                displaySettings: viewModel.displaySettings,
+                periods: viewModel.periods,
+                primaryColor: textColor,
+                showsColorCircle: false,
+                isCompact: compact,
+                teacherDisplayName: viewModel.resolveTeacherName(lesson.teacherRaw),
+                originalTeacherDisplayName: lesson.originalTeacher.map { viewModel.resolveTeacherName($0) },
+                relativeTo: relativeDay
+            ) {
+                if let tag {
+                    NoteTagPill(tag: tag, size: .small)
+                }
+            }
+
+            noteContent(textColor: textColor)
         }
-        // Kein @Published/@State-Rect: Die reine Geometrie-Aktualisierung beim
-        // Scrollen darf nicht jede sichtbare Karten-View erneut invalidieren.
-        frameTracker.globalFrame = newFrame
-    }
-
-    private func openNote() {
-        Haptics.tap()
-        viewModel.openNote(for: lesson, sourceFrame: frameTracker.globalFrame)
-    }
-
-    /// Wechselt in den Standard-Modus und wischt automatisch zu der Woche,
-    /// in der diese Stunde liegt.
-    ///
-    /// Der `confirmationDialog`/das Kontextmenü schließt sich dabei von selbst,
-    /// weil der Ansichts-Modus gewechselt wird.
-    private func showInStandardMode() {
-        Haptics.tap()
-        viewModel.revealLessonInStandardMode(lesson)
-    }
-
-    private func requestDeleteConfirmation() {
-        Haptics.warning()
-        DispatchQueue.main.async {
-            showDeleteNoteConfirmation = true
+        .padding(.horizontal, compact ? 10 : 14)
+        .padding(.vertical, compact ? 8 : 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            // Schatten NUR auf der Form – nie auf Text oder Vorschaubild.
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: backgroundColors,
+                        startPoint: hasGradient ? .top : .topLeading,
+                        endPoint: hasGradient ? .bottom : .bottomTrailing
+                    )
+                )
+                .shadow(
+                    color: display.color.opacity(lesson.isCancelled ? 0 : 0.18),
+                    radius: 5,
+                    x: 0,
+                    y: 2
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.24), lineWidth: 1)
+        )
+        .background(NoteCardFrameProbe(holder: frameHolder))
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .hoverEffect(.lift)
+        .onHover { hovering in
+            if hovering {
+                hoverTracker.hoveredLesson = lesson
+            } else if hoverTracker.hoveredLesson?.noteKey == entry.noteKey {
+                hoverTracker.hoveredLesson = nil
+            }
+        }
+        .onAppear {
+            hoverTracker.register(frameHolder, for: entry.noteKey)
+        }
+        // Gedrückt halten (Finger oder Apple Pencil) → Kontextmenü.
+        .contextMenu {
+            NoteOverviewActions(
+                viewModel: viewModel,
+                lesson: lesson,
+                sourceFrame: { frameHolder.currentFrame },
+                requestDelete: { deleteTarget = lesson }
+            )
+        }
+        .onTapGesture {
+            Haptics.tap()
+            viewModel.openNote(for: lesson, sourceFrame: frameHolder.currentFrame)
         }
     }
 
     // MARK: - Inhalt
 
     /// Die eigentliche Notiz: Das Vorschaubild wird außerhalb des Main-Threads
-    /// heruntergerechnet und gecacht. In der Übersicht muss SwiftUI daher nicht
-    /// bei jedem Karten-Render große PNGs erneut dekodieren.
+    /// heruntergerechnet und gecacht.
     @ViewBuilder
     private func noteContent(textColor: Color) -> some View {
-        if let imageData = note.croppedImageData {
+        if let imageData = entry.previewData {
             NotePreviewImage(
                 data: imageData,
-                cacheKey: "\(note.id)|\(note.updatedAt.timeIntervalSinceReferenceDate)|\(imageData.count)",
+                cacheKey: entry.previewCacheKey,
                 compact: compact
             ) {
                 noteTextContent(textColor: textColor)
@@ -694,23 +748,29 @@ private struct NoteOverviewCard: View, Equatable {
 
     @ViewBuilder
     private func noteTextContent(textColor: Color) -> some View {
-        let texts = note.textBoxes
-            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        if !texts.isEmpty {
+        if !entry.texts.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(texts.enumerated()), id: \.offset) { _, text in
+                ForEach(Array(entry.texts.enumerated()), id: \.offset) { _, text in
                     Text(text)
                         .font(.system(size: compact ? 12 : 15, weight: .regular, design: .default))
                         .foregroundColor(textColor)
                         .multilineTextAlignment(.leading)
                 }
             }
+        } else if entry.previewData == nil {
+            // Notiz besteht nur aus einem Tag.
+            Text("Keine Inhalte – nur Tag")
+                .font(.system(size: compact ? 11 : 13, weight: .regular))
+                .foregroundColor(textColor.opacity(0.7))
         }
     }
 }
 
-/// Kleine, speicherschonende Vorschauansicht für eine Notizkarte.
+// MARK: - Vorschaubild
+
+/// Kleine, speicherschonende Vorschauansicht für eine Notizkarte – ohne
+/// Schatten, damit das Bild beim Scrollen nicht in jedem Frame neu
+/// gefiltert werden muss.
 private struct NotePreviewImage<Placeholder: View>: View {
     let data: Data
     let cacheKey: String
@@ -730,16 +790,15 @@ private struct NotePreviewImage<Placeholder: View>: View {
         self.cacheKey = cacheKey
         self.compact = compact
         self.placeholder = placeholder
-        let maximumPixelSize = compact ? 720 : 960
-        let resolvedCacheKey = "\(cacheKey)|\(maximumPixelSize)"
-        _image = State(initialValue: NotePreviewImageCache.image(for: resolvedCacheKey))
-        _didFinishLoading = State(initialValue: NotePreviewImageCache.image(for: resolvedCacheKey) != nil)
+        let resolvedCacheKey = "\(cacheKey)|\(compact ? 640 : 900)"
+        let cached = NotePreviewImageCache.image(for: resolvedCacheKey)
+        _image = State(initialValue: cached)
+        _didFinishLoading = State(initialValue: cached != nil)
     }
 
     private var maximumHeight: CGFloat { compact ? 140 : 200 }
-    private var resolvedCacheKey: String {
-        "\(cacheKey)|\(compact ? 720 : 960)"
-    }
+    private var maximumPixelSize: Int { compact ? 640 : 900 }
+    private var resolvedCacheKey: String { "\(cacheKey)|\(maximumPixelSize)" }
 
     var body: some View {
         Group {
@@ -758,7 +817,6 @@ private struct NotePreviewImage<Placeholder: View>: View {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .strokeBorder(Color.black.opacity(0.10), lineWidth: 0.5)
                     )
-                    .shadow(color: Color.black.opacity(0.08), radius: 3, x: 0, y: 1.5)
             } else if didFinishLoading {
                 placeholder()
             } else {
@@ -766,11 +824,6 @@ private struct NotePreviewImage<Placeholder: View>: View {
                     .fill(Color.white.opacity(0.8))
                     .frame(maxWidth: .infinity)
                     .frame(height: compact ? 92 : 132)
-                    .overlay {
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(.secondary)
-                    }
             }
         }
         .task(id: resolvedCacheKey) {
@@ -782,17 +835,15 @@ private struct NotePreviewImage<Placeholder: View>: View {
 
             didFinishLoading = false
             let imageData = data
-            let key = cacheKey
-            // Karten sind deutlich kleiner als die gespeicherte Zeichenfläche.
-            // Die kompakten Raster-Vorschauen werden daher nicht unnötig in
-            // 1200 px decodiert. Das spart CPU, Speicher und vor allem den
-            // ersten Scroll-Frame im Modus „Nur Notizen“.
-            let maximumPixelSize = compact ? 720 : 960
+            let key = resolvedCacheKey
+            let pixelSize = maximumPixelSize
+            // Karten sind deutlich kleiner als die gespeicherte Zeichenfläche –
+            // die Vorschau wird daher nicht in voller Größe decodiert.
             let loadedImage = await Task.detached(priority: .utility) {
                 NotePreviewImageCache.load(
                     data: imageData,
-                    for: "\(key)|\(maximumPixelSize)",
-                    maximumPixelSize: maximumPixelSize
+                    for: key,
+                    maximumPixelSize: pixelSize
                 )
             }.value
 
@@ -804,7 +855,7 @@ private struct NotePreviewImage<Placeholder: View>: View {
 }
 
 /// NSCache is thread-safe; ImageIO downsampling keeps previews cheap to retain
-/// and to composite while the lazy grid scrolls.
+/// and to composite while the list scrolls.
 enum NotePreviewImageCache {
     private static let images: NSCache<NSString, UIImage> = {
         let cache = NSCache<NSString, UIImage>()

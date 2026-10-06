@@ -13,6 +13,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     public let markerWidth: CGFloat
     public let eraserWidth: CGFloat
     public let colorScheme: ColorScheme
+    /// Dynamische Stiftdicke (PencilKit-Stift mit Druck/Geschwindigkeit) oder
+    /// Kugelschreiber (Monoline, immer gleich dick).
+    public let dynamicPenWidth: Bool
     public let onUndoAvailable: (Bool) -> Void
     public let onRedoAvailable: (Bool) -> Void
     public let onCanvasCreated: (PKCanvasView) -> Void
@@ -44,6 +47,12 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     /// Wird aufgerufen, wenn eine Zeichen- oder Radier-Geste auf der Fläche
     /// beendet wurde (z. B. um den Radierer automatisch abzuwählen).
     public let onCanvasGestureEnded: () -> Void
+    /// Ein Strich wurde nach dem Stillhalten in eine gerade Linie verwandelt.
+    public let onStraightLineSnap: () -> Void
+
+    /// Wie lange der Stift am Ende eines Strichs still gehalten werden muss,
+    /// bis der Strich zur geraden Linie einrastet.
+    public static let straightLineHoldDuration: TimeInterval = 2.0
 
     public init(
         drawing: Binding<PKDrawing>,
@@ -53,6 +62,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         eraserWidth: CGFloat = 24,
         colorScheme: ColorScheme = .light,
         pencilOnlyDrawing: Bool = true,
+        dynamicPenWidth: Bool = true,
         onUndoAvailable: @escaping (Bool) -> Void = { _ in },
         onRedoAvailable: @escaping (Bool) -> Void = { _ in },
         onCanvasCreated: @escaping (PKCanvasView) -> Void = { _ in },
@@ -63,7 +73,8 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         onPencilSqueeze: @escaping (CGPoint?, CGVector) -> Void = { _, _ in },
         onCanvasActivity: @escaping () -> Void = {},
         onCanvasGestureBegan: @escaping () -> Void = {},
-        onCanvasGestureEnded: @escaping () -> Void = {}
+        onCanvasGestureEnded: @escaping () -> Void = {},
+        onStraightLineSnap: @escaping () -> Void = {}
     ) {
         self._drawing = drawing
         self.toolSelection = toolSelection
@@ -72,6 +83,8 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         self.eraserWidth = eraserWidth
         self.colorScheme = colorScheme
         self.pencilOnlyDrawing = pencilOnlyDrawing
+        self.dynamicPenWidth = dynamicPenWidth
+        self.onStraightLineSnap = onStraightLineSnap
         self.onUndoAvailable = onUndoAvailable
         self.onRedoAvailable = onRedoAvailable
         self.onCanvasCreated = onCanvasCreated
@@ -93,6 +106,11 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         let canvasView = PKCanvasView()
         canvasView.backgroundColor = .clear
         canvasView.isOpaque = false
+        // Das Papier ist immer weiß. PencilKit würde im Dark Mode des Geräts
+        // dunkle Tinte automatisch aufhellen (Schwarz → Weiß) – genau das
+        // machte gespeicherte schwarze Notizen beim Öffnen weiß auf weiß.
+        // Die Zeichenfläche läuft deshalb fest im hellen Erscheinungsbild.
+        canvasView.overrideUserInterfaceStyle = .light
         canvasView.drawing = drawing
         canvasView.delegate = context.coordinator
 
@@ -135,6 +153,21 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         pencilTouchDetector.delegate = context.coordinator
         canvasView.addGestureRecognizer(pencilTouchDetector)
 
+        // Ein-Finger-Beobachter (nur relevant, wenn auch der Finger zeichnen
+        // darf): liefert die Stillhalte-Erkennung für gerade Linien.
+        let fingerStrokeDetector = UIPanGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleFingerStroke(_:))
+        )
+        fingerStrokeDetector.minimumNumberOfTouches = 1
+        fingerStrokeDetector.maximumNumberOfTouches = 1
+        fingerStrokeDetector.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        fingerStrokeDetector.cancelsTouchesInView = false
+        fingerStrokeDetector.delaysTouchesBegan = false
+        fingerStrokeDetector.delaysTouchesEnded = false
+        fingerStrokeDetector.delegate = context.coordinator
+        canvasView.addGestureRecognizer(fingerStrokeDetector)
+
         // Apple Pencil Hover: liefert die letzte Position und Blickrichtung des
         // Stifts, damit der Squeeze-Kreis genau dort erscheint, wo der Stift
         // hinzeigt.
@@ -162,6 +195,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
     public func updateUIView(_ uiView: PKCanvasView, context: Context) {
         context.coordinator.parent = self
+        if uiView.overrideUserInterfaceStyle != .light {
+            uiView.overrideUserInterfaceStyle = .light
+        }
         if uiView.drawing != drawing {
             uiView.drawing = drawing
         }
@@ -188,7 +224,10 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         switch toolSelection {
         case .pen(let color):
             let resolvedColor = resolveDynamicColor(color)
-            canvasView.tool = PKInkingTool(.pen, color: resolvedColor, width: penWidth)
+            // Dynamische Stiftdicke = PencilKit-Stift (reagiert auf Druck und
+            // Tempo). Aus = Kugelschreiber (Monoline), immer gleich dick.
+            let inkType: PKInkingTool.InkType = dynamicPenWidth ? .pen : .monoline
+            canvasView.tool = PKInkingTool(inkType, color: resolvedColor, width: penWidth)
         case .marker(let color):
             canvasView.tool = PKInkingTool(.marker, color: color, width: markerWidth)
         case .eraser:
@@ -254,8 +293,20 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// Standard „nach oben“, wenn das Gerät keine Azimut-Werte liefert.
         private var lastHoverDirection = CGVector(dx: 0, dy: -1)
 
+        // Gerade-Linie-Erkennung („Stillhalten am Strichende“)
+        private var holdWorkItem: DispatchWorkItem?
+        private var isStrokeTouchActive = false
+        private var lastStrokeTouchLocation: CGPoint = .zero
+        private var straightenRequested = false
+        private var strokeCountAtToolBegin = 0
+        private var snapFeedbackGenerator: UIImpactFeedbackGenerator?
+
         init(_ parent: PencilKitCanvasRepresentable) {
             self.parent = parent
+        }
+
+        deinit {
+            holdWorkItem?.cancel()
         }
 
         // MARK: - Apple Pencil erkennen & verfolgen
@@ -272,6 +323,161 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             default:
                 break
             }
+            trackStrokeTouch(recognizer)
+        }
+
+        /// Finger-Strich (nur wenn „Nur Apple Pencil“ aus ist): dieselbe
+        /// Stillhalte-Erkennung wie beim Pencil.
+        @objc func handleFingerStroke(_ recognizer: UIPanGestureRecognizer) {
+            guard !parent.pencilOnlyDrawing else { return }
+            trackStrokeTouch(recognizer)
+        }
+
+        // MARK: - Gerade Linie durch Stillhalten
+
+        private var isInkingToolActive: Bool {
+            switch parent.toolSelection {
+            case .pen, .marker:
+                return true
+            case .eraser, .lasso, .text:
+                return false
+            }
+        }
+
+        /// Verfolgt die Bewegung einer Zeichen-Berührung. Bleibt der Stift am
+        /// Ende eines Strichs ≈2 s still, wird der Strich beim Loslassen in
+        /// eine gerade Linie verwandelt (Pencil Pro vibriert zur Bestätigung).
+        private func trackStrokeTouch(_ recognizer: UIPanGestureRecognizer) {
+            guard let canvasView else { return }
+            let location = recognizer.location(in: canvasView)
+
+            switch recognizer.state {
+            case .began:
+                guard isInkingToolActive else { return }
+                isStrokeTouchActive = true
+                straightenRequested = false
+                lastStrokeTouchLocation = location
+                scheduleHoldCheck()
+            case .changed:
+                guard isStrokeTouchActive else { return }
+                let distance = hypot(
+                    location.x - lastStrokeTouchLocation.x,
+                    location.y - lastStrokeTouchLocation.y
+                )
+                // Kleines Zittern zählt nicht als Bewegung.
+                if distance > 3 {
+                    lastStrokeTouchLocation = location
+                    if straightenRequested {
+                        // Nach dem Einrasten weiterziehen hebt es wieder auf.
+                        straightenRequested = false
+                    }
+                    scheduleHoldCheck()
+                }
+            case .ended, .cancelled, .failed:
+                isStrokeTouchActive = false
+                holdWorkItem?.cancel()
+                holdWorkItem = nil
+            default:
+                break
+            }
+        }
+
+        private func scheduleHoldCheck() {
+            holdWorkItem?.cancel()
+            let item = DispatchWorkItem { [weak self] in
+                guard let self, self.isStrokeTouchActive, self.isInkingToolActive else { return }
+                self.straightenRequested = true
+                self.playSnapFeedback()
+            }
+            holdWorkItem = item
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + PencilKitCanvasRepresentable.straightLineHoldDuration,
+                execute: item
+            )
+        }
+
+        /// Haptik: Mit `view:` erzeugt der Apple Pencil Pro die Vibration selbst
+        /// (iOS 17.5+), sonst vibriert das Gerät.
+        private func playSnapFeedback() {
+            let generator: UIImpactFeedbackGenerator
+            if let existing = snapFeedbackGenerator {
+                generator = existing
+            } else if #available(iOS 17.5, *), let canvasView {
+                generator = UIImpactFeedbackGenerator(style: .rigid, view: canvasView)
+            } else {
+                generator = UIImpactFeedbackGenerator(style: .rigid)
+            }
+            snapFeedbackGenerator = generator
+            generator.prepare()
+            generator.impactOccurred(intensity: 1.0)
+        }
+
+        /// Ersetzt den zuletzt gezeichneten Strich durch eine gerade Linie von
+        /// seinem ersten zu seinem letzten Punkt – gleiche Tinte, gleiche Dicke.
+        private func straightenLastStrokeIfRequested() {
+            guard straightenRequested, let canvasView else { return }
+            straightenRequested = false
+
+            let drawing = canvasView.drawing
+            guard drawing.strokes.count > strokeCountAtToolBegin,
+                  let stroke = drawing.strokes.last else { return }
+
+            let path = stroke.path
+            guard path.count >= 2 else { return }
+            let startPoint = path[path.startIndex]
+            let endPoint = path[path.index(before: path.endIndex)]
+            let start = startPoint.location
+            let end = endPoint.location
+            let length = hypot(end.x - start.x, end.y - start.y)
+            guard length.isFinite, length >= 12 else { return }
+
+            // Mittlere Strichbreite beibehalten, damit die Linie so dick ist
+            // wie der ursprüngliche Strich.
+            let widths = path.map { $0.size.width }.sorted()
+            let medianWidth = widths[widths.count / 2]
+            let size = CGSize(width: medianWidth, height: medianWidth)
+
+            let segmentCount = max(2, Int(length / 4))
+            var points: [PKStrokePoint] = []
+            points.reserveCapacity(segmentCount + 1)
+            for index in 0...segmentCount {
+                let fraction = CGFloat(index) / CGFloat(segmentCount)
+                let location = CGPoint(
+                    x: start.x + (end.x - start.x) * fraction,
+                    y: start.y + (end.y - start.y) * fraction
+                )
+                points.append(
+                    PKStrokePoint(
+                        location: location,
+                        timeOffset: TimeInterval(index) * 0.01,
+                        size: size,
+                        opacity: startPoint.opacity,
+                        force: startPoint.force,
+                        azimuth: startPoint.azimuth,
+                        altitude: startPoint.altitude
+                    )
+                )
+            }
+
+            let newPath = PKStrokePath(controlPoints: points, creationDate: path.creationDate)
+            let newStroke = PKStroke(ink: stroke.ink, path: newPath, transform: stroke.transform, mask: nil)
+
+            var strokes = drawing.strokes
+            strokes[strokes.count - 1] = newStroke
+            let previousDrawing = drawing
+            let straightened = PKDrawing(strokes: strokes)
+
+            canvasView.drawing = straightened
+            canvasView.undoManager?.registerUndo(withTarget: canvasView) { target in
+                target.drawing = previousDrawing
+            }
+            canvasView.undoManager?.setActionName("Gerade Linie")
+
+            parent.drawing = straightened
+            parent.onStrokeMutation()
+            parent.onUndoAvailable(canvasView.undoManager?.canUndo ?? false)
+            parent.onRedoAvailable(canvasView.undoManager?.canRedo ?? false)
+            parent.onStraightLineSnap()
         }
 
         /// Hover des Apple Pencil: Position und Blickrichtung merken – ganz
@@ -333,6 +539,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// Squeeze-Palette zu schließen, sobald wieder geschrieben wird.
         public func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
             parent.onCanvasActivity()
+            strokeCountAtToolBegin = canvasView.drawing.strokes.count
             DispatchQueue.main.async { [weak self] in
                 self?.parent.onCanvasGestureBegan()
             }
@@ -343,7 +550,10 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         public func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
             parent.onCanvasActivity()
             DispatchQueue.main.async { [weak self] in
-                self?.parent.onCanvasGestureEnded()
+                guard let self else { return }
+                // Erst jetzt ist der Strich sicher in `drawing` übernommen.
+                self.straightenLastStrokeIfRequested()
+                self.parent.onCanvasGestureEnded()
             }
         }
 
@@ -402,6 +612,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         drawing: PKDrawing,
         textBoxes: [NoteTextBox],
         backgroundStyle: NoteBackgroundStyle = .blank,
+        backgroundScale: Double = NoteBackgroundMetrics.defaultScale,
         clipRect: CGRect? = nil
     ) -> UIImage? {
         var contentRect = CGRect.null
@@ -453,10 +664,15 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             cgContext.scaleBy(x: scaleFactor, y: scaleFactor)
             cgContext.translateBy(x: -renderBounds.origin.x, y: -renderBounds.origin.y)
 
-            drawPaperBackground(style: backgroundStyle, in: renderBounds, context: cgContext)
+            drawPaperBackground(style: backgroundStyle, scale: backgroundScale, in: renderBounds, context: cgContext)
 
             if !drawing.strokes.isEmpty {
-                let drawingImage = drawing.image(from: renderBounds, scale: UIScreen.main.scale)
+                // Immer im hellen Erscheinungsbild rendern: Sonst würde
+                // PencilKit im Dark Mode schwarze Tinte als weiß ausgeben –
+                // unsichtbar auf dem weißen Papier der Vorschau.
+                let drawingImage = renderInLightAppearance {
+                    drawing.image(from: renderBounds, scale: UIScreen.main.scale)
+                }
                 drawingImage.draw(in: renderBounds)
             }
 
@@ -525,9 +741,23 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             UIColor.white.setFill()
             context.cgContext.fill(canvasRect)
 
-            let drawingImage = contrastDrawing.image(from: canvasRect, scale: renderScale)
+            let drawingImage = renderInLightAppearance {
+                contrastDrawing.image(from: canvasRect, scale: renderScale)
+            }
             drawingImage.draw(in: canvasRect)
         }
+    }
+
+    /// Führt `work` mit hellem Erscheinungsbild als aktueller Trait-Sammlung
+    /// aus. `PKDrawing.image(from:scale:)` richtet sich nach
+    /// `UITraitCollection.current` und würde sonst im Dark Mode Farben
+    /// umkehren.
+    private static func renderInLightAppearance<T>(_ work: () -> T) -> T {
+        var result: T?
+        UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
+            result = work()
+        }
+        return result!
     }
 
     /// Kopie der Zeichnung, in der jeder Strich mit deckendem Schwarz
@@ -543,6 +773,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
     private static func drawPaperBackground(
         style: NoteBackgroundStyle,
+        scale: Double,
         in rect: CGRect,
         context: CGContext
     ) {
@@ -558,14 +789,18 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             return
         }
 
-        let spacing = NoteBackgroundMetrics.spacing(for: style)
+        let spacing = NoteBackgroundMetrics.spacing(for: style, scale: scale)
         let alpha = NoteBackgroundMetrics.opacity(for: style)
+        guard spacing > 0 else {
+            context.restoreGState()
+            return
+        }
 
         switch style {
         case .blank:
             break
         case .dotted:
-            let radius = NoteBackgroundMetrics.dotRadius
+            let radius = NoteBackgroundMetrics.dotRadius(scale: scale)
             UIColor(white: 0.5, alpha: alpha).setFill()
             var y = floor(rect.minY / spacing) * spacing
             while y <= rect.maxY {

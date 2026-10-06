@@ -1,0 +1,52 @@
+import UIKit
+
+/// Geräteklasse und daraus abgeleitete Layout-Entscheidungen.
+///
+/// Das iPad behält seine gewohnte Darstellung. Das iPhone bekommt einen
+/// kompakten Stundenplan (schmalere Spalten, kleinere Schrift) und eine
+/// reduzierte Zeichenfläche ohne Apple-Pencil-Werkzeuge: Dort gibt es nur
+/// Lasso, Text und Radierer (per Finger); die Farben wirken als Textfarben.
+public enum DeviceLayout {
+    /// `true` auf dem iPhone (und iPod touch), `false` auf iPad/Mac.
+    public static let isPhone: Bool = UIDevice.current.userInterfaceIdiom == .phone
+
+    /// Breite, ab der der Stundenplan in die kompakte Darstellung wechselt
+    /// (schmaler iPad-Split-View verhält sich wie ein iPhone).
+    public static let compactTimetableWidthThreshold: CGFloat = 600
+
+    /// Kompakter Stundenplan: immer auf dem iPhone, sonst nur bei sehr
+    /// schmalen Fenstern.
+    public static func usesCompactTimetable(width: CGFloat) -> Bool {
+        guard width.isFinite, width > 0 else { return isPhone }
+        return isPhone || width < compactTimetableWidthThreshold
+    }
+
+    /// Breite der Stundenspalte (Nummer + Uhrzeiten) links im Stundenplan.
+    public static func periodColumnWidth(compact: Bool) -> CGFloat {
+        compact ? 38 : 76
+    }
+
+    /// Höhe der Tages-Kopfzeile im Stundenplan.
+    public static func timetableHeaderHeight(compact: Bool) -> CGFloat {
+        compact ? 40 : 54
+    }
+
+    /// Mindesthöhe einer Stundenzeile.
+    public static func minimumRowHeight(compact: Bool) -> CGFloat {
+        compact ? 58 : 80
+    }
+
+    /// Breite einer Tagesspalte. Kompakt füllen die fünf Tage die verfügbare
+    /// Breite immer vollständig aus (kein horizontales Abschneiden mehr).
+    public static func dayColumnWidth(availableWidth: CGFloat, compact: Bool) -> CGFloat {
+        let periodWidth = periodColumnWidth(compact: compact)
+        if compact {
+            let horizontalPadding: CGFloat = 8     // 4 pt links + rechts
+            let totalColumnSpacing: CGFloat = 10   // 5 Lücken à 2 pt
+            return max(40, (availableWidth - horizontalPadding - periodWidth - totalColumnSpacing) / 5)
+        }
+        let horizontalPadding: CGFloat = 32
+        let totalColumnSpacing: CGFloat = 20
+        return max(120, (availableWidth - horizontalPadding - periodWidth - totalColumnSpacing) / 5)
+    }
+}

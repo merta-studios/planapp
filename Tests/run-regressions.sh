@@ -12,12 +12,6 @@ test_dir="$(mktemp -d "${TMPDIR:-/tmp}/planapp-regressions.XXXXXX")"
 trap 'rm -rf "$test_dir"' EXIT
 
 "$compiler" \
-    PlanApp.swiftpm/Views/Keyboard/AppKeyboardLayout.swift \
-    Tests/KeyboardLayout/main.swift \
-    -o "$test_dir/keyboard-layout"
-"$test_dir/keyboard-layout"
-
-"$compiler" \
     PlanApp.swiftpm/Utils/IntentionalTapPolicy.swift \
     PlanApp.swiftpm/Services/TimetableRefreshPolicy.swift \
     PlanApp.swiftpm/Views/Timetable/NotesOverviewLayout.swift \

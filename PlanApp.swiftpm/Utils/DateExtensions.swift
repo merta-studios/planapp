@@ -136,6 +136,14 @@ extension Date {
         return formatter.string(from: self)
     }
 
+    /// Sehr kurzes Datum für schmale Spalten (z.B. "30.09.")
+    public var compactHeaderDateString: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "de_DE")
+        formatter.dateFormat = "dd.MM."
+        return formatter.string(from: self)
+    }
+
     /// Vollständiger Wochenbereich für den Header (z.B. "30.09. – 04.10.2026")
     public func weekRangeString(using calendar: Calendar = .germanCalendar) -> String {
         let monday = self.startOfWeek(using: calendar)

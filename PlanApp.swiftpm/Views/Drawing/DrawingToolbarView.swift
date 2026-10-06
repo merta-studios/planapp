@@ -12,7 +12,15 @@ public struct DrawingToolbarView: View {
     @Binding public var penColorSlots: [String]
     @Binding public var markerColorSlots: [String]
     @Binding public var backgroundStyle: NoteBackgroundStyle
+    /// Größe des Hintergrund-Musters (1 = Standard, Mitte des Reglers).
+    @Binding public var backgroundScale: Double
+    /// Farbe für neue Textfelder (iPhone-Leiste: die Farb-Slots sind dort
+    /// Textfarben, weil ohne Apple Pencil nicht gezeichnet wird).
+    @Binding public var textColorHex: String
 
+    /// iPhone: nur Lasso, Text, Radierer, Farben (als Textfarben), Verlauf
+    /// und „Mehr Optionen“. Stift/Textmarker/Dicke gibt es dort nicht.
+    public let isPhoneLayout: Bool
     public let previewScale: CGFloat
     /// Farbe des gerade ausgewählten Textfelds (falls eines ausgewählt ist).
     /// Ist dieser Wert gesetzt, wenden die Farb-Slots die Farbe auf den Text
@@ -28,8 +36,15 @@ public struct DrawingToolbarView: View {
     public let onUndo: () -> Void
     public let onRedo: () -> Void
     public let onClear: () -> Void
+    /// Notiz kopieren / einfügen (interne Zwischenablage der App).
+    public let canCopyNote: Bool
+    public let canPasteNote: Bool
+    public let onCopyNote: () -> Void
+    public let onPasteNote: () -> Void
 
     @State private var showThicknessSlider = false
+    @State private var showBackgroundScalePanel = false
+    @State private var showPasteConfirmation = false
     @State private var showClearConfirmation = false
     @State private var editingPenSlotIndex: Int? = nil
     @State private var editingMarkerSlotIndex: Int? = nil
@@ -45,6 +60,9 @@ public struct DrawingToolbarView: View {
         penColorSlots: Binding<[String]>,
         markerColorSlots: Binding<[String]>,
         backgroundStyle: Binding<NoteBackgroundStyle>,
+        backgroundScale: Binding<Double> = .constant(NoteBackgroundMetrics.defaultScale),
+        textColorHex: Binding<String> = .constant(NoteTextBox.defaultColorHex),
+        isPhoneLayout: Bool = false,
         previewScale: CGFloat = 1,
         selectedTextColorHex: String? = nil,
         onApplyColorToSelectedText: @escaping (String) -> Void = { _ in },
@@ -54,7 +72,11 @@ public struct DrawingToolbarView: View {
         onCopyTextToClipboard: @escaping () -> Void = {},
         onUndo: @escaping () -> Void,
         onRedo: @escaping () -> Void,
-        onClear: @escaping () -> Void
+        onClear: @escaping () -> Void,
+        canCopyNote: Bool = false,
+        canPasteNote: Bool = false,
+        onCopyNote: @escaping () -> Void = {},
+        onPasteNote: @escaping () -> Void = {}
     ) {
         _toolSelection = toolSelection
         _penWidth = penWidth
@@ -63,6 +85,9 @@ public struct DrawingToolbarView: View {
         _penColorSlots = penColorSlots
         _markerColorSlots = markerColorSlots
         _backgroundStyle = backgroundStyle
+        _backgroundScale = backgroundScale
+        _textColorHex = textColorHex
+        self.isPhoneLayout = isPhoneLayout
         self.previewScale = previewScale
         self.selectedTextColorHex = selectedTextColorHex
         self.onApplyColorToSelectedText = onApplyColorToSelectedText
@@ -73,26 +98,42 @@ public struct DrawingToolbarView: View {
         self.onUndo = onUndo
         self.onRedo = onRedo
         self.onClear = onClear
+        self.canCopyNote = canCopyNote
+        self.canPasteNote = canPasteNote
+        self.onCopyNote = onCopyNote
+        self.onPasteNote = onPasteNote
     }
 
     public var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                penControls
-                toolbarDivider
-                markerControls
-                toolbarDivider
-                textToolButton
-                eraserButton
-                lassoButton
-                toolbarDivider
-                thicknessButton
-                toolbarDivider
-                historyControls
-                toolbarDivider
-                moreOptionsButton
+            HStack(spacing: isPhoneLayout ? 8 : 10) {
+                if isPhoneLayout {
+                    lassoButton
+                    textToolButton
+                    eraserButton
+                    toolbarDivider
+                    textColorControls
+                    toolbarDivider
+                    historyControls
+                    toolbarDivider
+                    moreOptionsButton
+                } else {
+                    penControls
+                    toolbarDivider
+                    markerControls
+                    toolbarDivider
+                    textToolButton
+                    eraserButton
+                    lassoButton
+                    toolbarDivider
+                    thicknessButton
+                    toolbarDivider
+                    historyControls
+                    toolbarDivider
+                    moreOptionsButton
+                }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, isPhoneLayout ? 10 : 12)
             .padding(.vertical, 8)
             .fixedSize(horizontal: true, vertical: false)
         }
@@ -113,7 +154,10 @@ public struct DrawingToolbarView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .shadow(color: Color.black.opacity(0.12), radius: 6, x: 0, y: 2)
-        .fixedSize(horizontal: true, vertical: false)
+        // iPad: Leiste so breit wie ihr Inhalt. iPhone: volle Breite nutzen,
+        // damit die Leiste bei Bedarf horizontal scrollt statt abgeschnitten
+        // zu werden.
+        .fixedSize(horizontal: !isPhoneLayout, vertical: false)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Zeichenwerkzeuge")
     }
@@ -199,6 +243,94 @@ public struct DrawingToolbarView: View {
                         },
                         onSelectCustomColor: { newHex in
                             updatePenSlot(index, with: newHex)
+                        }
+                    )
+                    .presentationCompactAdaptation(.popover)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color(UIColor.tertiarySystemBackground).opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    // MARK: - Textfarben (iPhone)
+
+    /// Auf dem iPhone wird nicht gezeichnet: Die Farb-Slots des Stifts dienen
+    /// dort als Textfarben – für das ausgewählte Textfeld oder für neue Felder.
+    private var textColorControls: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "paintpalette")
+                .font(.system(size: 15))
+                .foregroundColor(.primary)
+                .accessibilityHidden(true)
+
+            ForEach(Array(penColorSlots.enumerated()), id: \.offset) { index, hex in
+                let activeHex = selectedTextColorHex ?? textColorHex
+                let isSelected = activeHex.caseInsensitiveCompare(hex) == .orderedSame
+                let swatch = Color(hex: hex)
+
+                Button {
+                    if selectedTextColorHex != nil {
+                        onApplyColorToSelectedText(hex)
+                        textColorHex = hex
+                    } else if isSelected {
+                        Haptics.tap()
+                        editingMarkerSlotIndex = nil
+                        editingPenSlotIndex = index
+                    } else {
+                        Haptics.select()
+                        textColorHex = hex
+                    }
+                } label: {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous)
+                            .fill(isSelected ? Color.blue.opacity(0.18) : Color.clear)
+
+                        Circle()
+                            .fill(swatch)
+                            .frame(width: 22, height: 22)
+                            .overlay(
+                                Circle().strokeBorder(
+                                    hex.caseInsensitiveCompare("#FFFFFF") == .orderedSame
+                                        ? Color.gray.opacity(0.4)
+                                        : Color.white.opacity(0.4),
+                                    lineWidth: 1
+                                )
+                            )
+
+                        if isSelected {
+                            RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous)
+                                .strokeBorder(Color.blue, lineWidth: 2)
+                        }
+                    }
+                    .frame(width: buttonSize - 4, height: buttonSize - 4)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Textfarbe \(index + 1)")
+                .accessibilityValue(isSelected ? "Ausgewählt" : "")
+                .popover(
+                    isPresented: Binding(
+                        get: { editingPenSlotIndex == index },
+                        set: { isPresented in
+                            if !isPresented && editingPenSlotIndex == index {
+                                editingPenSlotIndex = nil
+                            }
+                        }
+                    ),
+                    arrowEdge: .top
+                ) {
+                    DrawingColorPalettePopover(
+                        selectedHex: hex,
+                        onSelectColor: { newHex in
+                            updatePenSlot(index, with: newHex)
+                            textColorHex = newHex
+                            editingPenSlotIndex = nil
+                        },
+                        onSelectCustomColor: { newHex in
+                            updatePenSlot(index, with: newHex)
+                            textColorHex = newHex
                         }
                     )
                     .presentationCompactAdaptation(.popover)
@@ -571,6 +703,30 @@ public struct DrawingToolbarView: View {
                 Label("Hintergrund", systemImage: "rectangle.on.rectangle")
             }
 
+            Button {
+                Haptics.tap()
+                showBackgroundScalePanel = true
+            } label: {
+                Label("Mustergröße …", systemImage: "arrow.up.left.and.arrow.down.right")
+            }
+
+            Divider()
+
+            Button {
+                Haptics.tap()
+                onCopyNote()
+            } label: {
+                Label("Notiz kopieren", systemImage: "doc.on.doc")
+            }
+            .disabled(!canCopyNote)
+
+            Button {
+                showPasteConfirmation = true
+            } label: {
+                Label("Notiz einfügen", systemImage: "doc.on.clipboard.fill")
+            }
+            .disabled(!canPasteNote)
+
             Divider()
 
             Button(role: .destructive) {
@@ -600,6 +756,23 @@ public struct DrawingToolbarView: View {
             Button("Abbrechen", role: .cancel) {}
         } message: {
             Text("Alle Zeichnungen und Textfelder auf dieser Seite werden entfernt.")
+        }
+        .confirmationDialog(
+            "Kopierte Notiz einfügen?",
+            isPresented: $showPasteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Einfügen und ersetzen", role: .destructive) {
+                Haptics.tap()
+                onPasteNote()
+            }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text("Der aktuelle Inhalt dieser Notiz wird vollständig durch die kopierte Notiz ersetzt.")
+        }
+        .popover(isPresented: $showBackgroundScalePanel, arrowEdge: .top) {
+            BackgroundScalePanel(scale: $backgroundScale, style: backgroundStyle)
+                .presentationCompactAdaptation(.popover)
         }
     }
 
@@ -679,6 +852,76 @@ private struct ThicknessSliderPanel: View {
             Text(String(format: "%.1f pt", width))
                 .font(.system(size: 13, design: .monospaced))
                 .foregroundColor(.secondary)
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(UIColor.secondarySystemBackground))
+        )
+        .fixedSize()
+    }
+}
+
+/// Regler für die Größe des Hintergrund-Musters. Die Mitte entspricht der
+/// Standardgröße; nach links wird das Muster bis zur Hälfte kleiner, nach
+/// rechts bis zum Doppelten größer. Die Vorschau zeigt das Muster live.
+struct BackgroundScalePanel: View {
+    @Binding var scale: Double
+    let style: NoteBackgroundStyle
+
+    private var sliderBinding: Binding<Double> {
+        Binding(
+            get: { NoteBackgroundMetrics.sliderValue(forScale: scale) },
+            set: { scale = NoteBackgroundMetrics.scale(forSliderValue: $0) }
+        )
+    }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Text("Mustergröße")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.secondary)
+
+            DrawingCanvasBackgroundView(
+                style: style == .blank ? .grid : style,
+                scale: scale
+            )
+            .frame(width: 240, height: 120)
+            .overlay(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .strokeBorder(Color.gray.opacity(0.25), lineWidth: 1)
+            )
+
+            if style == .blank {
+                Text("Der Hintergrund ist aktuell leer – die Größe gilt, sobald ein Muster gewählt wird.")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(width: 240)
+            }
+
+            HStack(spacing: 10) {
+                Image(systemName: "minus.magnifyingglass")
+                    .foregroundColor(.secondary)
+                Slider(value: sliderBinding, in: -1...1)
+                    .frame(width: 200)
+                Image(systemName: "plus.magnifyingglass")
+                    .foregroundColor(.secondary)
+            }
+
+            HStack {
+                Text(String(format: "%.0f %%", scale * 100))
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button("Zurücksetzen") {
+                    Haptics.tap()
+                    scale = NoteBackgroundMetrics.defaultScale
+                }
+                .font(.system(size: 13, weight: .medium))
+                .disabled(abs(scale - NoteBackgroundMetrics.defaultScale) < 0.001)
+            }
+            .frame(width: 240)
         }
         .padding(18)
         .background(

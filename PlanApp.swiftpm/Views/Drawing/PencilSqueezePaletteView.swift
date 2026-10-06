@@ -38,8 +38,15 @@ struct PencilSqueezePaletteView: View {
     @State private var colorPickerHideWorkItem: DispatchWorkItem?
 
     @State private var isAdjustingWidth = false
-    @State private var widthDragStartRadius: CGFloat = 0
     @State private var widthDragStartValue: CGFloat = 0
+    /// Startpunkt der laufenden Dicken-Geste (Fensterkoordinaten).
+    @State private var widthDragStartLocation: CGPoint = .zero
+    /// Ob sich die Dicke in dieser Geste tatsächlich geändert hat (zählt als
+    /// „gelernt“ für die Hilfslinien).
+    @State private var didChangeWidthInGesture = false
+    /// Wie oft die Dicken-Geste bereits erfolgreich benutzt wurde. Solange
+    /// der Wert klein ist, zeigt die Palette beim Halten Hilfslinien.
+    @State private var thicknessGestureSuccessCount = SqueezeThicknessHints.successCount
 
     // MARK: - Geometrie
 
@@ -156,6 +163,13 @@ struct PencilSqueezePaletteView: View {
             mainArcBackground
                 .allowsHitTesting(false)
                 .zIndex(1)
+
+            if isAdjustingWidth && showsThicknessGuide {
+                thicknessGuide
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+                    .zIndex(1.5)
+            }
 
             ForEach(Array(paletteElements.enumerated()), id: \.offset) { index, element in
                 let angle = angleForElement(at: index)
@@ -385,29 +399,116 @@ struct PencilSqueezePaletteView: View {
 
     /// Die Dicke wird durch Halten und radiales Ziehen angepasst: zum Anker hin
     /// dünner, vom Anker weg dicker.
+    ///
+    /// Kein `Button` und keine Long-Press-Sequenz mehr: Beides hat die Geste
+    /// häufig verschluckt (der Button beanspruchte die Berührung, die
+    /// Long-Press-Phase scheiterte, sobald der Stift sich sofort bewegte).
+    /// Jetzt reagiert ein einfaches `DragGesture(minimumDistance: 0)` ab dem
+    /// ersten Kontakt; die Bewegung wird auf die radiale Achse projiziert.
     private var thicknessButton: some View {
-        Button {} label: {
-            VStack(spacing: 1) {
-                Image(systemName: "lineweight")
-                    .font(.system(size: 16, weight: .semibold))
-                Text(formattedWidth)
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-            }
-            .frame(width: buttonSize, height: buttonSize)
-            .foregroundColor(.primary)
+        VStack(spacing: 1) {
+            Image(systemName: "lineweight")
+                .font(.system(size: 16, weight: .semibold))
+            Text(formattedWidth)
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .monospacedDigit()
         }
-        .buttonStyle(
-            SqueezePaletteButtonStyle(
+        .frame(width: buttonSize, height: buttonSize)
+        .foregroundColor(.primary)
+        .modifier(
+            SqueezePaletteSurface(
                 isSelected: isAdjustingWidth,
                 isHovered: isPaletteElementHovered("thickness")
             )
         )
+        .contentShape(Circle())
+        .scaleEffect(isAdjustingWidth ? 1.08 : 1)
+        .animation(.spring(response: 0.22, dampingFraction: 0.8), value: isAdjustingWidth)
         .hoverEffect(.lift)
         .modifier(paletteElementHoverTracking("thickness"))
-        .simultaneousGesture(thicknessHoldAndDragGesture)
+        .highPriorityGesture(thicknessDragGesture)
         .accessibilityLabel("Stiftdicke \(formattedWidth) Punkt")
-        .accessibilityHint("Gedrückt halten und radial ziehen, um die Dicke anzupassen")
+        .accessibilityHint("Gedrückt halten und vom Kreis weg ziehen für dicker, zum Kreis hin für dünner")
+    }
+
+    /// Winkel, unter dem der Dicken-Button auf dem Bogen sitzt – entlang
+    /// dieser Achse (Anker → Button) wird die Dicke verändert.
+    private var thicknessButtonAngle: CGFloat {
+        for (index, element) in paletteElements.enumerated() {
+            if case .thickness = element {
+                return angleForElement(at: index)
+            }
+        }
+        return openingAngle
+    }
+
+    /// Einheitsvektor vom Anker durch den Dicken-Button (dicker = in diese Richtung).
+    private var thicknessAxis: CGVector {
+        let angle = thicknessButtonAngle
+        return CGVector(dx: cos(angle), dy: sin(angle))
+    }
+
+    private var showsThicknessGuide: Bool {
+        thicknessGestureSuccessCount < SqueezeThicknessHints.guideUntilSuccessCount
+    }
+
+    /// Hilfslinien für neue Nutzer: Beim Halten erscheint durch den Button
+    /// eine Linie in beide radiale Richtungen – je weiter vom Button entfernt,
+    /// desto transparenter. Außen „+“ (dicker), innen „−“ (dünner).
+    private var thicknessGuide: some View {
+        let center = point(radius: arcRadius, angle: thicknessButtonAngle)
+        let axis = thicknessAxis
+        let reach: CGFloat = 150
+        let segments = 18
+
+        return ZStack {
+            Canvas { context, _ in
+                for directionSign in [CGFloat(1), CGFloat(-1)] {
+                    for index in 0..<segments {
+                        let startDistance = buttonSize / 2 + 6 + CGFloat(index) * (reach / CGFloat(segments))
+                        let endDistance = startDistance + reach / CGFloat(segments) - 2
+                        let progress = CGFloat(index) / CGFloat(segments - 1)
+                        let opacity = 0.9 * (1 - progress) * (1 - progress) + 0.05
+                        var path = Path()
+                        path.move(to: CGPoint(
+                            x: center.x + axis.dx * startDistance * directionSign,
+                            y: center.y + axis.dy * startDistance * directionSign
+                        ))
+                        path.addLine(to: CGPoint(
+                            x: center.x + axis.dx * endDistance * directionSign,
+                            y: center.y + axis.dy * endDistance * directionSign
+                        ))
+                        context.stroke(
+                            path,
+                            with: .color(Color.blue.opacity(opacity)),
+                            style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                        )
+                    }
+                }
+            }
+
+            thicknessGuideLabel("plus", distance: buttonSize / 2 + reach * 0.55, sign: 1, center: center, axis: axis)
+            thicknessGuideLabel("minus", distance: buttonSize / 2 + reach * 0.55, sign: -1, center: center, axis: axis)
+        }
+        .frame(width: containerSize.width, height: containerSize.height)
+    }
+
+    private func thicknessGuideLabel(
+        _ symbol: String,
+        distance: CGFloat,
+        sign: CGFloat,
+        center: CGPoint,
+        axis: CGVector
+    ) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundColor(.white)
+            .frame(width: 20, height: 20)
+            .background(Circle().fill(Color.blue.opacity(0.75)))
+            .position(
+                x: center.x + axis.dx * distance * sign,
+                y: center.y + axis.dy * distance * sign
+            )
     }
 
     // MARK: - Farbe und Hover
@@ -469,51 +570,58 @@ struct PencilSqueezePaletteView: View {
 
     // MARK: - Dicke per radialer Geste
 
-    private var thicknessHoldAndDragGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.22)
-            .sequenced(
-                before: DragGesture(
-                    minimumDistance: 0,
-                    coordinateSpace: .named(GlobalCoordinateSpace.name)
-                )
-            )
+    /// Ab dem ersten Kontakt aktiv. Die Bewegung seit dem Start wird auf die
+    /// Achse Anker → Dicken-Button projiziert: vom Kreis weg = dicker, zum
+    /// Kreis hin = dünner. Dadurch zählt jede Wischrichtung mit ihrem Anteil
+    /// entlang dieser Achse – auch leicht schräge Bewegungen.
+    private var thicknessDragGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .onChanged { value in
-                guard case .second(true, let possibleDragValue) = value,
-                      let dragValue = possibleDragValue else { return }
-                updateThickness(using: dragValue)
+                updateThickness(using: value)
             }
             .onEnded { _ in
-                isAdjustingWidth = false
-                widthDragStartRadius = 0
+                finishThicknessGesture()
             }
     }
 
     private func updateThickness(using drag: DragGesture.Value) {
-        let center = CGPoint(
-            x: clampedAnchor.x + containerOrigin.x,
-            y: clampedAnchor.y + containerOrigin.y
-        )
-        let startRadius = distance(drag.startLocation, center)
-        let currentRadius = distance(drag.location, center)
-
         if !isAdjustingWidth {
-            isAdjustingWidth = true
-            widthDragStartRadius = startRadius
+            withAnimation(.easeOut(duration: 0.12)) {
+                isAdjustingWidth = true
+            }
+            widthDragStartLocation = drag.startLocation
             widthDragStartValue = widthBinding.wrappedValue
+            didChangeWidthInGesture = false
             Haptics.select()
         }
 
+        // Globale Koordinaten sind von der Skalierung der Palette unabhängig;
+        // der Richtungsvektor der Achse ist skalierungsneutral.
+        let axis = thicknessAxis
+        let deltaX = drag.location.x - widthDragStartLocation.x
+        let deltaY = drag.location.y - widthDragStartLocation.y
+        let radialChange = (deltaX * axis.dx + deltaY * axis.dy) / max(paletteScale, 0.01)
+
         let range = widthRange
-        let radialChange = currentRadius - widthDragStartRadius
-        let pointsForFullRange: CGFloat = 120
+        let pointsForFullRange: CGFloat = 140
         let widthChange = radialChange * (range.upperBound - range.lowerBound) / pointsForFullRange
+        let previous = widthBinding.wrappedValue
         setWidth(widthDragStartValue + widthChange)
+        if widthBinding.wrappedValue != previous {
+            didChangeWidthInGesture = true
+        }
     }
 
-    private func distance(_ first: CGPoint, _ second: CGPoint) -> CGFloat {
-        let dx = first.x - second.x
-        let dy = first.y - second.y
-        return sqrt(dx * dx + dy * dy)
+    private func finishThicknessGesture() {
+        if didChangeWidthInGesture {
+            Haptics.tap()
+            thicknessGestureSuccessCount += 1
+            SqueezeThicknessHints.successCount = thicknessGestureSuccessCount
+        }
+        withAnimation(.easeOut(duration: 0.16)) {
+            isAdjustingWidth = false
+        }
+        didChangeWidthInGesture = false
     }
 
     // MARK: - Werkzeugzustand
@@ -723,5 +831,18 @@ struct SqueezeArcShape: Shape {
             }
         }
         return path
+    }
+}
+
+/// Merkt sich, wie oft die Dicken-Geste erfolgreich benutzt wurde. Die
+/// Hilfslinien erscheinen nur für neue Nutzer und verschwinden nach einigen
+/// erfolgreichen Anpassungen von selbst.
+enum SqueezeThicknessHints {
+    static let guideUntilSuccessCount = 6
+    private static let key = "planapp_squeeze_thickness_success_count"
+
+    static var successCount: Int {
+        get { UserDefaults.standard.integer(forKey: key) }
+        set { UserDefaults.standard.set(newValue, forKey: key) }
     }
 }

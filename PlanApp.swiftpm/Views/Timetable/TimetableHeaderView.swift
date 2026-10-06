@@ -20,6 +20,7 @@ public struct TimetableHeaderView: View {
             ViewThatFits(in: .horizontal) {
                 regularHeader(relativeTo: timeline.date)
                 compactHeader(relativeTo: timeline.date)
+                phoneHeader(relativeTo: timeline.date)
             }
             .onChange(of: viewModel.isTimetableStale(relativeTo: timeline.date), initial: true) { _, isStale in
                 guard isStale else { return }
@@ -266,6 +267,68 @@ public struct TimetableHeaderView: View {
 
                 refreshBadge(relativeTo: date, compact: true)
                     .fixedSize(horizontal: true, vertical: false)
+
+                settingsButton
+            }
+            .animation(.spring(response: 0.45, dampingFraction: 0.82), value: showsJumpButton)
+        }
+    }
+
+    /// Schmalste Variante (iPhone): Modus-Symbol, Woche, „Heute“-Pfeil,
+    /// Sync-Punkt und Einstellungen – alles nur als Symbole, damit die
+    /// Kopfzeile auch bei 320–430 pt Breite in eine Zeile passt.
+    private func phoneHeader(relativeTo date: Date) -> some View {
+        let showsJumpButton = !viewModel.isViewingRelevantCurrentWeek(relativeTo: date)
+        let isStale = viewModel.isTimetableStale(relativeTo: date)
+        let syncColor = isStale ? Color.red : Color(red: 0.10, green: 0.62, blue: 0.28)
+
+        return HStack(spacing: 6) {
+            compactViewModeMenu
+
+            weekCard
+                .layoutPriority(2)
+
+            Spacer(minLength: 2)
+
+            HStack(spacing: 6) {
+                if showsJumpButton {
+                    Button {
+                        Haptics.tap()
+                        viewModel.requestJumpToCurrentWeek()
+                    } label: {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 14, weight: .semibold))
+                            .frame(width: 34, height: 34)
+                    }
+                    .liquidGlassButton(cornerRadius: 17, tint: .blue, isFilled: true)
+                    .foregroundColor(.white)
+                    .fixedSize()
+                    .accessibilityLabel("Zur aktuellen Woche springen")
+                    .transition(.scale(scale: 0.8).combined(with: .opacity))
+                }
+
+                Button {
+                    Task(priority: .userInitiated) { await viewModel.syncWithUntis() }
+                } label: {
+                    Group {
+                        if viewModel.isLoading {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(syncColor)
+                        } else {
+                            Image(systemName: isStale ? "exclamationmark.arrow.circlepath" : "arrow.triangle.2.circlepath")
+                                .font(.system(size: 14, weight: .semibold))
+                        }
+                    }
+                    .foregroundColor(syncColor)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(syncColor.opacity(0.13)))
+                    .overlay(Circle().strokeBorder(syncColor.opacity(0.28), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.isLoading || !viewModel.untisCredentials.isConfigured)
+                .accessibilityLabel(isStale ? "Stundenplan veraltet" : "Letzte Aktualisierung: \(viewModel.relativeLastSyncString(relativeTo: date))")
+                .accessibilityHint("Stundenplan jetzt aktualisieren")
 
                 settingsButton
             }

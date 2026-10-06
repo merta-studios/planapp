@@ -58,7 +58,7 @@ public struct TeacherCustomizationSection: View {
                 .padding(.vertical, 2)
 
             HStack {
-                Text("Eingestellte Lehrer-Namen (\(viewModel.teacherNameCustomizations.count)):")
+                Text("Eingestellte Lehrer-Namen (\(viewModel.teacherNameCustomizations.count)/\(TimetableViewModel.maximumTeacherNameCustomizations)):")
                     .font(.system(size: 13, weight: .regular, design: .default))
                     .foregroundColor(.secondary)
                 Spacer()
@@ -151,6 +151,17 @@ public struct TeacherCustomizationSection: View {
                 .foregroundColor(.white)
                 .disabled(!canAddTeacherName)
             }
+
+            if !viewModel.canAddTeacherNameCustomization {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 12, weight: .regular, design: .default))
+                    Text("Maximal \(TimetableViewModel.maximumTeacherNameCustomizations) Lehrkräfte erreicht. Bestehende Kürzel lassen sich weiterhin ändern; für neue Einträge zuerst einen löschen.")
+                        .font(.system(size: 12, weight: .regular, design: .default))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundColor(.orange)
+            }
         }
         .padding(14)
         .lightCard(cornerRadius: 14, strokeOpacity: 0.2)
@@ -220,8 +231,17 @@ public struct TeacherCustomizationSection: View {
     }
 
     private var canAddTeacherName: Bool {
-        !systemAbbreviationInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !displayNameInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let abbreviation = systemAbbreviationInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !abbreviation.isEmpty,
+              !displayNameInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        if viewModel.canAddTeacherNameCustomization { return true }
+        // Am Limit: Nur noch Änderungen an einem bereits vorhandenen Kürzel.
+        return viewModel.teacherNameCustomizations.contains {
+            $0.systemAbbreviation.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(abbreviation) == .orderedSame
+        }
     }
 
     private func addTeacherName() {
@@ -347,9 +367,6 @@ private struct EditTeacherSheet: View {
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
-        // Auch verschachtelte Sheets bekommen ihre eigene Tastatur unten im
-        // Sheet; sichtbar ist immer nur die des obersten Hosts.
-        .appKeyboardHost()
     }
 
     private var canSave: Bool {

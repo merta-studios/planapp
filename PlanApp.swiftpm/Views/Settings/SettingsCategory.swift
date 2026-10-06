@@ -10,8 +10,8 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
     case teachers
     case drawing
     case untis
-    case keyboard
     case appearance
+    case tags
     case data
 
     var id: String { rawValue }
@@ -21,10 +21,10 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
         case .timetable: return "Stundenplan & Zeiten"
         case .subjects: return "Fächer & Farben"
         case .teachers: return "Lehrkräfte"
-        case .drawing: return "Zeichnen & Apple Pencil"
+        case .drawing: return DeviceLayout.isPhone ? "Notizen & Zeichenfläche" : "Zeichnen & Apple Pencil"
         case .untis: return "WebUntis & Sync"
-        case .keyboard: return "Tastatur & Eingabe"
         case .appearance: return "Darstellung"
+        case .tags: return "Tag-System"
         case .data: return "Daten & Zurücksetzen"
         }
     }
@@ -34,11 +34,11 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
         case .timetable: return "Stundenraster, Uhrzeiten und Block-Inhalte"
         case .subjects: return "Namen ersetzen und Farben festlegen"
         case .teachers: return "Kürzel durch Klarnamen ersetzen"
-        case .drawing: return "Stiftdicken, Notizgröße und Pencil-Gesten"
+        case .drawing: return DeviceLayout.isPhone ? "Notizgröße, Hintergrund und Aufräumen" : "Stiftdicken, Notizgröße und Pencil-Gesten"
         case .untis: return "Zugangsdaten und Synchronisation"
-        case .keyboard: return "Bildschirmtastatur, Feedback und Eingabe prüfen"
         case .appearance: return "Erscheinungsbild (hell, dunkel, automatisch)"
-        case .data: return "Stundenplan und gespeicherte Daten"
+        case .tags: return "Notizen mit farbigen Tags markieren und filtern"
+        case .data: return "Export, Import, Stundenplan und gespeicherte Daten"
         }
     }
 
@@ -49,8 +49,8 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
         case .teachers: return "person.text.rectangle"
         case .drawing: return "pencil.and.outline"
         case .untis: return "network"
-        case .keyboard: return "keyboard"
         case .appearance: return "circle.lefthalf.filled"
+        case .tags: return "tag"
         case .data: return "trash"
         }
     }
@@ -62,8 +62,8 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
         case .teachers: return .teal
         case .drawing: return .orange
         case .untis: return .green
-        case .keyboard: return .indigo
         case .appearance: return .cyan
+        case .tags: return .indigo
         case .data: return .red
         }
     }
@@ -91,18 +91,21 @@ struct SettingsCategoryDetailView: View {
 
                 case .drawing:
                     DrawingSettingsSection()
-                    PencilGesturesSection()
+                    if !DeviceLayout.isPhone {
+                        PencilGesturesSection()
+                    }
 
                 case .untis:
                     UntisConfigSection()
 
-                case .keyboard:
-                    KeyboardSettingsSection()
-
                 case .appearance:
                     AppearanceSettingsSection()
 
+                case .tags:
+                    TagSystemSettingsSection()
+
                 case .data:
+                    DataTransferSection()
                     clearTimetableCard
                 }
             }

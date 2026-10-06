@@ -6,9 +6,12 @@ import UIKit
 /// Alle Maße stammen aus `NoteBackgroundMetrics`, damit die Notiz-Vorschau exakt gleich aussieht.
 public struct DrawingCanvasBackgroundView: View {
     public let style: NoteBackgroundStyle
+    /// Skalierung des Musters (1 = Standard, 0.5…2).
+    public let scale: Double
 
-    public init(style: NoteBackgroundStyle) {
+    public init(style: NoteBackgroundStyle, scale: Double = NoteBackgroundMetrics.defaultScale) {
         self.style = style
+        self.scale = scale
     }
 
     public var body: some View {
@@ -21,14 +24,15 @@ public struct DrawingCanvasBackgroundView: View {
             RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .fill(Color.white)
 
-            DrawingCanvasPattern(style: style)
+            DrawingCanvasPattern(style: style, scale: scale)
                 .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
         }
     }
 }
 
-private struct DrawingCanvasPattern: View {
+private struct DrawingCanvasPattern: View, Equatable {
     let style: NoteBackgroundStyle
+    let scale: Double
 
     var body: some View {
         Canvas { context, size in
@@ -40,7 +44,7 @@ private struct DrawingCanvasPattern: View {
     private func drawPattern(_ style: NoteBackgroundStyle, in rect: CGRect, context: GraphicsContext) {
         guard style != .blank else { return }
 
-        let spacing = NoteBackgroundMetrics.spacing(for: style)
+        let spacing = NoteBackgroundMetrics.spacing(for: style, scale: scale)
         guard spacing > 0 else { return }
 
         let color = Color.gray.opacity(NoteBackgroundMetrics.opacity(for: style))
@@ -50,7 +54,7 @@ private struct DrawingCanvasPattern: View {
             return
 
         case .dotted:
-            let dotRadius = NoteBackgroundMetrics.dotRadius
+            let dotRadius = NoteBackgroundMetrics.dotRadius(scale: scale)
             var y = spacing
             while y < rect.height {
                 var x = spacing

@@ -93,12 +93,28 @@ for width in [CGFloat(711), 600, 507, 480] {
 for width in [CGFloat(375), 320, 0, -10, .infinity, .nan] {
     expect(NotesOverviewLayout.columnCount(for: width) == 1, "Sicherer einspaltiger Fallback für \(width)")
 }
-for columnCount in 1...3 {
-    let batchSize = NotesOverviewLayout.batchSize(forColumnCount: columnCount)
-    expect(batchSize / columnCount == 8, "Lazy-Batches enthalten acht vollständige Zeilen bei \(columnCount) Spalten")
-    expect(batchSize % columnCount == 0, "Lazy-Batches teilen keine Kartenzeile bei \(columnCount) Spalten")
+do {
+    expect(NotesOverviewLayout.columnCount(for: 1366, isPhone: true) == 1, "iPhone zeigt immer eine Spalte")
 }
-expect(NotesOverviewLayout.batchSize(forColumnCount: 0) == 8, "Ungültige Spaltenzahl bleibt sicher")
+// Flaches Zeilen-Layout der Nur-Notizen-Übersicht: keine Zeile hat mehr Karten
+// als Spalten, die Jetzt-Linie trennt Vergangenes von Kommendem und liegt genau
+// einmal in der Liste – auch bei leeren Daten oder nur vergangenen Einträgen.
+for columnCount in [0, 1, 2, 3] {
+    let entries = Array(0..<11)
+    let plan = NotesOverviewLayout.rowPlan(entries: entries, columnCount: columnCount) { $0 < 4 }
+    expect(plan.filter { $0.isNowLine }.count == 1, "Genau eine Jetzt-Linie bei \(columnCount) Spalten")
+    expect(plan.allSatisfy { $0.cardCount <= max(1, columnCount) }, "Keine Zeile breiter als das Raster bei \(columnCount) Spalten")
+    expect(plan.reduce(0) { $0 + $1.cardCount } == entries.count, "Keine Karte geht verloren bei \(columnCount) Spalten")
+    if let nowIndex = plan.firstIndex(where: { $0.isNowLine }) {
+        let before = plan[..<nowIndex].reduce(0) { $0 + $1.cardCount }
+        expect(before == 4, "Vier abgelaufene Karten liegen über der Linie bei \(columnCount) Spalten")
+    }
+}
+let onlyPast = NotesOverviewLayout.rowPlan(entries: [1, 2, 3], columnCount: 3) { _ in true }
+expect(onlyPast.last?.isNowLine == true, "Nur Vergangenes: Linie am Ende")
+let onlyFuture = NotesOverviewLayout.rowPlan(entries: [1, 2, 3], columnCount: 3) { _ in false }
+expect(onlyFuture.first?.isNowLine == true, "Nur Kommendes: Linie am Anfang")
+expect(NotesOverviewLayout.rowPlan(entries: [Int](), columnCount: 3) { _ in true }.count == 1, "Leere Liste enthält nur die Linie")
 for width in stride(from: CGFloat(320), through: 1400, by: 8) {
     let count = NotesOverviewLayout.columnCount(for: width)
     let cardWidth = (width - 2 * NotesOverviewLayout.horizontalPadding
