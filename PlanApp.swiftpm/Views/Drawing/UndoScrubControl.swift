@@ -86,6 +86,11 @@ final class UndoScrubRotationTracker {
 struct UndoScrubHandle: UIViewRepresentable {
     var allowsFinger: Bool
     var style: UndoScrubStyle
+    /// Ob der Knopf überhaupt auf Berührungen reagieren darf. Ohne
+    /// rückgängig zu machende (bzw. zu wiederholende) Schritte ist er nur
+    /// blass gezeichnet und nimmt keinen Kontakt an – die Berührung fällt an
+    /// die darunterliegende Fläche durch.
+    var isEnabled: Bool = true
     /// Fenster-/Global-Mittelpunkt des Kreisbogens (nur Kreis-Bar).
     var circleCenterInGlobal: CGPoint = .zero
     /// Gewünschte on-screen-Radialgröße des Kreises (nur Kreis-Bar).
@@ -112,12 +117,14 @@ struct UndoScrubHandle: UIViewRepresentable {
         view.isUserInteractionEnabled = false
         view.backgroundColor = .clear
         view.isAccessibilityElement = false
+        context.coordinator.box.isEnabled = isEnabled
         view.box = context.coordinator.box
         return view
     }
 
     func updateUIView(_ uiView: UndoScrubHandleView, context: Context) {
         let box = context.coordinator.box
+        box.isEnabled = isEnabled
         box.allowsFinger = allowsFinger
         box.style = style
         box.circleCenterInGlobal = circleCenterInGlobal
@@ -139,6 +146,8 @@ struct UndoScrubHandle: UIViewRepresentable {
 /// Stabile Callbacks. Der Coordinator überlebt SwiftUI-Updates, sodass ein
 /// laufender Scrub nicht abreißt, wenn die Leiste neu gezeichnet wird.
 final class UndoScrubCallbackBox {
+    /// Ob der Knopf Berührungen annehmen darf (siehe `UndoScrubHandle`).
+    var isEnabled = true
     var allowsFinger = true
     var style: UndoScrubStyle = .linear
     var circleCenterInGlobal: CGPoint = .zero
@@ -202,6 +211,7 @@ final class UndoScrubRegistry {
     func box(at windowPoint: CGPoint, touch: UITouch?) -> UndoScrubCallbackBox? {
         boxes.values
             .filter { candidate in
+                guard candidate.isEnabled else { return false }
                 guard let view = candidate.view, view.window != nil else { return false }
                 let frame = view.convert(view.bounds, to: nil)
                 guard frame.contains(windowPoint), frame.width > 1, frame.height > 1 else { return false }

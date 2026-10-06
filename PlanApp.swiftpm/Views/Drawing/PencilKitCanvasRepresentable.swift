@@ -23,9 +23,6 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     /// Dynamische Stiftdicke (PencilKit-Stift mit Druck/Geschwindigkeit) oder
     /// Kugelschreiber (Monoline, immer gleich dick).
     public let dynamicPenWidth: Bool
-    /// Stift-Stabilisierung als Stärke 0…1 (0 = aus). Fertige Striche werden
-    /// damit geglättet (`PenStabilization`).
-    public let penStabilization: Double
     public let onCanvasCreated: (PKCanvasView) -> Void
     public let onFingerPan: (CGSize) -> Void
     /// Meldet einen **fertigen** Schritt der Zeichenfläche: den Zustand
@@ -62,6 +59,11 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     /// Mehrere Zeichen-Zustände nacheinander als eigene Rückgängig-Schritte
     /// verzeichnen (gerade Linie: erst die schräge Linie, dann das Geradeziehen).
     public let onCommitDrawingSteps: ([PKDrawing]) -> Void
+    /// Ob ein Canvas-Stand noch **nicht** als Rückgängig-Schritt veröffentlicht
+    /// ist (z. B. eine Lasso-Verschiebung, solange die Auswahl läuft). Das
+    /// Overlay hält damit den Rückgängig-Knopf verfügbar: Ein Antippen
+    /// veröffentlicht den offenen Stand zuerst.
+    public let onPendingDrawingChange: (Bool) -> Void
 
     /// Wie lange der Stift am Ende eines Strichs still gehalten werden muss,
     /// bis der Strich zur geraden Linie einrastet.
@@ -76,7 +78,6 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         colorScheme: ColorScheme = .light,
         pencilOnlyDrawing: Bool = true,
         dynamicPenWidth: Bool = true,
-        penStabilizationPercent: Double = PenStabilization.defaultPercent,
         onCanvasCreated: @escaping (PKCanvasView) -> Void = { _ in },
         onFingerPan: @escaping (CGSize) -> Void = { _ in },
         onDrawingChange: @escaping (PKDrawing, PKDrawing) -> Void = { _, _ in },
@@ -87,9 +88,11 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         onCanvasGestureBegan: @escaping () -> Void = {},
         onCanvasGestureEnded: @escaping () -> Void = {},
         onStraightLineSnap: @escaping () -> Void = {},
-        onCommitDrawingSteps: @escaping ([PKDrawing]) -> Void = { _ in }
+        onCommitDrawingSteps: @escaping ([PKDrawing]) -> Void = { _ in },
+        onPendingDrawingChange: @escaping (Bool) -> Void = { _ in }
     ) {
         self.onCommitDrawingSteps = onCommitDrawingSteps
+        self.onPendingDrawingChange = onPendingDrawingChange
         self._drawing = drawing
         self.toolSelection = toolSelection
         self.penWidth = penWidth
@@ -98,7 +101,6 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         self.colorScheme = colorScheme
         self.pencilOnlyDrawing = pencilOnlyDrawing
         self.dynamicPenWidth = dynamicPenWidth
-        self.penStabilization = PenStabilization.strength(percent: penStabilizationPercent)
         self.onStraightLineSnap = onStraightLineSnap
         self.onCanvasCreated = onCanvasCreated
         self.onFingerPan = onFingerPan
@@ -243,6 +245,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
            drawing != context.coordinator.lastSyncedDrawing {
             context.coordinator.applyExternalDrawing(drawing)
         }
+        context.coordinator.publishSelectionIfToolChanged(isInking: isInking)
         applyTool(to: uiView)
     }
 
@@ -275,7 +278,12 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         case .eraser:
             canvasView.tool = PKEraserTool(.bitmap, width: eraserWidth)
         case .lasso:
-            canvasView.tool = PKLassoTool()
+            // Nur bei einem echten Werkzeugwechsel setzen: Jedes neue
+            // `PKLassoTool` verwirft die laufende Auswahl – die verschobenen
+            // Striche waren danach aus der Zeichenfläche verschwunden.
+            if !(canvasView.tool is PKLassoTool) {
+                canvasView.tool = PKLassoTool()
+            }
         case .text:
             // Bei aktivem Text-Werkzeug zeichnet der Canvas nicht;
             // stattdessen werden Textfelder in der SwiftUI-Ebene platziert/bearbeitet.
@@ -355,13 +363,16 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         private struct StraightSession {
             /// Zeichnung vor dem Strich (ohne den schrägen Live-Strich).
             var base: PKDrawing
-            /// Echter PencilKit-Strich, sobald verfügbar. Er bringt die
-            /// tatsächlichen Stiftdaten mit (Punktdicken, Neigung, Kraft,
-            /// Deckkraft) und ist damit die einzige verlässliche Quelle für
-            /// die richtige Strichdicke der geraden Linie.
+            /// Echter PencilKit-Strich. Er bringt die tatsächlichen
+            /// Stiftdaten mit (Punktdicken, Neigung, Kraft, Deckkraft) und ist
+            /// damit die verlässliche Quelle für die richtige Strichdicke der
+            /// geraden Linie – **nicht** für den Rückgängig-Schritt: Wird er
+            /// erst spät aus der Zeichenfläche gelesen, kann er eine eigene
+            /// Vorschau-Fassung sein.
             var realStroke: PKStroke? = nil
-            /// Ersatz aus den Berührungs-Samples, falls PencilKit den
-            /// Live-Strich nicht herausgibt – nur für den Rückgängig-Schritt.
+            /// Aus den Berührungs-Samples gebauter (schräger) Strich. Er
+            /// stammt nachweislich vom Nutzer und ist deshalb der verlässliche
+            /// erste Rückgängig-Schritt.
             var slanted: PKStroke? = nil
             /// Werkzeugdaten als Rückfall, wenn kein echter Strich vorliegt.
             var ink: PKInk
@@ -374,6 +385,12 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             var end: CGPoint
             /// Gerade Linie, die gerade in der Zeichenfläche steht.
             var straight: PKStroke? = nil
+            /// Alle Fassungen der geraden Linie, die in dieser Sitzung in die
+            /// Zeichenfläche geschrieben wurden. PencilKit meldet sie als
+            /// eigene Striche zurück; ohne diese Liste könnte eine ältere
+            /// Vorschau-Fassung für den echten (schrägen) Strich gehalten
+            /// werden – der Rückgängig-Schritt zeigte dann die gerade Linie.
+            var builtPreviews: [PKStroke] = []
             /// Zeitpunkt des letzten Aufbaus der geraden Linie.
             var lastStraightBuild: Date = .distantPast
         }
@@ -408,13 +425,33 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// während einer laufenden Zeichen-/Radier-Geste und wird erst danach
         /// übernommen. Dadurch bekommt die Historie **einen** Schritt je
         /// Geste statt vieler Zwischenstände.
-        var hasPendingDrawingChange = false
+        ///
+        /// Ein **Auswahl**-Stand (Lasso) wird länger gehalten: PencilKit führt
+        /// die verschobenen Striche während der Auswahl selbst – ein
+        /// Zwischenstand darf niemals in die Notiz oder in die Historie.
+        var hasPendingDrawingChange = false {
+            didSet {
+                guard hasPendingDrawingChange != oldValue else { return }
+                let pending = hasPendingDrawingChange
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.onPendingDrawingChange(pending)
+                }
+            }
+        }
+        /// Ob der offene Canvas-Stand aus einer **Auswahl** (Lasso) stammt.
+        private var pendingChangeIsSelection = false
+        /// Strichzahl vor der laufenden Auswahl. Solange PencilKit weniger
+        /// Striche meldet, ist die Auswahl noch in Bewegung: Dann wird der
+        /// Stand nicht über den Nachlauf-Takt veröffentlicht (er enthielte
+        /// nicht mehr alle Striche) und auch nicht auf die Fläche geschrieben.
+        private var selectionBaseStrokeCount = 0
         private var settleWorkItem: DispatchWorkItem?
         /// Ob die **laufende** Geste radieren oder auswählen darf. Nur dann
         /// dürfen Striche durch eine Canvas-Meldung verschwinden.
         private var gestureAllowsRemovals = false
         /// Ob die letzte Geste mit Stift oder Textmarker gezeichnet hat – nur
-        /// dann greift die Stift-Stabilisierung.
+        /// dann darf die letzte (noch wachsende) Fassung eines Strichs durch
+        /// die längere ersetzt werden.
         private var lastGestureWasInking = false
         /// Nach einem externen Stand (Undo/Redo) ist der nächste Rückläufer
         /// kein Radieren: Erst wenn PencilKit den Stand bestätigt hat oder der
@@ -423,6 +460,19 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// Kurzer Nachlauf nach dem Ende einer Geste: PencilKit meldet den
         /// letzten Stand eines Strichs oft erst danach.
         private static let drawingSettleDelay: TimeInterval = 0.12
+
+        /// Ob gerade das Auswahl-Werkzeug (Lasso) aktiv ist.
+        private var isLassoToolActive: Bool {
+            if case .lasso = parent.toolSelection { return true }
+            return false
+        }
+
+        /// Ob gerade der Radierer aktiv ist (nur er darf über eine
+        /// Canvas-Meldung Striche entfernen).
+        private var isEraserToolActive: Bool {
+            if case .eraser = parent.toolSelection { return true }
+            return false
+        }
 
         /// Läuft gerade eine Zeichen-, Radier- oder Auswahl-Geste?
         private var isCanvasGestureActive: Bool {
@@ -458,19 +508,10 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             let previous = canvasView.drawing
             authoritativeDrawing = newDrawing
             lastSyncedDrawing = newDrawing
-            guard previous != newDrawing else { return }
-            // Liste der entfernten Striche fortschreiben: neu entfernte kommen
-            // hinzu, **bewusst wiederhergestellte** (Redo) fallen heraus. Ohne
-            // diese Pflege würde ein per Redo zurückgeholter Strich bei der
-            // nächsten Rückläufer-Prüfung fälschlich wieder verworfen.
-            var retired = removedByExternalApply.filter { old in
-                !newDrawing.strokes.contains { Self.sameStroke($0, old) }
-            }
-            for removedNow in Self.strokes(in: previous, missingFrom: newDrawing)
-            where !retired.contains(where: { Self.sameStroke($0, removedNow) }) {
-                retired.append(removedNow)
-            }
-            removedByExternalApply = retired
+            // Inhaltlich gleich = nichts zu tun. Ein Neusetzen würde nur
+            // PencilKits eigenen Zustand (z. B. eine Auswahl) verwerfen.
+            guard !Self.drawingsMatch(previous, newDrawing) else { return }
+            noteRemovedStrokes(from: previous, to: newDrawing)
             // Läuft gerade das Geradeziehen, wird dessen Basis der neue Stand:
             // Sonst brächte das Abheben des Stifts die eben rückgängig
             // gemachten Striche zurück.
@@ -479,6 +520,23 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             if needsRebase {
                 rebaseStraightSession(to: newDrawing)
             }
+        }
+
+        /// Pflegt die Liste der Striche, die ein übernommener Stand
+        /// **entfernt** hat: neu entfernte kommen hinzu, **bewusst
+        /// wiederhergestellte** (Redo, Rücknahme einer Lasso-Verschiebung)
+        /// fallen heraus. Ohne diese Pflege würde ein zurückgeholter Strich bei
+        /// der nächsten Rückläufer-Prüfung fälschlich wieder verworfen – oder
+        /// ein gelöschter Strich als Geist zurückkommen.
+        private func noteRemovedStrokes(from previous: PKDrawing, to newDrawing: PKDrawing) {
+            var retired = removedByExternalApply.filter { old in
+                !newDrawing.strokes.contains { Self.sameStroke($0, old) }
+            }
+            for removedNow in Self.strokes(in: previous, missingFrom: newDrawing)
+            where !retired.contains(where: { Self.sameStroke($0, removedNow) }) {
+                retired.append(removedNow)
+            }
+            removedByExternalApply = retired
         }
 
         /// Schreibt einen Stand in die Fläche, ohne die Undo-Buchhaltung
@@ -500,12 +558,75 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// Objektidentität: `PKStroke`-Werte, die PencilKit erneut aus seinem
         /// internen Stand liefert, sind nicht dieselben Instanzen.
         static func strokes(in drawing: PKDrawing, missingFrom other: PKDrawing) -> [PKStroke] {
-            guard !drawing.strokes.isEmpty, drawing.strokes.count > other.strokes.count else {
-                return []
+            guard !drawing.strokes.isEmpty else { return [] }
+            // Bewusst **ohne** Abkürzung über die Strichzahl: Beim Rückgängig-
+            // machen wird ein Strich oft durch einen anderen ersetzt (gerade
+            // Linie → schräge Linie). Bei gleicher Anzahl lieferte die alte
+            // Abkürzung eine leere Liste – der ersetzte Strich galt dann nicht
+            // als entfernt und kam als Geisterstrich zurück.
+            var remaining = other.strokes
+            var missing: [PKStroke] = []
+            for candidate in drawing.strokes {
+                if let index = remaining.firstIndex(where: { sameStroke($0, candidate) }) {
+                    remaining.remove(at: index)
+                } else {
+                    missing.append(candidate)
+                }
             }
-            return drawing.strokes.filter { candidate in
-                !other.strokes.contains { sameStroke($0, candidate) }
+            return missing
+        }
+
+        /// Inhaltliche Gleichheit zweier Zeichnungen (Reihenfolge, Tinte,
+        /// Transform und Punkte). Wird genutzt, um ein unnötiges Neusetzen der
+        /// Zeichenfläche zu vermeiden: Jedes Schreiben mitten in einer
+        /// Auswahl oder Geste verwirft PencilKits eigenen Zustand.
+        static func drawingsMatch(_ lhs: PKDrawing, _ rhs: PKDrawing) -> Bool {
+            guard lhs.strokes.count == rhs.strokes.count else { return false }
+            for (left, right) in zip(lhs.strokes, rhs.strokes) {
+                guard left.transform == right.transform,
+                      left.ink.inkType == right.ink.inkType,
+                      left.ink.color == right.ink.color else {
+                    return false
+                }
+                let leftPoints = points(of: left)
+                let rightPoints = points(of: right)
+                guard leftPoints.count == rightPoints.count else { return false }
+                for (a, b) in zip(leftPoints, rightPoints) {
+                    guard abs(a.location.x - b.location.x) <= 0.25,
+                          abs(a.location.y - b.location.y) <= 0.25,
+                          abs(a.size.width - b.size.width) <= 0.25,
+                          abs(a.size.height - b.size.height) <= 0.25,
+                          abs(a.force - b.force) <= 0.05,
+                          abs(a.opacity - b.opacity) <= 0.05 else {
+                        return false
+                    }
+                }
             }
+            return true
+        }
+
+        /// Ob ein Strich eine (frühere) Fassung der **eigenen** Vorschau der
+        /// geraden Linie ist: Er beginnt am Halte-Anker und alle seine Punkte
+        /// liegen fast exakt auf der Verbindung von Anfang und Ende. Die
+        /// Vorschauen erfüllen das exakt – ein von Hand gezogener Strich weicht
+        /// davon ab (genau deshalb rastet er ja zur geraden Linie ein).
+        static func looksLikeStraightPreview(_ stroke: PKStroke, from start: CGPoint) -> Bool {
+            let strokePoints = points(of: stroke)
+            guard strokePoints.count >= 2,
+                  let first = strokePoints.first?.location,
+                  let last = strokePoints.last?.location else {
+                return false
+            }
+            guard hypot(first.x - start.x, first.y - start.y) <= 24 else { return false }
+            let dx = last.x - first.x
+            let dy = last.y - first.y
+            let length = hypot(dx, dy)
+            guard length > 1 else { return false }
+            for point in strokePoints {
+                let distance = abs(dy * (point.location.x - first.x) - dx * (point.location.y - first.y)) / length
+                if distance > 0.75 { return false }
+            }
+            return true
         }
 
         /// Inhaltliche Gleichheit zweier Striche (Tinte, Punktzahl, Endpunkte).
@@ -835,8 +956,13 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 return
             }
 
+            // Erster Schritt: die gezeichnete (schräge) Linie. Bevorzugt wird
+            // der aus den Berührungs-Samples gebaute Strich – nur er stammt
+            // nachweislich vom Nutzer. Ein später nachgereichter PencilKit-
+            // Strich kann dagegen die eigene Vorschau sein und dient deshalb
+            // nur als Datenquelle für die gerade Linie.
             var steps: [PKDrawing] = []
-            if let slanted = session.realStroke ?? session.slanted {
+            if let slanted = session.slanted ?? session.realStroke {
                 steps.append(PKDrawing(strokes: session.base.strokes + [slanted]))
             }
             let final = PKDrawing(strokes: session.base.strokes + [straight])
@@ -882,6 +1008,13 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             straightSession?.straight = straight
             straightSession?.lastStraightBuild = now
             guard let straight else { return }
+            if var updated = straightSession {
+                if updated.builtPreviews.count >= 60 {
+                    updated.builtPreviews.removeFirst()
+                }
+                updated.builtPreviews.append(straight)
+                straightSession = updated
+            }
             writeCanvasWithoutBookkeeping(
                 PKDrawing(strokes: session.base.strokes + [straight])
             )
@@ -1105,6 +1238,12 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 // PencilKit hat den abgebrochenen Strich eventuell doch
                 // übernommen: Dann liefert er jetzt die echten Stiftdaten für
                 // die gerade Linie und wird anschließend durch sie ersetzt.
+                // Ein Rückläufer der **eigenen** Vorschau ist dagegen nichts
+                // Neues – er darf nie als echter Strich des Nutzers gelten.
+                if let written = authoritativeDrawing,
+                   Self.drawingsMatch(canvasView.drawing, written) {
+                    return
+                }
                 adoptCommittedStroke(from: canvasView)
                 return
             }
@@ -1116,6 +1255,30 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 // gerade Linie): nichts zu tun – und der externe Stand ist
                 // damit bestätigt.
                 awaitingExternalAcknowledgement = false
+                return
+            }
+
+            // Lasso/Auswahl: PencilKit verschiebt, vervielfacht oder löscht
+            // die Striche selbst. Während der Auswahl ist der **Canvas** die
+            // Quelle der Wahrheit: Die App merkt sich seinen Stand nur,
+            // schreibt nichts zurück und veröffentlicht noch nichts. Erst der
+            // fertige Stand wird als **ein** Schritt übernommen – ein
+            // Zwischenstand (während des Ziehens fehlen die verschobenen
+            // Striche) ließ den Inhalt sonst aus der Notiz verschwinden.
+            if isLassoToolActive, !awaitingExternalAcknowledgement {
+                let mirrored = reconciledDrawing(
+                    reported,
+                    base: base,
+                    allowsRemovals: true,
+                    allowsStrokeReplacement: false
+                )
+                if !hasPendingDrawingChange {
+                    selectionBaseStrokeCount = base.strokes.count
+                }
+                authoritativeDrawing = mirrored
+                hasPendingDrawingChange = true
+                pendingChangeIsSelection = true
+                scheduleDrawingSettle()
                 return
             }
 
@@ -1144,35 +1307,64 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 scheduleDrawingSettle()
                 return
             }
-            commitCanvasDrawing(committed, stabilize: lastGestureWasInking)
+            commitCanvasDrawing(committed)
         }
 
-        /// Veröffentlicht einen fertigen Canvas-Stand: Er wird – je nach
-        /// Einstellung geglättet (Stift-Stabilisierung) – zum aktuellen Stand
-        /// der App und dem Overlay **zusammen mit dem Zustand davor** gemeldet.
-        /// Die Historie verzeichnet damit genau einen Schritt „von – nach“.
-        private func commitCanvasDrawing(_ drawing: PKDrawing, stabilize: Bool) {
+        /// Veröffentlicht einen fertigen Canvas-Stand: Er wird zum aktuellen
+        /// Stand der App und dem Overlay **zusammen mit dem Zustand davor**
+        /// gemeldet. Die Historie verzeichnet damit genau einen Schritt
+        /// „von – nach“.
+        private func commitCanvasDrawing(_ drawing: PKDrawing) {
             hasPendingDrawingChange = false
+            pendingChangeIsSelection = false
             settleWorkItem?.cancel()
             settleWorkItem = nil
 
             let previous = parent.drawing
-            var final = drawing
-            if stabilize {
-                final = Self.stabilizedDrawing(
-                    drawing,
-                    comparedTo: previous,
-                    strength: parent.penStabilization
-                )
+            authoritativeDrawing = drawing
+            lastSyncedDrawing = drawing
+            // Nur schreiben, wenn die Fläche den Stand nicht ohnehin zeigt:
+            // Ein unnötiges Setzen verwirft PencilKits eigenen Zustand (z. B.
+            // eine laufende Auswahl) und kann Striche verschlucken.
+            if let canvasView, !Self.drawingsMatch(canvasView.drawing, drawing) {
+                canvasView.drawing = drawing
             }
-            authoritativeDrawing = final
-            lastSyncedDrawing = final
-            if canvasView?.drawing != final {
-                canvasView?.drawing = final
+            guard !Self.drawingsMatch(previous, drawing) else { return }
+            parent.drawing = drawing
+            parent.onDrawingChange(previous, drawing)
+        }
+
+        /// Veröffentlicht einen fertigen **Auswahl**-Stand (Lasso): Der Canvas
+        /// zeigt ihn bereits selbst, deshalb wird die Zeichenfläche hier
+        /// ausdrücklich **nicht** neu beschrieben – nur Binding und Historie
+        /// übernehmen ihn als einen Schritt „von – nach“.
+        private func commitSelectionDrawing(_ drawing: PKDrawing) {
+            hasPendingDrawingChange = false
+            pendingChangeIsSelection = false
+            selectionBaseStrokeCount = 0
+            settleWorkItem?.cancel()
+            settleWorkItem = nil
+
+            let previous = parent.drawing
+            authoritativeDrawing = drawing
+            lastSyncedDrawing = drawing
+            noteRemovedStrokes(from: previous, to: drawing)
+            guard !Self.drawingsMatch(previous, drawing) else { return }
+            parent.drawing = drawing
+            parent.onDrawingChange(previous, drawing)
+        }
+
+        /// Wird bei jedem SwiftUI-Update aufgerufen: Ein offener Auswahl-Stand
+        /// (Lasso) wird veröffentlicht, sobald das Werkzeug gewechselt hat oder
+        /// keine Geste mehr läuft – so bleibt die Verschiebung nicht bis zum
+        /// nächsten Speichern „unsichtbar“.
+        func publishSelectionIfToolChanged(isInking: Bool) {
+            guard pendingChangeIsSelection, !isLassoToolActive, !isInking else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.pendingChangeIsSelection, !self.isLassoToolActive else { return }
+                guard !self.isCanvasGestureActive else { return }
+                self.flushPendingDrawingChange()
             }
-            guard final != previous else { return }
-            parent.drawing = final
-            parent.onDrawingChange(previous, final)
         }
 
         /// Wartet den letzten Stand eines Strichs ab und veröffentlicht ihn
@@ -1186,7 +1378,16 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
         private func settleDrawingChange() {
             settleWorkItem = nil
-            guard hasPendingDrawingChange else { return }
+            guard hasPendingDrawingChange, let pending = authoritativeDrawing else { return }
+            // Eine Auswahl (Lasso) wird erst übernommen, wenn kein Strich mehr
+            // fehlt: Während des Verschiebens meldet PencilKit kurzzeitig
+            // Stände ohne die verschobenen Striche – die dürfen weder in die
+            // Notiz noch in die Historie. Der nächste (vollständige) Stand
+            // plant den Nachlauf erneut ein; endgültige Löschungen übernimmt
+            // ein ausdrücklicher Aufruf (Werkzeugwechsel, Undo, Speichern).
+            if pendingChangeIsSelection, pending.strokes.count < selectionBaseStrokeCount {
+                return
+            }
             if isCanvasGestureActive {
                 scheduleDrawingSettle()
                 return
@@ -1200,82 +1401,78 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// verschwindet.
         func flushPendingDrawingChange() {
             guard hasPendingDrawingChange, let committed = authoritativeDrawing else { return }
-            commitCanvasDrawing(committed, stabilize: lastGestureWasInking)
+            if pendingChangeIsSelection {
+                commitSelectionDrawing(committed)
+            } else {
+                commitCanvasDrawing(committed)
+            }
         }
 
         /// Verwirft einen offenen Canvas-Stand: Ein neuer, externer Stand
         /// ersetzt ihn (die Schritte liefert dann die Historie des Overlays).
         private func discardPendingDrawingChange() {
             hasPendingDrawingChange = false
+            pendingChangeIsSelection = false
+            selectionBaseStrokeCount = 0
             settleWorkItem?.cancel()
             settleWorkItem = nil
         }
 
-        /// Glättet die **neu hinzugekommenen** Striche eines Stands
-        /// (Stift-Stabilisierung). Bereits vorhandene Striche werden nie ein
-        /// zweites Mal geglättet – sonst würde die Schrift mit jedem weiteren
-        /// Strich weicher.
-        private static func stabilizedDrawing(
-            _ drawing: PKDrawing,
-            comparedTo previous: PKDrawing,
-            strength: Double
-        ) -> PKDrawing {
-            guard PenStabilization.strength(fromClamped: strength) > 0 else { return drawing }
-            var strokes = drawing.strokes
-            var changed = false
-            for (index, stroke) in strokes.enumerated() {
-                if previous.strokes.contains(where: { sameStroke($0, stroke) }) { continue }
-                guard let smoothed = stabilizedStroke(stroke, strength: strength) else { continue }
-                strokes[index] = smoothed
-                changed = true
-            }
-            guard changed else { return drawing }
-            return PKDrawing(strokes: strokes)
-        }
-
-        /// Ein Strich mit geglätteten **Positionen**. Punktdicke, Druck,
-        /// Neigung, Deckkraft und Zeitstempel bleiben unverändert – nur die
-        /// Punkte wandern auf die ruhigere Linie.
-        private static func stabilizedStroke(_ stroke: PKStroke, strength: Double) -> PKStroke? {
-            let points = points(of: stroke)
-            guard points.count > 2 else { return nil }
-            let locations = points.map(\.location)
-            let smoothed = PenStabilization.smoothedLocations(locations, strength: strength)
-            guard smoothed != locations else { return nil }
-            var strokePoints: [PKStrokePoint] = []
-            strokePoints.reserveCapacity(points.count)
-            for (index, point) in points.enumerated() {
-                strokePoints.append(
-                    PKStrokePoint(
-                        location: smoothed[index],
-                        timeOffset: point.timeOffset,
-                        size: point.size,
-                        opacity: point.opacity,
-                        force: point.force,
-                        azimuth: point.azimuth,
-                        altitude: point.altitude
-                    )
-                )
-            }
-            return PKStroke(
-                ink: stroke.ink,
-                path: PKStrokePath(controlPoints: strokePoints, creationDate: Date())
-            )
-        }
-
         /// Übernimmt den von PencilKit abgelegten (schrägen) Strich als echte
-        /// Datenquelle für die gerade Linie: Er bleibt der erste
-        /// Rückgängig-Schritt und liefert die Punktdicken, mit denen PencilKit
-        /// den Strich gezeichnet hat.
+        /// Datenquelle für die Dicke der geraden Linie.
+        ///
+        /// Für den **Rückgängig-Schritt** zählt er nicht: Er wird erst spät
+        /// aus der Zeichenfläche gelesen, und dort steht zu diesem Zeitpunkt
+        /// schon die eigene Vorschau der geraden Linie. Der aus den
+        /// Berührungs-Samples gebaute Strich bleibt deshalb erhalten.
         private func adoptCommittedStroke(from canvasView: PKCanvasView) {
             guard let session = straightSession, session.realStroke == nil else { return }
-            guard let real = inProgressStroke(on: canvasView, base: session.base) else {
+            guard let real = committedSlantedStroke(on: canvasView, session: session) else {
                 // Fremder Stand (z. B. die eigene gerade Linie): nichts tun.
                 return
             }
             straightSession?.realStroke = real
-            straightSession?.slanted = nil
             rebuildStraightLine(force: true)
+        }
+
+        /// Der echte (schräge) Strich, den PencilKit beim Abbruch des
+        /// Live-Strichs abgelegt hat – **ohne** die selbst gebaute gerade Linie
+        /// und ohne die Striche, die schon zur Basis gehören.
+        ///
+        /// Die App schreibt die gerade Linie selbst in die Zeichenfläche, und
+        /// PencilKit meldet jeden dieser Schreibvorgänge als Änderung. Ohne
+        /// diese Prüfung würde die eigene gerade Linie als „echter Strich“
+        /// übernommen: Der reservierte Rückgängig-Schritt für die schräge Linie
+        /// enthielte dann die gerade Linie, und ein Rückgängig bliebe gerade.
+        private func committedSlantedStroke(
+            on canvasView: PKCanvasView,
+            session: StraightSession
+        ) -> PKStroke? {
+            let candidates = canvasView.drawing.strokes.filter { candidate in
+                if session.base.strokes.contains(where: { Self.sameStroke($0, candidate) }) {
+                    return false
+                }
+                if let straight = session.straight, Self.sameStroke(straight, candidate) {
+                    return false
+                }
+                // Auch jede **ältere** Fassung der geraden Linie ist eine
+                // eigene Vorschau, kein Strich des Nutzers. Die Punktzahl
+                // ändert sich mit der Länge, deshalb erkennt der geometrische
+                // Test sie zuverlässiger als der Striche-Vergleich.
+                if session.builtPreviews.contains(where: { Self.sameStroke($0, candidate) }) {
+                    return false
+                }
+                if Self.looksLikeStraightPreview(candidate, from: session.start) {
+                    return false
+                }
+                return true
+            }
+            guard let candidate = candidates.last,
+                  let first = strokePoints(of: candidate).first?.location else {
+                return nil
+            }
+            guard let start = liveStrokeStart else { return candidate }
+            return hypot(first.x - start.x, first.y - start.y) <= 24 ? candidate : nil
         }
 
         /// Zeichen- oder Radier-Geste begonnen. Wird u. a. genutzt, um die
@@ -1283,11 +1480,20 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         public func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
             parent.onCanvasActivity()
             if straightSession != nil { return }
+            // Ein offener Auswahl-Stand (Lasso) gehört als **eigener** Schritt
+            // in die Historie, bevor die nächste Geste ihn mit sich ziehen
+            // würde. Beim Lasso selbst nicht: Eine weitere Lasso-Geste kann
+            // zum selben Auswahl-Vorgang gehören (Auswahl verschieben).
+            if pendingChangeIsSelection, !isLassoToolActive {
+                flushPendingDrawingChange()
+            }
             strokeToolActive = true
             lastSignificantMovement = Date()
-            // Nur Radierer und Lasso dürfen Striche entfernen; und nur ein
-            // Zeichen-Werkzeug darf die Stift-Stabilisierung auslösen.
-            gestureAllowsRemovals = !isInkingToolActive
+            // Nur der Radierer darf Striche durch eine Canvas-Meldung
+            // entfernen. Das Lasso (Auswahl) hat seinen eigenen Weg – siehe
+            // `canvasViewDrawingDidChange` – und ein Text-Werkzeug bekommt gar
+            // keine Striche.
+            gestureAllowsRemovals = isEraserToolActive
             lastGestureWasInking = isInkingToolActive
             // Jetzt zeichnet der Nutzer selbst: gemeldete Änderungen sind
             // wieder echte Aktionen, keine Rückläufer.
@@ -1325,8 +1531,21 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             liveStrokeEnd = nil
             // Den letzten Stand des Strichs abwarten (PencilKit meldet ihn oft
             // erst kurz nach dem Abheben) und dann **einen** Schritt ablegen.
+            // Eine beendete Lasso-Auswahl wird sofort übernommen: Sie ist ein
+            // eigener Vorgang, und ihr Stand wird ohne Neusetzen der Fläche
+            // veröffentlicht.
             if hasPendingDrawingChange {
-                scheduleDrawingSettle()
+                if pendingChangeIsSelection {
+                    // Auswahl beendet: Fehlt ein Strich, ist PencilKit noch
+                    // nicht fertig – dann entscheidet der nächste (vollständige)
+                    // Stand. Ein vollständiger Stand wird sofort übernommen.
+                    if let pending = authoritativeDrawing,
+                       pending.strokes.count >= selectionBaseStrokeCount {
+                        flushPendingDrawingChange()
+                    }
+                } else {
+                    scheduleDrawingSettle()
+                }
             }
             DispatchQueue.main.async { [weak self] in
                 self?.parent.onCanvasGestureEnded()

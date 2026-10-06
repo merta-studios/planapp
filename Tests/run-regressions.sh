@@ -17,7 +17,6 @@ sources=(
     PlanApp.swiftpm/Views/Timetable/NotesOverviewLayout.swift
     PlanApp.swiftpm/Views/Drawing/SqueezePaletteLayout.swift
     PlanApp.swiftpm/Utils/InteractionPolicies.swift
-    PlanApp.swiftpm/Utils/PenStabilization.swift
     PlanApp.swiftpm/Utils/DateExtensions.swift
     Tests/InteractionRegressions/main.swift
 )
