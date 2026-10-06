@@ -6,6 +6,10 @@ import UIKit.UIGestureRecognizerSubclass
 /// aktiv: Eingaben werden geprüft, statt die UIView mitten im Touch abzuschalten.
 struct PalmSafeBackdropDismissView: UIViewRepresentable {
     let isEnabled: Bool
+    /// Erlaubt zusätzlich einen bewussten **Apple-Pencil-Tipp** auf die Seite.
+    /// Die Schutzregeln bleiben identisch: keine Mehrfinger-Kontakte, keine
+    /// Handballen-Größe, kein Ziehen, keine laufende Zeichen-Berührung.
+    var allowsPencilTap: Bool = false
     let canDismiss: () -> Bool
     let onDismiss: () -> Void
 
@@ -33,6 +37,7 @@ struct PalmSafeBackdropDismissView: UIViewRepresentable {
     private func configure(_ coordinator: Coordinator) {
         coordinator.tap?.canRecognizeTap = { isEnabled && canDismiss() }
         coordinator.tap?.actionForTap = onDismiss
+        coordinator.tap?.allowsPencilTap = allowsPencilTap
     }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
@@ -55,12 +60,20 @@ struct PalmSafeBackdropDismissView: UIViewRepresentable {
 final class DrawingBackdropUIView: UIView {}
 
 /// Prüft den gesamten Kontakt, nicht nur dessen anfangs oft kleinen Radius.
-/// Mehrere Finger, Pencil, Ziehen, langes Aufliegen und gleichzeitig aktive
-/// Kontakte auf anderen Views sind keine Schließgeste.
+/// Mehrere Finger, Ziehen, langes Aufliegen und gleichzeitig aktive Kontakte
+/// auf anderen Views sind keine Schließgeste. Der Apple Pencil darf – wenn
+/// ausdrücklich erlaubt – mit derselben strengen Prüfung schließen.
 final class IntentionalFingerTapRecognizer: UIGestureRecognizer {
     var canRecognizeTap: () -> Bool = { true }
     var actionForTap: (() -> Void)?
     private(set) var completedAction: (() -> Void)?
+    /// Zusätzlich bewusste Apple-Pencil-Tipps annehmen.
+    var allowsPencilTap: Bool = false {
+        didSet {
+            guard allowsPencilTap != oldValue else { return }
+            configureTouchHandling()
+        }
+    }
 
     private var trackedTouch: UITouch?
     private var startPoint: CGPoint = .zero
@@ -73,20 +86,35 @@ final class IntentionalFingerTapRecognizer: UIGestureRecognizer {
     }
 
     private func configureTouchHandling() {
-        allowedTouchTypes = [
+        var types: [NSNumber] = [
             NSNumber(value: UITouch.TouchType.direct.rawValue),
             NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)
         ]
+        if allowsPencilTap {
+            types.append(NSNumber(value: UITouch.TouchType.pencil.rawValue))
+        }
+        allowedTouchTypes = types
         cancelsTouchesInView = false
         delaysTouchesBegan = false
         delaysTouchesEnded = false
+    }
+
+    private func acceptsTouchType(_ type: UITouch.TouchType) -> Bool {
+        switch type {
+        case .direct, .indirectPointer:
+            return true
+        case .pencil:
+            return allowsPencilTap
+        default:
+            return false
+        }
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         guard state == .possible else { return }
         guard trackedTouch == nil, touches.count == 1,
               let touch = touches.first,
-              touch.type == .direct || touch.type == .indirectPointer,
+              acceptsTouchType(touch.type),
               canRecognizeTap() else {
             state = .failed
             return
@@ -126,14 +154,22 @@ final class IntentionalFingerTapRecognizer: UIGestureRecognizer {
         guard state == .possible else { return }
         let location = touch.location(in: nil)
         let movement = hypot(location.x - startPoint.x, location.y - startPoint.y)
+        // Der Apple Pencil tippt fast immer mit aufliegendem Handballen. Für
+        // einen Pencil-Tipp zählen direkte Kontakte (Hand, Finger) deshalb
+        // nicht als „zweiter Kontakt“ – ein zweiter **Pencil**-Kontakt oder
+        // ein zweiter Fingertipp auf dieselbe Weise schon. Für Fingertipps
+        // bleibt die Prüfung unverändert streng.
+        let isPencilTap = touch.type == .pencil
         let hasOtherContact = event.allTouches?.contains { other in
             guard other !== touch else { return false }
             switch other.phase {
             case .began, .moved, .stationary:
+                if isPencilTap, other.type == .direct { return false }
                 return true
             case .ended, .cancelled:
                 // Auch zwei im selben Event losgelassene Finger zählen nicht
                 // plötzlich als Ein-Finger-Tipp. Hover-Phasen dagegen ignorieren.
+                if isPencilTap, other.type == .direct { return false }
                 return other.timestamp >= startTime
             default:
                 return false
