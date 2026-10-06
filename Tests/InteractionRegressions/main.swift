@@ -185,4 +185,37 @@ let centeredLayout = SqueezePaletteLayout(
 expect(centeredLayout.anchor == center, "Letzte Hover-Position bleibt erhalten, wenn genug Platz ist")
 expect(centeredLayout.scale == 1, "Keine unnötig verkleinerten Buttons auf dem iPad")
 
+// MARK: - Hero-Rahmen, leere Notizen, Pencil-Gesten, Undo-Sitzungen
+
+expect(!HeroTransitionPolicy.isPlausibleSourceFrame(x: 0, y: 0, width: 0, height: 0), "Nullrahmen ist unplausibel")
+expect(!HeroTransitionPolicy.isPlausibleSourceFrame(x: 10, y: 10, width: 8, height: 8), "Mini-Rahmen ist unplausibel")
+expect(HeroTransitionPolicy.isPlausibleSourceFrame(x: 120, y: 240, width: 160, height: 90), "Normaler Stundenblock")
+expect(!HeroTransitionPolicy.isPlausibleSourceFrame(x: .nan, y: 0, width: 80, height: 40), "NaN-Rahmen")
+let local = HeroTransitionPolicy.localFrame(
+    windowX: 200, windowY: 300, width: 160, height: 90,
+    overlayOriginX: 40, overlayOriginY: 50
+)
+expect(local.x == 160 && local.y == 250, "Fenster- zu Overlay-Koordinaten")
+
+expect(NoteContentPolicy.shouldPersist(hasInk: true, hasText: false), "Tinte zählt als Inhalt")
+expect(NoteContentPolicy.shouldPersist(hasInk: false, hasText: true), "Text zählt als Inhalt")
+expect(!NoteContentPolicy.shouldPersist(hasInk: false, hasText: false), "Leere Notiz mit Tag darf nicht bleiben")
+
+expect(PencilGestureAction.toolbar.rawValue == "toolbar", "Squeeze-Standard ist serialisierbar")
+expect(PencilGestureAction.toggleEraser.rawValue == "toggleEraser", "Doppeltipp-Standard ist serialisierbar")
+expect(PencilGestureAction.allCases.count == 4, "Vier Pencil-Aktionen")
+
+expect(
+    NoteUndoSessionPolicy.trimmedKeys(["a", "b", "c"], inserting: "d") == ["d", "a", "b"],
+    "Nur die letzten drei Undo-Sitzungen"
+)
+expect(
+    NoteUndoSessionPolicy.trimmedKeys(["a", "b"], inserting: "b") == ["b", "a"],
+    "Erneutes Öffnen hebt die Sitzung nach vorn"
+)
+expect(NoteUndoSessionPolicy.linearTickCount(undoCount: 10, availableHeight: 96) == 3, "Balken stoppt am Bildschirmrand")
+expect(NoteUndoSessionPolicy.linearTickCount(undoCount: 2, availableHeight: 400) == 2, "Weniger Schritte als Höhe")
+expect(NoteUndoSessionPolicy.circularTickCount(undoCount: 80) == NoteUndoSessionPolicy.circularMaxTicks, "Maximal ein Kreis")
+expect(NoteUndoSessionPolicy.circularTickCount(undoCount: 4) == 4, "Weniger Schritte als ein Kreis")
+
 print("\(checks) Interaktions-/Sync-/Layout-Checks erfolgreich.")

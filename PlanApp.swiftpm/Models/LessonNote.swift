@@ -96,11 +96,10 @@ public struct LessonNote: Identifiable, Codable, Equatable {
         hasInkContent || hasTextContent
     }
 
-    /// Prüft, ob die Notiz sichtbaren Inhalt hat (Striche, Textfelder oder
-    /// ein zugewiesener Tag). Das Vorschaubild ist nur Cache und zählt bewusst
-    /// nicht als Inhalt, damit alte leer gespeicherte Vorschaubilder keine
-    /// "Geister-Notizen" erzeugen.
+    /// Prüft, ob die Notiz sichtbaren Inhalt hat (Striche oder Textfelder).
+    /// Ein Tag allein zählt bewusst nicht: Stundenblöcke dürfen nicht nur
+    /// wegen eines Tags ohne Notiz existieren. Das Vorschaubild ist nur Cache.
     public var hasVisibleContent: Bool {
-        hasInkContent || hasTextContent || tagID != nil
+        NoteContentPolicy.shouldPersist(hasInk: hasInkContent, hasText: hasTextContent)
     }
 }

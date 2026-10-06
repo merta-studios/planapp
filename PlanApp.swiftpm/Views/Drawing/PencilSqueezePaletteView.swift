@@ -29,6 +29,13 @@ struct PencilSqueezePaletteView: View {
     let onApplyColorToSelectedText: (String) -> Void
 
     let onUndo: () -> Void
+    var undoCount: Int = 0
+    var redoCount: Int = 0
+    var historyRevision: Int = 0
+    var onUndoScrubBegan: (CGPoint, CGPoint) -> Void = { _, _ in }
+    var onUndoScrubChanged: (CGSize, CGPoint) -> Void = { _, _ in }
+    var onUndoScrubEnded: () -> Void = {}
+    var hidesNonUndoElements: Bool = false
 
     @State private var isColorPickerVisible = false
     @State private var pointerHoverTargets: Set<String> = []
@@ -154,15 +161,17 @@ struct PencilSqueezePaletteView: View {
 
     private var paletteContent: some View {
         ZStack {
-            if isColorPickerVisible {
+            if isColorPickerVisible, !hidesNonUndoElements {
                 colorChoices
                     .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: scaleAnchor)))
                     .zIndex(0)
             }
 
-            mainArcBackground
-                .allowsHitTesting(false)
-                .zIndex(1)
+            if !hidesNonUndoElements {
+                mainArcBackground
+                    .allowsHitTesting(false)
+                    .zIndex(1)
+            }
 
             if isAdjustingWidth && showsThicknessGuide {
                 thicknessGuide
@@ -174,6 +183,8 @@ struct PencilSqueezePaletteView: View {
             ForEach(Array(paletteElements.enumerated()), id: \.offset) { index, element in
                 let angle = angleForElement(at: index)
                 paletteElementView(element)
+                    .opacity(hidesNonUndoElements && !element.isUndo ? 0 : 1)
+                    .allowsHitTesting(!hidesNonUndoElements || element.isUndo)
                     .position(point(radius: arcRadius, angle: angle))
                     .zIndex(2)
             }
@@ -230,19 +241,32 @@ struct PencilSqueezePaletteView: View {
     }
 
     private var undoButton: some View {
-        Button {
-            Haptics.tap()
-            onUndo()
-        } label: {
+        ZStack {
             Image(systemName: "arrow.uturn.backward")
                 .font(.system(size: 18, weight: .semibold))
                 .frame(width: buttonSize, height: buttonSize)
                 .foregroundColor(.primary)
+                .opacity(hidesNonUndoElements ? 0 : 1)
+
+            UndoScrubHandle(
+                allowsFinger: false,
+                style: .circular,
+                onTap: {
+                    Haptics.tap()
+                    onUndo()
+                },
+                onScrubBegan: onUndoScrubBegan,
+                onScrubChanged: onUndoScrubChanged,
+                onScrubEnded: onUndoScrubEnded
+            )
         }
-        .buttonStyle(SqueezePaletteButtonStyle(isHovered: isPaletteElementHovered("undo")))
+        .frame(width: buttonSize, height: buttonSize)
+        .modifier(SqueezePaletteSurface(isHovered: isPaletteElementHovered("undo")))
+        .contentShape(Circle())
         .hoverEffect(.lift)
         .modifier(paletteElementHoverTracking("undo"))
         .accessibilityLabel("Rückgängig")
+        .accessibilityHint("Mit dem Stift eine Sekunde halten, um im Kreis mehrere Schritte zu scrubben")
     }
 
     private func toolButton(_ tool: SqueezePaletteTool) -> some View {
@@ -773,6 +797,11 @@ private enum SqueezePaletteElement {
     case tool(SqueezePaletteTool)
     case color
     case thickness
+
+    var isUndo: Bool {
+        if case .undo = self { return true }
+        return false
+    }
 }
 
 /// Reihenfolge wie vom Nutzer gewünscht: Lasso, Stift, Textmarker, Radierer, Text.

@@ -43,6 +43,8 @@ public final class TimetableStorageService {
         static let viewMode = "planapp_timetable_view_mode"
         static let appearance = "planapp_app_appearance"
         static let tagSettings = "planapp_note_tag_settings"
+        static let applePencilStatus = "planapp_apple_pencil_status"
+        static let noteUndoSessions = "planapp_note_undo_sessions"
     }
 
     private var documentsDirectory: URL {
@@ -143,6 +145,26 @@ public final class TimetableStorageService {
 
     public func loadTagSettings() -> NoteTagSettings {
         return restore(NoteTagSettings.self, key: Keys.tagSettings) ?? NoteTagSettings()
+    }
+
+    // MARK: - Apple Pencil Status
+
+    public func saveApplePencilStatus(_ snapshot: ApplePencilStatusSnapshot) {
+        persist(snapshot, key: Keys.applePencilStatus)
+    }
+
+    public func loadApplePencilStatus() -> ApplePencilStatusSnapshot? {
+        restore(ApplePencilStatusSnapshot.self, key: Keys.applePencilStatus)
+    }
+
+    // MARK: - Undo-Sitzungen der letzten Notizen
+
+    public func saveNoteUndoSessions(_ store: NoteUndoSessionStore) {
+        persist(store, key: Keys.noteUndoSessions)
+    }
+
+    public func loadNoteUndoSessions() -> NoteUndoSessionStore {
+        restore(NoteUndoSessionStore.self, key: Keys.noteUndoSessions) ?? NoteUndoSessionStore()
     }
 
     // MARK: - Periods

@@ -140,12 +140,10 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         // zuverlässig, dass ein echter Apple Pencil benutzt wird. Der Erkenner
         // bricht nichts ab (`cancelsTouchesInView = false`) und läuft parallel
         // zu allen anderen Gesten – das Zeichnen bleibt völlig unberührt.
-        let pencilTouchDetector = UIPanGestureRecognizer(
+        let pencilTouchDetector = StrokeHoldGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handlePencilTouch(_:))
         )
-        pencilTouchDetector.minimumNumberOfTouches = 1
-        pencilTouchDetector.maximumNumberOfTouches = 1
         pencilTouchDetector.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
         pencilTouchDetector.cancelsTouchesInView = false
         pencilTouchDetector.delaysTouchesBegan = false
@@ -155,18 +153,24 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
         // Ein-Finger-Beobachter (nur relevant, wenn auch der Finger zeichnen
         // darf): liefert die Stillhalte-Erkennung für gerade Linien.
-        let fingerStrokeDetector = UIPanGestureRecognizer(
+        let fingerStrokeDetector = StrokeHoldGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handleFingerStroke(_:))
         )
-        fingerStrokeDetector.minimumNumberOfTouches = 1
-        fingerStrokeDetector.maximumNumberOfTouches = 1
         fingerStrokeDetector.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         fingerStrokeDetector.cancelsTouchesInView = false
         fingerStrokeDetector.delaysTouchesBegan = false
         fingerStrokeDetector.delaysTouchesEnded = false
         fingerStrokeDetector.delegate = context.coordinator
         canvasView.addGestureRecognizer(fingerStrokeDetector)
+
+        // Zusätzlich direkt am PencilKit-Zeichen-Recognizer hängen. Der eigene
+        // Pan-Erkenner hat die Stillhalte-Geste oft nie gesehen, weil PencilKit
+        // die Touches für sich behält.
+        canvasView.drawingGestureRecognizer.addTarget(
+            context.coordinator,
+            action: #selector(Coordinator.handleDrawingGesture(_:))
+        )
 
         // Apple Pencil Hover: liefert die letzte Position und Blickrichtung des
         // Stifts, damit der Squeeze-Kreis genau dort erscheint, wo der Stift
@@ -313,7 +317,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
         /// Eine echte Stylus-Berührung: Damit ist sicher ein Apple Pencil im
         /// Spiel – die App schaltet „Nur Apple Pencil“ automatisch ein.
-        @objc func handlePencilTouch(_ recognizer: UIPanGestureRecognizer) {
+        @objc func handlePencilTouch(_ recognizer: UIGestureRecognizer) {
             switch recognizer.state {
             case .began, .changed:
                 parent.onCanvasActivity()
@@ -328,8 +332,14 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
         /// Finger-Strich (nur wenn „Nur Apple Pencil“ aus ist): dieselbe
         /// Stillhalte-Erkennung wie beim Pencil.
-        @objc func handleFingerStroke(_ recognizer: UIPanGestureRecognizer) {
+        @objc func handleFingerStroke(_ recognizer: UIGestureRecognizer) {
             guard !parent.pencilOnlyDrawing else { return }
+            trackStrokeTouch(recognizer)
+        }
+
+        /// PencilKits eigener Zeichen-Recognizer – die zuverlässigste Quelle
+        /// für Beginn, Bewegung und Ende eines Strichs.
+        @objc func handleDrawingGesture(_ recognizer: UIGestureRecognizer) {
             trackStrokeTouch(recognizer)
         }
 
@@ -347,7 +357,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// Verfolgt die Bewegung einer Zeichen-Berührung. Bleibt der Stift am
         /// Ende eines Strichs ≈2 s still, wird der Strich beim Loslassen in
         /// eine gerade Linie verwandelt (Pencil Pro vibriert zur Bestätigung).
-        private func trackStrokeTouch(_ recognizer: UIPanGestureRecognizer) {
+        private func trackStrokeTouch(_ recognizer: UIGestureRecognizer) {
             guard let canvasView else { return }
             let location = recognizer.location(in: canvasView)
 
@@ -388,6 +398,8 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 guard let self, self.isStrokeTouchActive, self.isInkingToolActive else { return }
                 self.straightenRequested = true
                 self.playSnapFeedback()
+                // Falls PencilKit den Strich schon übernommen hat, sofort einrasten.
+                self.straightenLastStrokeIfRequested()
             }
             holdWorkItem = item
             DispatchQueue.main.asyncAfter(
@@ -416,11 +428,11 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// seinem ersten zu seinem letzten Punkt – gleiche Tinte, gleiche Dicke.
         private func straightenLastStrokeIfRequested() {
             guard straightenRequested, let canvasView else { return }
-            straightenRequested = false
 
             let drawing = canvasView.drawing
             guard drawing.strokes.count > strokeCountAtToolBegin,
                   let stroke = drawing.strokes.last else { return }
+            straightenRequested = false
 
             let path = stroke.path
             guard path.count >= 2 else { return }
@@ -852,5 +864,32 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         }
 
         context.strokePath()
+    }
+}
+
+/// Eigener Gesture-Recognizer, der ohne Bewegung `.began` erreicht.
+/// `UIPanGestureRecognizer` wartet auf einen Translation-Schwellenwert und
+/// hat die Stillhalte-Geste für gerade Linien deshalb oft nie gesehen.
+final class StrokeHoldGestureRecognizer: UIGestureRecognizer {
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        state = .began
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesMoved(touches, with: event)
+        if state == .began || state == .changed {
+            state = .changed
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        state = .ended
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+        state = .cancelled
     }
 }

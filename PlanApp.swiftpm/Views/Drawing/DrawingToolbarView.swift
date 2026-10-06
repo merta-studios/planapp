@@ -35,6 +35,12 @@ public struct DrawingToolbarView: View {
     public let onCopyTextToClipboard: () -> Void
     public let onUndo: () -> Void
     public let onRedo: () -> Void
+    public var undoCount: Int = 0
+    public var redoCount: Int = 0
+    public var historyRevision: Int = 0
+    public var onUndoScrubBegan: (CGPoint, CGPoint) -> Void = { _, _ in }
+    public var onUndoScrubChanged: (CGSize, CGPoint) -> Void = { _, _ in }
+    public var onUndoScrubEnded: () -> Void = {}
     public let onClear: () -> Void
     /// Notiz kopieren / einfügen (interne Zwischenablage der App).
     public let canCopyNote: Bool
@@ -72,6 +78,12 @@ public struct DrawingToolbarView: View {
         onCopyTextToClipboard: @escaping () -> Void = {},
         onUndo: @escaping () -> Void,
         onRedo: @escaping () -> Void,
+        undoCount: Int = 0,
+        redoCount: Int = 0,
+        historyRevision: Int = 0,
+        onUndoScrubBegan: @escaping (CGPoint, CGPoint) -> Void = { _, _ in },
+        onUndoScrubChanged: @escaping (CGSize, CGPoint) -> Void = { _, _ in },
+        onUndoScrubEnded: @escaping () -> Void = {},
         onClear: @escaping () -> Void,
         canCopyNote: Bool = false,
         canPasteNote: Bool = false,
@@ -97,6 +109,12 @@ public struct DrawingToolbarView: View {
         self.onCopyTextToClipboard = onCopyTextToClipboard
         self.onUndo = onUndo
         self.onRedo = onRedo
+        self.undoCount = undoCount
+        self.redoCount = redoCount
+        self.historyRevision = historyRevision
+        self.onUndoScrubBegan = onUndoScrubBegan
+        self.onUndoScrubChanged = onUndoScrubChanged
+        self.onUndoScrubEnded = onUndoScrubEnded
         self.onClear = onClear
         self.canCopyNote = canCopyNote
         self.canPasteNote = canPasteNote
@@ -652,17 +670,41 @@ public struct DrawingToolbarView: View {
 
     private var historyControls: some View {
         HStack(spacing: 6) {
-            squareButton(
-                systemName: "arrow.uturn.backward",
-                accessibilityLabel: "Rückgängig",
-                action: onUndo
-            )
+            undoScrubButton
             squareButton(
                 systemName: "arrow.uturn.forward",
                 accessibilityLabel: "Wiederholen",
                 action: onRedo
             )
         }
+    }
+
+    /// Rückgängig: kurzer Tipp macht einen Schritt. Eine Sekunde halten öffnet
+    /// den vertikalen Scrubber (auch mit dem Finger).
+    private var undoScrubButton: some View {
+        ZStack {
+            Image(systemName: "arrow.uturn.backward")
+                .font(.system(size: 15, weight: .medium))
+                .frame(width: buttonSize, height: buttonSize)
+                .background(Color(UIColor.tertiarySystemBackground).opacity(0.72))
+                .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
+
+            UndoScrubHandle(
+                allowsFinger: true,
+                style: .linear,
+                onTap: {
+                    Haptics.tap()
+                    onUndo()
+                },
+                onScrubBegan: onUndoScrubBegan,
+                onScrubChanged: onUndoScrubChanged,
+                onScrubEnded: onUndoScrubEnded
+            )
+        }
+        .frame(width: buttonSize, height: buttonSize)
+        .hoverEffect(.lift)
+        .accessibilityLabel("Rückgängig")
+        .accessibilityHint("Halten und ziehen, um mehrere Schritte rückgängig zu machen oder wiederherzustellen")
     }
 
     private var moreOptionsButton: some View {

@@ -85,9 +85,12 @@ public final class TimetableViewModel: ObservableObject {
 
     /// Modellhinweis aus tatsächlich beobachtetem Pencil-Input. Ein Squeeze
     /// identifiziert den Pro; die Akkuanzeige bleibt leer, solange CoreBluetooth
-    /// keinen tatsächlichen Pencil-Batteriewert liefert.
+    /// keinen tatsächlichen Pencil-Batteriewert liefert. Der letzte Stand wird
+    /// gespeichert und beim Start wiederhergestellt.
     @Published public private(set) var detectedApplePencilName: String? = nil
     @Published public private(set) var applePencilBatteryLevel: Int? = nil
+    /// Ob ein Squeeze in dieser Installation den Pencil Pro bestätigt hat.
+    private var applePencilKnownAsPro = false
 
     /// Erscheinungsbild der App. Standard ist **hell** (siehe ``AppAppearance``),
     /// damit weißes Papier niemals weiße Schrift bekommt.
@@ -145,6 +148,9 @@ public final class TimetableViewModel: ObservableObject {
     private var autoRefreshTimer: AnyCancellable? = nil
     private var applePencilBatteryMonitor: ApplePencilBatteryMonitor?
     private var applePencilBatteryObservation: AnyCancellable?
+    private var applePencilNameObservation: AnyCancellable?
+    /// Undo/Redo der letzten drei geöffneten Notizen.
+    private var noteUndoSessions = NoteUndoSessionStore()
     private let storage = TimetableStorageService.shared
     private let untis = WebUntisService.shared
     private let demo = DemoDataService.shared
@@ -170,6 +176,8 @@ public final class TimetableViewModel: ObservableObject {
         self.appearance = storage.loadAppearance()
         self.tagSettings = storage.loadTagSettings()
         self.lastSyncDate = untisCredentials.lastSyncDate
+        self.noteUndoSessions = storage.loadNoteUndoSessions()
+        restoreApplePencilStatus()
 
         // Alte, versehentlich leer gespeicherte Notizen (PKDrawing-Daten ohne
         // Strokes / leere Textfelder) direkt entfernen, damit sie nicht in
@@ -392,7 +400,7 @@ public final class TimetableViewModel: ObservableObject {
     /// nur die sichere, allgemeine Bezeichnung.
     public func registerObservedApplePencilInput() {
         if detectedApplePencilName == nil {
-            detectedApplePencilName = "Apple Pencil"
+            applyApplePencilIdentity(name: "Apple Pencil", batteryLevel: applePencilBatteryLevel)
         }
         startApplePencilBatteryMonitoring()
         registerApplePencilUsage()
@@ -401,7 +409,8 @@ public final class TimetableViewModel: ObservableObject {
     /// Squeeze ist nur beim Apple Pencil Pro verfügbar und identifiziert ihn
     /// daher zuverlässig.
     public func registerApplePencilSqueeze() {
-        detectedApplePencilName = "Apple Pencil Pro"
+        applePencilKnownAsPro = true
+        applyApplePencilIdentity(name: "Apple Pencil Pro", batteryLevel: applePencilBatteryLevel)
         startApplePencilBatteryMonitoring()
         registerApplePencilUsage()
     }
@@ -420,9 +429,70 @@ public final class TimetableViewModel: ObservableObject {
             .removeDuplicates()
             .receive(on: RunLoop.main)
             .sink { [weak self] level in
-                self?.applePencilBatteryLevel = level
+                guard let self else { return }
+                if let level {
+                    self.applyApplePencilIdentity(
+                        name: self.detectedApplePencilName ?? "Apple Pencil",
+                        batteryLevel: level
+                    )
+                }
+            }
+        applePencilNameObservation = monitor.$pencilName
+            .compactMap { $0 }
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] peripheralName in
+                guard let self else { return }
+                let resolved = ApplePencilStatusSnapshot.resolvedName(
+                    fromPeripheralName: peripheralName,
+                    knownPro: self.applePencilKnownAsPro
+                )
+                if resolved.localizedCaseInsensitiveContains("Pro") {
+                    self.applePencilKnownAsPro = true
+                }
+                self.applyApplePencilIdentity(name: resolved, batteryLevel: self.applePencilBatteryLevel)
             }
         monitor.startMonitoring()
+    }
+
+    private func restoreApplePencilStatus() {
+        guard let snapshot = storage.loadApplePencilStatus() else { return }
+        detectedApplePencilName = snapshot.name
+        applePencilBatteryLevel = snapshot.batteryLevel
+        applePencilKnownAsPro = snapshot.name.localizedCaseInsensitiveContains("Pro")
+    }
+
+    private func applyApplePencilIdentity(name: String, batteryLevel: Int?) {
+        let resolved = ApplePencilStatusSnapshot.resolvedName(
+            fromPeripheralName: name,
+            knownPro: applePencilKnownAsPro
+        )
+        let changed = detectedApplePencilName != resolved || applePencilBatteryLevel != batteryLevel
+        detectedApplePencilName = resolved
+        applePencilBatteryLevel = batteryLevel
+        guard changed else { return }
+        storage.saveApplePencilStatus(
+            ApplePencilStatusSnapshot(name: resolved, batteryLevel: batteryLevel)
+        )
+    }
+
+    public func persistedUndoSession(for noteKey: String) -> PersistedNoteUndoSession? {
+        noteUndoSessions.session(for: noteKey)
+    }
+
+    public func saveUndoSession(_ session: PersistedNoteUndoSession) {
+        guard !session.undoStack.isEmpty || !session.redoStack.isEmpty else {
+            noteUndoSessions.removeSession(for: session.noteKey)
+            storage.saveNoteUndoSessions(noteUndoSessions)
+            return
+        }
+        noteUndoSessions.save(session)
+        storage.saveNoteUndoSessions(noteUndoSessions)
+    }
+
+    public func discardUndoSession(for noteKey: String) {
+        noteUndoSessions.removeSession(for: noteKey)
+        storage.saveNoteUndoSessions(noteUndoSessions)
     }
 
     /// Merkt sich, dass der letzte API-Abgleich fehlgeschlagen ist.
@@ -610,12 +680,13 @@ public final class TimetableViewModel: ObservableObject {
             visibleNoteKeys.insert(key)
             storage.saveLessonNote(note)
         } else {
-            // Eine nur geöffnete oder komplett geleerte Seite bleibt wirklich
-            // "keine Notiz". PKDrawing liefert auch für leere Zeichnungen Daten,
-            // deshalb entscheidet hier `hasVisibleContent`, nicht die Datenlänge.
+            // Eine nur geöffnete, komplett geleerte oder nur mit Tag versehene
+            // Seite bleibt wirklich "keine Notiz". Ein Tag ohne Inhalt wird
+            // verworfen, damit keine leeren Stundenblöcke mit Tag entstehen.
             self.lessonNotes.removeValue(forKey: key)
             visibleNoteKeys.remove(key)
             storage.deleteLessonNote(for: key)
+            discardUndoSession(for: key)
         }
 
         withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
@@ -635,6 +706,7 @@ public final class TimetableViewModel: ObservableObject {
         lessonNotes.removeValue(forKey: key)
         visibleNoteKeys.remove(key)
         storage.deleteLessonNote(for: key)
+        discardUndoSession(for: key)
         successMessage = "Notiz gelöscht."
     }
 
@@ -863,6 +935,8 @@ public final class TimetableViewModel: ObservableObject {
         lessonNotes.removeAll()
         visibleNoteKeys.removeAll()
         storage.deleteAllLessonNotes()
+        noteUndoSessions = NoteUndoSessionStore()
+        storage.saveNoteUndoSessions(noteUndoSessions)
         successMessage = "Alle Notizen wurden gelöscht."
     }
 
@@ -879,6 +953,10 @@ public final class TimetableViewModel: ObservableObject {
             lessonNotes.removeValue(forKey: key)
             visibleNoteKeys.remove(key)
             storage.deleteLessonNote(for: key)
+            noteUndoSessions.removeSession(for: key)
+        }
+        if !emptyKeys.isEmpty {
+            storage.saveNoteUndoSessions(noteUndoSessions)
         }
     }
 

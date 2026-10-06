@@ -13,6 +13,8 @@ trap 'rm -rf "$test_dir"' EXIT
 
 "$compiler" \
     PlanApp.swiftpm/Utils/IntentionalTapPolicy.swift \
+    PlanApp.swiftpm/Utils/HeroTransitionPolicy.swift \
+    PlanApp.swiftpm/Models/PencilGestureAction.swift \
     PlanApp.swiftpm/Services/TimetableRefreshPolicy.swift \
     PlanApp.swiftpm/Views/Timetable/NotesOverviewLayout.swift \
     PlanApp.swiftpm/Views/Drawing/SqueezePaletteLayout.swift \
