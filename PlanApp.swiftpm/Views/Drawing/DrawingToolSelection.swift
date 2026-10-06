@@ -66,6 +66,10 @@ public enum DrawingPaletteGrid {
 
 /// Farbpalette in einem hellgrauen, abgerundeten Bedienfeld (3 Zeilen × 8 Spalten)
 public struct DrawingColorPalettePopover: View {
+    /// Feste Abmessungen der 8×3-Farbpalette einschließlich Innenabstand.
+    /// Werkzeug-Hinweise verwenden dieselbe Größe, damit die Popovers einheitlich sind.
+    static let popoverSize = CGSize(width: 388, height: 158)
+
     public let selectedHex: String
     public let onSelectColor: (String) -> Void
     public let onSelectCustomColor: (String) -> Void
