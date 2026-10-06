@@ -210,7 +210,7 @@ struct TagSystemSettingsSection: View {
         Haptics.tap()
         let colorHex = viewModel.tagSettings.nextSuggestedColorHex
         let name = "Tag \(viewModel.tagSettings.tags.count + 1)"
-        withAnimation(.easeInOut(duration: 0.2)) {
+        _ = withAnimation(.easeInOut(duration: 0.2)) {
             viewModel.addTag(name: name, colorHex: colorHex)
         }
         // Neuen Tag direkt zum Bearbeiten öffnen.

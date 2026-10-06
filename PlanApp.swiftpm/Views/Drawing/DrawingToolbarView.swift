@@ -324,13 +324,11 @@ public struct DrawingToolbarView: View {
                     DrawingColorPalettePopover(
                         selectedHex: hex,
                         onSelectColor: { newHex in
-                            updatePenSlot(index, with: newHex)
-                            textColorHex = newHex
+                            updateTextColorSlot(index, with: newHex)
                             editingPenSlotIndex = nil
                         },
                         onSelectCustomColor: { newHex in
-                            updatePenSlot(index, with: newHex)
-                            textColorHex = newHex
+                            updateTextColorSlot(index, with: newHex)
                         }
                     )
                     .presentationCompactAdaptation(.popover)
@@ -427,6 +425,18 @@ public struct DrawingToolbarView: View {
         let normalized = normalizedHex(newHex)
         penColorSlots[index] = normalized
         toolSelection = .pen(color: UIColor(hex: normalized))
+    }
+
+    /// iPhone: Farb-Slot als Textfarbe ändern – ohne das Werkzeug zu wechseln
+    /// (Stift gibt es dort nicht).
+    private func updateTextColorSlot(_ index: Int, with newHex: String) {
+        guard penColorSlots.indices.contains(index) else { return }
+        let normalized = normalizedHex(newHex)
+        penColorSlots[index] = normalized
+        textColorHex = normalized
+        if selectedTextColorHex != nil {
+            onApplyColorToSelectedText(normalized)
+        }
     }
 
     private func updateMarkerSlot(_ index: Int, with newHex: String) {
