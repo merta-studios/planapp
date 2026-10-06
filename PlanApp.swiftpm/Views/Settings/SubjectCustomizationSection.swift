@@ -301,7 +301,12 @@ public struct SubjectCustomizationSection: View {
         .sheet(item: $editingSubject) { subject in
             EditSubjectSheet(subject: subject) { updated in
                 withAnimation {
-                    viewModel.addOrUpdateCustomization(updated)
+                    // Der Rückgabewert (`false`, wenn das Limit erreicht ist)
+                    // wird bewusst verworfen – das ViewModel setzt stattdessen
+                    // `errorMessage`. Ohne das `_ =` wäre die Closure nicht
+                    // `Void`, und `withAnimation` meldete einen unbenutzten
+                    // Rückgabewert.
+                    _ = viewModel.addOrUpdateCustomization(updated)
                 }
                 editingSubject = nil
             } onCancel: {
@@ -324,7 +329,8 @@ public struct SubjectCustomizationSection: View {
         )
 
         withAnimation {
-            viewModel.addOrUpdateCustomization(item)
+            // Ergebnis (erfolgreich angelegt?) wird nicht ausgewertet, siehe oben.
+            _ = viewModel.addOrUpdateCustomization(item)
         }
         originalSubjectInput = ""
         customNameInput = ""

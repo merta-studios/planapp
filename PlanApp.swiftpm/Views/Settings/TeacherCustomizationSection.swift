@@ -89,7 +89,11 @@ public struct TeacherCustomizationSection: View {
         .sheet(item: $editingTeacher) { teacher in
             EditTeacherSheet(teacher: teacher) { updated in
                 withAnimation {
-                    viewModel.addOrUpdateTeacherNameCustomization(updated)
+                    // Rückgabewert (`false` bei erreichtem Limit) wird bewusst
+                    // verworfen – das ViewModel setzt stattdessen `errorMessage`.
+                    // Ohne das `_ =` liefert die Closure einen `Bool` und
+                    // `withAnimation` meldet einen unbenutzten Rückgabewert.
+                    _ = viewModel.addOrUpdateTeacherNameCustomization(updated)
                 }
                 editingTeacher = nil
             } onCancel: {
@@ -255,7 +259,8 @@ public struct TeacherCustomizationSection: View {
         )
 
         withAnimation {
-            viewModel.addOrUpdateTeacherNameCustomization(item)
+            // Ergebnis (erfolgreich angelegt?) wird nicht ausgewertet, siehe oben.
+            _ = viewModel.addOrUpdateTeacherNameCustomization(item)
         }
         systemAbbreviationInput = ""
         displayNameInput = ""
