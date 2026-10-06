@@ -29,11 +29,28 @@ struct UndoScrubSession: Equatable {
     var circleCenter: CGPoint
     /// Höhe des Overlays, damit der lineare Balken am unteren Rand stoppt.
     var containerHeight: CGFloat
-    /// Kreis: letzte gemessene Fingerposition (Winkel), damit die Drehung
-    /// kontinuierlich mitaddiert werden kann (kein Positions-Sprung).
-    var circleLastAngle: CGFloat? = nil
-    /// Kreis: seit Scrub-Start kontinuierlich mitaddierte Gesamtdrehung.
-    var circleAccumulatedAngle: CGFloat = 0
+}
+
+/// Laufender Dreh-Zustand eines runden Scrubbers (Fingerposition als Winkel
+/// um die Kreismitte und die daraus mitaddierte Gesamtdrehung).
+///
+/// Bewusst eine Referenz **außerhalb** des SwiftUI-States: Der Winkel ändert
+/// sich bei jeder Bewegung. Läge er im Session-Struct, müsste er bei jedem
+/// Sample in den State zurückgeschrieben werden (Neuzeichnen der ganzen Notiz
+/// inklusive Palette) – und genau dieses Zurückschreiben passiert nicht, wenn
+/// ein Sample noch keinen neuen Schritt auslöst (`applyScrubOffset` bricht
+/// dann früh ab). Dann wurde die Drehung nie mitaddiert und der Rückgängig-
+/// Knopf der Kreis-Bar ließ sich nicht auf dem Bogen ziehen.
+final class UndoScrubRotationTracker {
+    /// Zuletzt gemessener Winkel (Bogenmaß) um die Kreismitte.
+    var lastAngle: CGFloat?
+    /// Seit Scrub-Start kontinuierlich mitaddierte Gesamtdrehung.
+    var accumulatedAngle: CGFloat = 0
+
+    func reset() {
+        lastAngle = nil
+        accumulatedAngle = 0
+    }
 }
 
 /// Unsichtbarer Trefferbereich über dem Rückgängig-Knopf. Die Verfolgung liegt

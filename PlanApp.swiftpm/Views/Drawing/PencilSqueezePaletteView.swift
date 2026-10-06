@@ -305,7 +305,8 @@ struct PencilSqueezePaletteView: View {
         let hoverID = "tool-\(tool.rawValue)"
 
         return Button {
-            Haptics.select()
+            // Werkzeugwahl in der Kreis-Bar: Rückmeldung auch am Apple Pencil Pro.
+            Haptics.toolSelect()
             select(tool)
         } label: {
             Image(systemName: tool.icon)

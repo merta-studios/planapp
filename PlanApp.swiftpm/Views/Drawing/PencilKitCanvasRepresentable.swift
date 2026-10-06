@@ -338,23 +338,41 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         private var liveStrokeEnd: CGPoint?
         /// Erkenner, der die Punkte des aktuellen Strichs mitschreibt.
         private weak var sampleRecognizer: StrokeHoldGestureRecognizer?
-        /// Vorschau-Ebene der geraden Linie über der Zeichenfläche.
-        private var straightPreviewLayer: CAShapeLayer?
 
         /// Laufende „Gerade Linie“-Sitzung: Ab dem Einrasten ist der schräge
-        /// PencilKit-Strich bereits ausgeblendet, die gerade Linie folgt als
-        /// Vorschau dem Stift, bis er abgehoben wird.
+        /// Live-Strich ausgeblendet, die gerade Linie folgt dem Stift, bis er
+        /// abgehoben wird.
         private struct StraightSession {
             /// Zeichnung vor dem Strich (ohne den schrägen Live-Strich).
             var base: PKDrawing
-            /// Nachgebauter schräger Strich – der erste Rückgängig-Schritt.
-            var slanted: PKStroke?
-            var start: CGPoint
-            var end: CGPoint
+            /// Echter PencilKit-Strich, sobald verfügbar. Er bringt die
+            /// tatsächlichen Stiftdaten mit (Punktdicken, Neigung, Kraft,
+            /// Deckkraft) und ist damit die einzige verlässliche Quelle für
+            /// die richtige Strichdicke der geraden Linie.
+            var realStroke: PKStroke? = nil
+            /// Ersatz aus den Berührungs-Samples, falls PencilKit den
+            /// Live-Strich nicht herausgibt – nur für den Rückgängig-Schritt.
+            var slanted: PKStroke? = nil
+            /// Werkzeugdaten als Rückfall, wenn kein echter Strich vorliegt.
             var ink: PKInk
             var width: CGFloat
+            /// Mittlerer Stiftdruck des Strichs: Der nachgebaute Strich soll
+            /// so dick sein wie der gezeichnete, und die Dicke hängt (je nach
+            /// Tinte) auch am Druck.
+            var force: CGFloat = 1
+            var start: CGPoint
+            var end: CGPoint
+            /// Gerade Linie, die gerade in der Zeichenfläche steht.
+            var straight: PKStroke? = nil
+            /// Zeitpunkt des letzten Aufbaus der geraden Linie.
+            var lastStraightBuild: Date = .distantPast
         }
         private var straightSession: StraightSession?
+
+        /// Mindestabstand zwischen zwei Neuaufbauten der geraden Linie. Die
+        /// Zeichnung neu zu setzen lässt PencilKit die Fläche neu rendern –
+        /// während der Stift noch aufliegt reicht ein ruhiger Takt.
+        private static let straightLineRebuildInterval: TimeInterval = 0.05
 
         /// Solange eine gerade Linie gezogen wird, darf SwiftUI die
         /// Zeichenfläche nicht überschreiben.
@@ -450,7 +468,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                     if location.x.isFinite, location.y.isFinite {
                         session.end = location
                         straightSession = session
-                        updateStraightPreview()
+                        rebuildStraightLine()
                     }
                 case .ended, .cancelled, .failed:
                     commitStraightSession()
@@ -539,8 +557,8 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             )
         }
 
-        /// Das Einrasten: Haptik am Stift, schräger Live-Strich sofort weg,
-        /// gerade Linie als Vorschau.
+        /// Das Einrasten: Haptik am Stift, schräger Live-Strich weg, die
+        /// gerade Linie steht sofort in der Zeichenfläche und folgt dem Stift.
         private func beginStraightSession() {
             guard straightSession == nil, let canvasView,
                   let sampler = sampleRecognizer,
@@ -551,15 +569,22 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             let length = hypot(end.x - start.x, end.y - start.y)
             guard length.isFinite, length >= 12 else { return }
 
+            // Wichtig: **vor** dem Verwerfen des Live-Strichs lesen. Solange
+            // PencilKit den Strich noch führt, liefert er die echten
+            // Stiftdaten (Punktdicken, Neigung, Kraft) – nur damit bekommt
+            // die gerade Linie exakt die Dicke eines normalen Strichs.
+            let base = parent.drawing
+            let realStroke = inProgressStroke(on: canvasView, base: base)
             let (ink, width) = currentInkAndWidth()
-            let slanted = makeStroke(from: samples, ink: ink, width: width)
             straightSession = StraightSession(
-                base: parent.drawing,
-                slanted: slanted,
-                start: start,
-                end: end,
+                base: base,
+                realStroke: realStroke,
+                slanted: realStroke == nil ? makeStroke(from: samples, ink: ink, width: width) : nil,
                 ink: ink,
-                width: width
+                width: width,
+                force: meanForce(of: samples),
+                start: start,
+                end: end
             )
 
             // Apple Pencil Pro vibriert zur Bestätigung des Einrastens.
@@ -567,54 +592,142 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
             // Den laufenden PencilKit-Strich verwerfen: Ein kurzes Abschalten
             // des Zeichen-Erkenners bricht ihn ab – die schräge Linie ist
-            // sofort weg, nur noch die gerade Vorschau ist zu sehen. (Läuft
+            // sofort weg, nur noch die gerade Linie ist zu sehen. (Läuft
             // aus einem Timer, nicht mitten in einem Touch-Callback.)
             let drawingRecognizer = canvasView.drawingGestureRecognizer
             drawingRecognizer.isEnabled = false
             DispatchQueue.main.async {
                 drawingRecognizer.isEnabled = true
             }
-            // Falls PencilKit den Strich beim Abbruch doch übernommen hat:
-            // sofort auf den Stand vor dem Strich zurück.
+            // Falls PencilKit den Strich beim Abbruch doch übernommen hat,
+            // verschwindet er mit dem Setzen der geraden Linie. Das Setzen
+            // läuft nach demselben Runloop, damit der Abbruch sicher durch ist.
             DispatchQueue.main.async { [weak self] in
-                guard let self, let session = self.straightSession else { return }
-                self.applyExternalDrawing(session.base)
+                guard let self, self.straightSession != nil else { return }
+                self.rebuildStraightLine(force: true)
             }
-            updateStraightPreview()
         }
 
         /// Stift abgehoben: Zwei echte Rückgängig-Schritte verzeichnen –
         /// erst die komplette (schräge) Linie, dann das Geradeziehen.
         private func commitStraightSession() {
             guard let session = straightSession else { return }
-            straightSession = nil
             activeStrokeSources.removeAll()
             holdWorkItem?.cancel()
             holdWorkItem = nil
             liveStrokeStart = nil
             liveStrokeEnd = nil
 
-            let straight = makeStraightStroke(
-                from: session.start,
-                to: session.end,
-                ink: session.ink,
-                width: session.width
-            )
+            // Letzter Aufbau mit dem endgültigen Ende, damit die Linie exakt
+            // dort endet, wo der Stift abgehoben wurde.
+            rebuildStraightLine(force: true)
+            guard let straight = straightSession?.straight else {
+                straightSession = nil
+                return
+            }
+
             var steps: [PKDrawing] = []
-            if let slanted = session.slanted {
+            if let slanted = session.realStroke ?? session.slanted {
                 steps.append(PKDrawing(strokes: session.base.strokes + [slanted]))
             }
             let final = PKDrawing(strokes: session.base.strokes + [straight])
             steps.append(final)
 
+            straightSession = nil
             applyExternalDrawing(final)
-            // Vorschau erst nach dem Schreiben der echten Linie entfernen,
-            // damit nichts flackert.
-            DispatchQueue.main.async { [weak self] in
-                self?.clearStraightPreview()
-            }
             parent.onCommitDrawingSteps(steps)
             parent.onStraightLineSnap()
+        }
+
+        /// Baut die gerade Linie auf und schreibt sie in die Zeichenfläche.
+        ///
+        /// Liegt ein echter PencilKit-Strich vor, werden dessen Punkte
+        /// übernommen und nur ihre **Position** auf die Gerade gelegt –
+        /// Punktdicke, Neigung, Kraft und Deckkraft bleiben unverändert.
+        /// PencilKit zeichnet die Linie dadurch genau so dick wie einen
+        /// normalen Strich desselben Werkzeugs.
+        private func rebuildStraightLine(force: Bool = false) {
+            guard let session = straightSession else { return }
+            let now = Date()
+            if !force,
+               now.timeIntervalSince(session.lastStraightBuild) < Self.straightLineRebuildInterval {
+                return
+            }
+
+            var straight: PKStroke?
+            if let realStroke = session.realStroke {
+                straight = straightStroke(from: realStroke, start: session.start, end: session.end)
+            }
+            // Rückfall (auch wenn der echte Strich zu wenige Punkte hat): mit
+            // der umgerechneten Punktdicke in der richtigen Strichbreite.
+            if straight == nil {
+                straight = makeStraightStroke(
+                    from: session.start,
+                    to: session.end,
+                    ink: session.ink,
+                    width: session.width,
+                    force: session.force
+                )
+            }
+
+            straightSession?.straight = straight
+            straightSession?.lastStraightBuild = now
+            guard let straight else { return }
+            applyExternalDrawing(PKDrawing(strokes: session.base.strokes + [straight]))
+        }
+
+        /// Der Strich, den PencilKit gerade zeichnet – falls die Zeichenfläche
+        /// ihn schon führt. Geprüft wird, dass genau ein Strich mehr als im
+        /// gespeicherten Stand vorliegt und dass er dort beginnt, wo der
+        /// aktuelle Strich begonnen hat.
+        private func inProgressStroke(on canvasView: PKCanvasView, base: PKDrawing) -> PKStroke? {
+            let strokes = canvasView.drawing.strokes
+            guard strokes.count == base.strokes.count + 1,
+                  let candidate = strokes.last,
+                  let first = strokePoints(of: candidate).first?.location else {
+                return nil
+            }
+            guard let start = liveStrokeStart else { return candidate }
+            return hypot(first.x - start.x, first.y - start.y) <= 24 ? candidate : nil
+        }
+
+        /// Alle Punkte eines PencilKit-Strichs in Reihenfolge.
+        private func strokePoints(of stroke: PKStroke) -> [PKStrokePoint] {
+            var points: [PKStrokePoint] = []
+            points.reserveCapacity(stroke.path.count)
+            stroke.path.forEach { points.append($0) }
+            return points
+        }
+
+        /// Legt die Punkte eines echten Strichs auf die Gerade `start` → `end`.
+        /// Die Punkte werden dabei gleichmäßig über die Strecke verteilt;
+        /// ihre Stiftdaten bleiben erhalten, damit die Linie genau so aussieht
+        /// wie der gezeichnete Strich.
+        private func straightStroke(from stroke: PKStroke, start: CGPoint, end: CGPoint) -> PKStroke? {
+            let points = strokePoints(of: stroke)
+            guard points.count >= 2 else { return nil }
+            let lastIndex = points.count - 1
+            var linePoints: [PKStrokePoint] = []
+            linePoints.reserveCapacity(points.count)
+            for (index, point) in points.enumerated() {
+                let fraction = CGFloat(index) / CGFloat(lastIndex)
+                linePoints.append(
+                    PKStrokePoint(
+                        location: CGPoint(
+                            x: start.x + (end.x - start.x) * fraction,
+                            y: start.y + (end.y - start.y) * fraction
+                        ),
+                        timeOffset: point.timeOffset,
+                        size: point.size,
+                        opacity: point.opacity,
+                        force: point.force,
+                        azimuth: point.azimuth,
+                        altitude: point.altitude
+                    )
+                )
+            }
+            let path = PKStrokePath(controlPoints: linePoints, creationDate: Date())
+            return PKStroke(ink: stroke.ink, path: path)
         }
 
         private func currentInkAndWidth() -> (PKInk, CGFloat) {
@@ -624,21 +737,53 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             return (PKInk(.pen, color: .black), max(2, parent.penWidth))
         }
 
+        /// Punktdicke für einen **selbst gebauten** Strich.
+        ///
+        /// PencilKit zeichnet einen Strichpunkt nicht mit seiner `size`: Stift
+        /// und Monoline zeichnen rund `2 × size − 4` breit, der Textmarker
+        /// skaliert die beiden Achsen unterschiedlich. Ein nachgebauter Strich
+        /// mit `size = Breite` wäre deshalb deutlich zu dünn – vor allem beim
+        /// Textmarker. Diese Umkehrung liefert die Punktgröße, die PencilKit
+        /// so dick zeichnet wie die eingestellte Breite.
+        ///
+        /// (Nur der Rückfall, wenn kein echter PencilKit-Strich vorliegt.)
+        private func syntheticPointSize(for ink: PKInk, width: CGFloat) -> CGSize {
+            let w = max(0.5, width)
+            if ink.inkType == .marker {
+                // Breite × 0.4375 und Höhe × 1.225 ergeben die eingezeichnete
+                // Dicke – die Umkehrung gleicht das aus.
+                return CGSize(width: w / 0.4375, height: w / 1.225)
+            }
+            // Stift, Monoline und die übrigen Tinten: `size = w/2 + 2`.
+            return CGSize(width: w / 2 + 2, height: w / 2 + 2)
+        }
+
+        /// Mittlerer Stiftdruck der Samples in der PencilKit-Skala (0 … 2).
+        private func meanForce(of samples: [StrokeHoldGestureRecognizer.Sample]) -> CGFloat {
+            let forces = samples.map(\.force).filter { $0.isFinite && $0 > 0 }
+            guard !forces.isEmpty else { return 1 }
+            return min(2, max(0.1, forces.reduce(0, +) / CGFloat(forces.count)))
+        }
+
         private func makeStroke(
             from samples: [StrokeHoldGestureRecognizer.Sample],
             ink: PKInk,
             width: CGFloat
         ) -> PKStroke? {
             guard samples.count >= 2, let firstTime = samples.first?.timestamp else { return nil }
+            // Die Dicke kommt aus der eingestellten Werkzeugbreite (siehe
+            // `syntheticPointSize`): So dick zeichnet PencilKit einen Strich
+            // dieses Werkzeugs. Der Druck wird mit übernommen, damit die
+            // nachgebaute Linie genauso dick ist wie die gezeichnete.
+            let size = syntheticPointSize(for: ink, width: width)
             let points = samples.map { sample -> PKStrokePoint in
-                let pressure = sample.force > 0 ? min(1.6, max(0.6, sample.force)) : 1
-                let w = ink.inkType == .marker ? width : width * pressure
+                let force = sample.force.isFinite ? min(2, max(0.1, sample.force)) : 1
                 return PKStrokePoint(
                     location: sample.location,
                     timeOffset: max(0, sample.timestamp - firstTime),
-                    size: CGSize(width: w, height: w),
+                    size: size,
                     opacity: 1,
-                    force: max(0.1, sample.force),
+                    force: force,
                     azimuth: 0,
                     altitude: .pi / 2
                 )
@@ -647,9 +792,17 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             return PKStroke(ink: ink, path: path)
         }
 
-        private func makeStraightStroke(from start: CGPoint, to end: CGPoint, ink: PKInk, width: CGFloat) -> PKStroke {
+        private func makeStraightStroke(
+            from start: CGPoint,
+            to end: CGPoint,
+            ink: PKInk,
+            width: CGFloat,
+            force: CGFloat = 1
+        ) -> PKStroke {
             let length = hypot(end.x - start.x, end.y - start.y)
             let segmentCount = max(2, Int(length / 4))
+            let size = syntheticPointSize(for: ink, width: width)
+            let strokeForce = force.isFinite ? min(2, max(0.1, force)) : 1
             var points: [PKStrokePoint] = []
             points.reserveCapacity(segmentCount + 1)
             for index in 0...segmentCount {
@@ -661,9 +814,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                             y: start.y + (end.y - start.y) * fraction
                         ),
                         timeOffset: TimeInterval(index) * 0.01,
-                        size: CGSize(width: width, height: width),
+                        size: size,
                         opacity: 1,
-                        force: 1,
+                        force: strokeForce,
                         azimuth: 0,
                         altitude: .pi / 2
                     )
@@ -671,40 +824,6 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             }
             let path = PKStrokePath(controlPoints: points, creationDate: Date())
             return PKStroke(ink: ink, path: path)
-        }
-
-        // MARK: - Live-Vorschau der geraden Linie
-
-        private func updateStraightPreview() {
-            guard let canvasView, let session = straightSession else { return }
-            let layer = straightPreviewLayer ?? CAShapeLayer()
-            let path = UIBezierPath()
-            path.move(to: session.start)
-            path.addLine(to: session.end)
-
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            layer.path = path.cgPath
-            layer.strokeColor = previewStrokeColor(for: session.ink).cgColor
-            layer.fillColor = UIColor.clear.cgColor
-            layer.lineWidth = max(2, session.width)
-            layer.lineCap = session.ink.inkType == .marker ? .butt : .round
-            layer.lineJoin = .round
-            layer.opacity = 1
-            if layer.superlayer == nil {
-                canvasView.layer.addSublayer(layer)
-            }
-            CATransaction.commit()
-            straightPreviewLayer = layer
-        }
-
-        private func previewStrokeColor(for ink: PKInk) -> UIColor {
-            ink.inkType == .marker ? ink.color.withAlphaComponent(0.55) : ink.color
-        }
-
-        private func clearStraightPreview() {
-            straightPreviewLayer?.removeFromSuperlayer()
-            straightPreviewLayer = nil
         }
 
         /// Haptik beim Einrasten. Der Apple Pencil Pro vibriert nur über
@@ -771,6 +890,10 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             }
             if straightSession != nil {
                 // Während der geraden Linie entscheidet allein die Sitzung.
+                // PencilKit hat den abgebrochenen Strich eventuell doch
+                // übernommen: Dann liefert er jetzt die echten Stiftdaten für
+                // die gerade Linie und wird anschließend durch sie ersetzt.
+                adoptCommittedStroke(from: canvasView)
                 return
             }
             lastExternalDrawing = nil
@@ -800,6 +923,21 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             }
         }
 
+        /// Übernimmt den von PencilKit abgelegten (schrägen) Strich als echte
+        /// Datenquelle für die gerade Linie: Er bleibt der erste
+        /// Rückgängig-Schritt und liefert die Punktdicken, mit denen PencilKit
+        /// den Strich gezeichnet hat.
+        private func adoptCommittedStroke(from canvasView: PKCanvasView) {
+            guard let session = straightSession, session.realStroke == nil else { return }
+            guard let real = inProgressStroke(on: canvasView, base: session.base) else {
+                // Fremder Stand (z. B. die eigene gerade Linie): nichts tun.
+                return
+            }
+            straightSession?.realStroke = real
+            straightSession?.slanted = nil
+            rebuildStraightLine(force: true)
+        }
+
         /// Zeichen- oder Radier-Geste begonnen. Wird u. a. genutzt, um die
         /// Squeeze-Palette zu schließen, sobald wieder geschrieben wird.
         public func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
@@ -807,7 +945,6 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             if straightSession != nil { return }
             strokeToolActive = true
             lastSignificantMovement = Date()
-            clearStraightPreview()
             // Falls die Fläche (noch) nicht dem echten Stand entspricht, merkt
             // sich die Reparatur oben die Ausgangslage dieses Strichs.
             pendingInkBeginCount = isInkingToolActive ? canvasView.drawing.strokes.count : nil

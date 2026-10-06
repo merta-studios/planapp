@@ -216,6 +216,11 @@ public struct LessonDrawingOverlayView: View {
     @State private var historyApplyWindowWorkItem: DispatchWorkItem?
     @State private var historyRevision: Int = 0
     @State private var undoScrubSession: UndoScrubSession? = nil
+    /// Mitaddierte Drehung des runden Scrubbers. Bewusst als Referenz (kein
+    /// Neuzeichnen bei jeder Bewegung) und außerhalb der Session, damit der
+    /// Winkel auch dann erhalten bleibt, wenn ein Sample noch keinen neuen
+    /// Schritt auslöst – sonst ließe sich der Knopf der Kreis-Bar nicht ziehen.
+    @State private var undoScrubRotation = UndoScrubRotationTracker()
     /// Taktgeber für die einzeln angewandten Scrub-Schritte. Während der Knopf
     /// zum Finger gleitet, wandert die Anwendung Schritt für Schritt hinterher.
     @State private var scrubStepWorkItem: DispatchWorkItem? = nil
@@ -422,8 +427,14 @@ public struct LessonDrawingOverlayView: View {
                 }
             }
             .background {
-                DrawingFingerTapObserver(isEnabled: isSqueezePaletteVisible) {
-                    dismissSqueezePalette()
+                ZStack {
+                    DrawingFingerTapObserver(isEnabled: isSqueezePaletteVisible) {
+                        dismissSqueezePalette()
+                    }
+                    // Merkt sich die Stiftposition im ganzen Fenster: Nur so kann
+                    // die Werkzeugwahl in der Leiste und in der Kreis-Bar an der
+                    // Stiftspitze vibrieren (Apple Pencil Pro).
+                    PencilHoverLocationObserver(isEnabled: true)
                 }
                 .frame(width: 0, height: 0)
                 .allowsHitTesting(false)
@@ -2085,6 +2096,7 @@ public struct LessonDrawingOverlayView: View {
             radius = intended
         }
         let startAngle = atan2(button.y - center.y, button.x - center.x)
+        undoScrubRotation.reset()
         undoScrubSession = UndoScrubSession(
             origin: button,
             style: .circular,
@@ -2126,19 +2138,28 @@ public struct LessonDrawingOverlayView: View {
         guard distanceToCenter > 12 else { return }
 
         let current = atan2(local.y - session.circleCenter.y, local.x - session.circleCenter.x)
-        if let last = session.circleLastAngle {
-            // Die Drehung wird Schritt für Schritt **mitaddiert** und nie aus
-            // der absoluten Position neu berechnet. So bleiben auch ein
-            // voller Umlauf (360°) und das Zurückdrehen zur Startposition
-            // stabil – an der Startposition selbst springt nichts um.
-            session.circleAccumulatedAngle += UndoScrubMath.normalizedAngleDelta(from: last, to: current)
+        // Die Drehung wird Schritt für Schritt **mitaddiert** und nie aus
+        // der absoluten Position neu berechnet. So bleiben auch ein
+        // voller Umlauf (360°) und das Zurückdrehen zur Startposition
+        // stabil – an der Startposition selbst springt nichts um.
+        //
+        // Der Winkel-Zustand liegt bewusst außerhalb der Session (und damit
+        // außerhalb des SwiftUI-States): `applyScrubOffset` verwirft seinen
+        // `inout`-Parameter, sobald ein Sample noch keinen neuen Schritt
+        // auslöst – ein Winkel in der Session ginge dabei nach jedem Sample
+        // verloren und der Knopf ließe sich nicht über den Bogen ziehen.
+        if let last = undoScrubRotation.lastAngle {
+            undoScrubRotation.accumulatedAngle += UndoScrubMath.normalizedAngleDelta(
+                from: last,
+                to: current
+            )
         }
-        session.circleLastAngle = current
+        undoScrubRotation.lastAngle = current
 
         let undoTicks = NoteUndoSessionPolicy.circularTickCount(undoCount: session.startUndoCount)
         let stepAngle = CGFloat(NoteUndoSessionPolicy.circularStepAngle(undoCount: session.startUndoCount))
         let offset = UndoScrubMath.circularOffset(
-            accumulatedAngle: session.circleAccumulatedAngle,
+            accumulatedAngle: undoScrubRotation.accumulatedAngle,
             undoTicks: undoTicks,
             stepAngle: stepAngle,
             redoTicks: session.startRedoCount
@@ -2238,6 +2259,8 @@ public struct LessonDrawingOverlayView: View {
                 for _ in 0..<(-delta) { _ = performSilentRedo() }
             }
         }
+        // Die Drehung gehört zur Sitzung: Die nächste beginnt wieder bei 0°.
+        undoScrubRotation.reset()
         withAnimation(.easeOut(duration: 0.16)) {
             undoScrubSession = nil
         }
