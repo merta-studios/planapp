@@ -8,12 +8,15 @@ public enum NoteTagPillSize {
     case small
     /// In der Kopfzeile der Zeichenfläche.
     case regular
+    /// Große Auswahl in der Zeichenfläche / im Filter.
+    case large
 
     var fontSize: CGFloat {
         switch self {
         case .mini: return 9
         case .small: return 11
         case .regular: return 13
+        case .large: return 16
         }
     }
 
@@ -22,6 +25,7 @@ public enum NoteTagPillSize {
         case .mini: return 6
         case .small: return 8
         case .regular: return 11
+        case .large: return 14
         }
     }
 
@@ -30,6 +34,7 @@ public enum NoteTagPillSize {
         case .mini: return 2
         case .small: return 3
         case .regular: return 5
+        case .large: return 8
         }
     }
 }
@@ -122,66 +127,139 @@ public struct NoteTagPickerView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Tag wählen")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 14)
-                .padding(.top, 12)
-                .padding(.bottom, 6)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.primary)
+                .padding(.horizontal, 18)
+                .padding(.top, 16)
+                .padding(.bottom, 10)
 
             if tags.isEmpty {
                 Text("Noch keine Tags angelegt.\nTags findest du in den Einstellungen unter „Tag-System“.")
-                    .font(.system(size: 13))
+                    .font(.system(size: 14))
                     .foregroundColor(.secondary)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 12)
-                    .frame(width: 240, alignment: .leading)
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 16)
+                    .frame(width: 320, alignment: .leading)
             } else {
                 ScrollView(.vertical, showsIndicators: true) {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 6) {
                         ForEach(tags) { tag in
                             Button {
                                 Haptics.select()
                                 onSelect(tag.id)
                             } label: {
-                                HStack(spacing: 10) {
-                                    NoteTagPill(tag: tag, size: .small)
-                                    Spacer(minLength: 6)
+                                HStack(spacing: 14) {
+                                    NoteTagPill(tag: tag, size: .large)
+                                    Spacer(minLength: 8)
                                     if tag.id == selectedTagID {
-                                        Image(systemName: "checkmark")
-                                            .font(.system(size: 12, weight: .semibold))
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.system(size: 22, weight: .semibold))
                                             .foregroundColor(.blue)
                                     }
                                 }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 7)
-                                .contentShape(Rectangle())
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .fill(tag.id == selectedTagID
+                                              ? Color.blue.opacity(0.10)
+                                              : Color(UIColor.tertiarySystemBackground).opacity(0.7))
+                                )
+                                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                             }
                             .buttonStyle(.plain)
                         }
                     }
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, 12)
                 }
-                .frame(width: 240, height: min(CGFloat(tags.count) * 36 + 8, 260))
+                .frame(width: 320, height: min(CGFloat(tags.count) * 62 + 12, 420))
             }
 
             if selectedTagID != nil {
-                Divider()
+                Divider().padding(.top, 6)
                 Button(role: .destructive) {
                     Haptics.tap()
                     onSelect(nil)
                 } label: {
                     Label("Tag entfernen", systemImage: "xmark.circle")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 15, weight: .medium))
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 14)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(.red)
             }
         }
-        .padding(.bottom, 6)
+        .padding(.bottom, 8)
         .presentationCompactAdaptation(.popover)
+    }
+}
+
+/// Mehrfachauswahl der Tags für den Modus „Nur Notizen“.
+struct TagFilterSheet: View {
+    @EnvironmentObject private var viewModel: TimetableViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Button {
+                        Haptics.select()
+                        viewModel.activeTagFilter.removeAll()
+                    } label: {
+                        HStack {
+                            Text("Alle Notizen")
+                            Spacer()
+                            if viewModel.activeTagFilter.isEmpty {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                } footer: {
+                    Text("Ohne Auswahl werden alle Notizen gezeigt. Mehrere Tags lassen sich gleichzeitig abhaken.")
+                }
+
+                Section("Tags") {
+                    if viewModel.tagSettings.tags.isEmpty {
+                        Text("Noch keine Tags angelegt.")
+                            .foregroundColor(.secondary)
+                    } else {
+                        ForEach(viewModel.tagSettings.tags) { tag in
+                            Button {
+                                Haptics.select()
+                                viewModel.toggleTagFilter(tag.id)
+                            } label: {
+                                HStack(spacing: 14) {
+                                    NoteTagPill(tag: tag, size: .large)
+                                    Spacer()
+                                    Image(systemName: viewModel.activeTagFilter.contains(tag.id)
+                                          ? "checkmark.circle.fill"
+                                          : "circle")
+                                        .font(.system(size: 22))
+                                        .foregroundColor(viewModel.activeTagFilter.contains(tag.id) ? .blue : .secondary)
+                                }
+                                .padding(.vertical, 6)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Filter")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Fertig") {
+                        Haptics.tap()
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }

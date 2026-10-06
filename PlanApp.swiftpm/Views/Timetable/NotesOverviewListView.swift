@@ -120,11 +120,6 @@ public struct NotesOverviewListView: View {
             let relativeDay = Calendar.germanCalendar.startOfDay(for: currentMinute)
 
             VStack(spacing: 0) {
-                if viewModel.tagSettings.isEnabled, !viewModel.tagSettings.tags.isEmpty {
-                    tagFilterBar
-                    Divider().padding(.horizontal, NotesOverviewLayout.horizontalPadding)
-                }
-
                 ScrollView(.vertical, showsIndicators: true) {
                     if rows.isEmpty {
                         emptyState(isFiltered: !entrySnapshot.isEmpty)
@@ -300,46 +295,6 @@ public struct NotesOverviewListView: View {
         }
     }
 
-    /// Mehrfachauswahl: Keine Auswahl = alle Notizen.
-    private var tagFilterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                Image(systemName: "line.3.horizontal.decrease.circle")
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundColor(.secondary)
-
-                Button {
-                    Haptics.select()
-                    viewModel.activeTagFilter.removeAll()
-                } label: {
-                    Text("Alle")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(viewModel.activeTagFilter.isEmpty ? .white : .primary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule().fill(viewModel.activeTagFilter.isEmpty ? Color.blue : Color.secondary.opacity(0.15))
-                        )
-                }
-                .buttonStyle(.plain)
-
-                ForEach(viewModel.tagSettings.tags) { tag in
-                    let isSelected = viewModel.activeTagFilter.contains(tag.id)
-                    Button {
-                        Haptics.select()
-                        viewModel.toggleTagFilter(tag.id)
-                    } label: {
-                        NoteTagPill(tag: tag, size: .small, isDimmed: !isSelected)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(isSelected ? .isSelected : [])
-                }
-            }
-            .padding(.horizontal, NotesOverviewLayout.horizontalPadding)
-            .padding(.vertical, 8)
-        }
-    }
-
     // MARK: - Datensammlung
 
     /// Aktualisiert den Notiz-Snapshot nur bei echten Datenänderungen. Kein
@@ -493,8 +448,8 @@ public struct NotesOverviewListView: View {
             Text(isFiltered ? "Keine Notizen mit diesen Tags" : "Keine Notizen vorhanden")
                 .font(.system(size: 19, weight: .semibold, design: .default))
                 .foregroundColor(.primary)
-            Text(isFiltered
-                 ? "Wähle oben andere Tags aus oder tippe auf „Alle“, um wieder alle Notizen zu sehen."
+                Text(isFiltered
+                 ? "Öffne den Filter im Modus-Menü und wähle andere Tags, oder hebe die Auswahl auf, um wieder alle Notizen zu sehen."
                  : "Sobald du im Stundenplan Notizen zu Stunden hinzufügst, findest du sie hier chronologisch sortiert – vergangene oberhalb, kommende unterhalb der grünen Linie.")
                 .font(.system(size: 14, weight: .regular, design: .default))
                 .foregroundColor(.secondary)

@@ -95,6 +95,15 @@ public struct LessonDrawingOverlayView: View {
     /// Zeitstempel der letzten Strich-Mutation im Canvas – entscheidet bei
     /// kombiniertem Undo, welcher der beiden Stacks zuerst dran ist.
     @State private var lastStrokeMutation: Date = .distantPast
+    /// Eigene History, damit Undo/Redo die Auto-Schließung überlebt und der
+    /// Scrubber die Schrittzahl kennt.
+    @State private var editingHistory = NoteEditingHistory(
+        current: NoteHistorySnapshot(drawingData: Data(), textBoxes: [])
+    )
+    @State private var isApplyingHistory = false
+    @State private var historyRevision: Int = 0
+    @State private var undoScrubSession: UndoScrubSession? = nil
+    @State private var overlayWindowOrigin: CGPoint = .zero
 
     // Live transform state. Updates come incrementally from the UIKit canvas so
     // there is no jump when the fingers are released.
@@ -141,6 +150,8 @@ public struct LessonDrawingOverlayView: View {
         if case .text = toolSelection { return true }
         return false
     }
+
+    private var isUndoScrubbing: Bool { undoScrubSession != nil }
 
     public var body: some View {
         let display = viewModel.resolveSubjectDisplay(for: lesson)
@@ -199,6 +210,12 @@ public struct LessonDrawingOverlayView: View {
 
                 // Squeeze des Apple Pencil Pro: abgerundete Bogen-Palette an
                 // der letzten Hover-Position des Stifts.
+                if let undoScrubSession {
+                    UndoScrubOverlay(session: undoScrubSession, appliedOffset: undoScrubSession.currentOffset)
+                        .zIndex(40)
+                        .transition(.opacity)
+                }
+
                 if isSqueezePaletteVisible, let anchor = squeezeAnchor {
                     PencilSqueezePaletteView(
                         anchor: anchor,
@@ -229,7 +246,18 @@ public struct LessonDrawingOverlayView: View {
                         onApplyColorToSelectedText: { hex in
                             applyColorToSelectedTextBox(hex)
                         },
-                        onUndo: { performUndo() }
+                        onUndo: { performUndo() },
+                        undoCount: editingHistory.undoCount,
+                        redoCount: editingHistory.redoCount,
+                        historyRevision: historyRevision,
+                        onUndoScrubBegan: { origin, windowOrigin in
+                            beginCircularUndoScrub(buttonWindowOrigin: windowOrigin)
+                        },
+                        onUndoScrubChanged: { _, windowLocation in
+                            updateCircularUndoScrub(windowLocation: windowLocation)
+                        },
+                        onUndoScrubEnded: { endUndoScrub() },
+                        hidesNonUndoElements: isUndoScrubbing
                     )
                     .zIndex(30)
                     .transition(.opacity)
@@ -246,20 +274,44 @@ public struct LessonDrawingOverlayView: View {
                 configureTextUndo()
                 applyDrawingDefaults()
                 loadExistingNote()
-                heroSourceFrame = viewModel.activeNoteSourceFrame
+                overlayWindowOrigin = geometry.frame(in: .global).origin
+                heroSourceFrame = localizedHeroFrame(
+                    windowFrame: viewModel.activeNoteSourceFrame,
+                    overlayOrigin: overlayWindowOrigin
+                )
 
                 // Wait one layout pass so saved height and safe-area dimensions
                 // are both present before calculating the initial fit.
                 DispatchQueue.main.async {
+                    overlayWindowOrigin = geometry.frame(in: .global).origin
+                    heroSourceFrame = localizedHeroFrame(
+                        windowFrame: viewModel.activeNoteSourceFrame,
+                        overlayOrigin: overlayWindowOrigin
+                    )
                     initializeTransform(in: viewport)
                     didInitialize = true
+
+                    let canMorph = HeroTransitionPolicy.isPlausibleSourceFrame(
+                        x: heroSourceFrame.minX,
+                        y: heroSourceFrame.minY,
+                        width: heroSourceFrame.width,
+                        height: heroSourceFrame.height
+                    )
 
                     // isExpanded fades the card to grey while heroBlend morphs
                     // the panel's size and position from the tapped card to the
                     // centered, fully expanded note in the very same animation.
-                    withAnimation(.spring(response: 0.48, dampingFraction: 0.85)) {
-                        isExpanded = true
+                    if canMorph {
+                        heroBlend = 0
+                        withAnimation(.spring(response: 0.48, dampingFraction: 0.85)) {
+                            isExpanded = true
+                            heroBlend = 1
+                        }
+                    } else {
                         heroBlend = 1
+                        withAnimation(.spring(response: 0.48, dampingFraction: 0.85)) {
+                            isExpanded = true
+                        }
                     }
 
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.36) {
@@ -270,6 +322,7 @@ public struct LessonDrawingOverlayView: View {
                 }
             }
             .onChange(of: geometry.size) { _, _ in
+                overlayWindowOrigin = geometry.frame(in: .global).origin
                 guard didInitialize else { return }
                 normalizeTransform(in: viewport)
             }
@@ -427,9 +480,10 @@ public struct LessonDrawingOverlayView: View {
                     },
                     onStrokeMutation: {
                         lastStrokeMutation = Date()
+                        recordHistorySnapshot()
                     },
                     onRequestUndo: {
-                        performUndo()
+                        performPencilGesture(viewModel.drawingSettings.doubleTapAction)
                     },
                     onPencilInputDetected: {
                         // Sobald echter Pencil-Input ankommt, wird die allgemeine
@@ -440,7 +494,11 @@ public struct LessonDrawingOverlayView: View {
                     },
                     onPencilSqueeze: { anchor, direction in
                         viewModel.registerApplePencilSqueeze()
-                        presentSqueezePalette(anchor: anchor, direction: direction)
+                        performPencilGesture(
+                            viewModel.drawingSettings.squeezeAction,
+                            paletteAnchor: anchor,
+                            paletteDirection: direction
+                        )
                     },
                     onCanvasActivity: {
                         drawingInputActivity.record()
@@ -476,6 +534,7 @@ public struct LessonDrawingOverlayView: View {
                     ),
                     registerUndo: { before, after in
                         textUndo.push(before: before, after: after)
+                        recordHistorySnapshot()
                     },
                     newTextColorHex: preferredTextColorHex
                 )
@@ -514,7 +573,7 @@ public struct LessonDrawingOverlayView: View {
     /// hero transition has settled this simply equals the fixed fitting scale.
     private func renderScale(in viewport: DrawingViewport) -> CGSize {
         let target = CGSize(width: scale, height: scale)
-        guard heroBlend < 0.999, heroSourceFrame != .zero, panelHeight > 0 else {
+        guard heroBlend < 0.999, isPlausibleHeroFrame(heroSourceFrame), panelHeight > 0 else {
             return target
         }
         let sourceScaleX = heroSourceFrame.width / paperWidth
@@ -531,7 +590,7 @@ public struct LessonDrawingOverlayView: View {
             x: viewport.screenCenter.x + offset.width,
             y: viewport.screenCenter.y + offset.height
         )
-        guard heroBlend < 0.999, heroSourceFrame != .zero else { return target }
+        guard heroBlend < 0.999, isPlausibleHeroFrame(heroSourceFrame) else { return target }
         let source = CGPoint(x: heroSourceFrame.midX, y: heroSourceFrame.midY)
         return CGPoint(
             x: source.x + (target.x - source.x) * heroBlend,
@@ -686,6 +745,16 @@ public struct LessonDrawingOverlayView: View {
                 onCopyTextToClipboard: { copyNoteTextToClipboard() },
                 onUndo: { performUndo() },
                 onRedo: { performRedo() },
+                undoCount: editingHistory.undoCount,
+                redoCount: editingHistory.redoCount,
+                historyRevision: historyRevision,
+                onUndoScrubBegan: { _, windowOrigin in
+                    beginLinearUndoScrub(buttonWindowOrigin: windowOrigin)
+                },
+                onUndoScrubChanged: { translation, _ in
+                    updateLinearUndoScrub(translationY: translation.height)
+                },
+                onUndoScrubEnded: { endUndoScrub() },
                 onClear: { clearPage() },
                 canCopyNote: hasCopyableContent,
                 canPasteNote: viewModel.hasCopiedNote,
@@ -841,37 +910,55 @@ public struct LessonDrawingOverlayView: View {
     }
 
     private func performUndo() {
-        let canvasUndoManager = canvasView?.undoManager
-        let canvasCanUndo = canvasUndoManager?.canUndo ?? false
-        let textCanUndo = textUndo.canUndo
-
-        if textCanUndo && (!canvasCanUndo || textUndo.lastChangeDate > lastStrokeMutation) {
-            Haptics.tap()
-            textUndo.undo()
-        } else if canvasCanUndo {
-            Haptics.tap()
-            canvasUndoManager?.undo()
-        } else if textCanUndo {
-            Haptics.tap()
-            textUndo.undo()
-        }
+        guard let snapshot = editingHistory.undo() else { return }
+        Haptics.tap()
+        applyHistorySnapshot(snapshot)
+        historyRevision += 1
     }
 
     private func performRedo() {
-        let canvasUndoManager = canvasView?.undoManager
-        let canvasCanRedo = canvasUndoManager?.canRedo ?? false
-        let textCanRedo = textUndo.canRedo
+        guard let snapshot = editingHistory.redo() else { return }
+        Haptics.tap()
+        applyHistorySnapshot(snapshot)
+        historyRevision += 1
+    }
 
-        if textCanRedo && (!canvasCanRedo || textUndo.lastChangeDate > lastStrokeMutation) {
-            Haptics.tap()
-            textUndo.redo()
-        } else if canvasCanRedo {
-            Haptics.tap()
-            canvasUndoManager?.redo()
-        } else if textCanRedo {
-            Haptics.tap()
-            textUndo.redo()
+    private func currentHistorySnapshot() -> NoteHistorySnapshot {
+        NoteHistorySnapshot(
+            drawingData: (canvasView?.drawing ?? drawing).dataRepresentation(),
+            textBoxes: textBoxes
+        )
+    }
+
+    private func recordHistorySnapshot() {
+        guard !isApplyingHistory, showsEditor else { return }
+        editingHistory.record(currentHistorySnapshot())
+        historyRevision += 1
+    }
+
+    private func applyHistorySnapshot(_ snapshot: NoteHistorySnapshot) {
+        isApplyingHistory = true
+        let restoredDrawing = (try? PKDrawing(data: snapshot.drawingData)) ?? PKDrawing()
+        drawing = restoredDrawing
+        canvasView?.drawing = restoredDrawing
+        canvasView?.undoManager?.removeAllActions()
+        textBoxes = snapshot.textBoxes
+        if let sel = selectedTextBoxID, !snapshot.textBoxes.contains(where: { $0.id == sel }) {
+            selectedTextBoxID = nil
         }
+        if let edit = editingTextBoxID, !snapshot.textBoxes.contains(where: { $0.id == edit }) {
+            editingTextBoxID = nil
+        }
+        lastStrokeMutation = Date()
+        // `canvasViewDrawingDidChange` kommt asynchron. Erst danach wieder
+        // Snapshots aufnehmen, sonst würde Undo als neuer Strich gelten.
+        DispatchQueue.main.async {
+            isApplyingHistory = false
+        }
+    }
+
+    private func persistEditingHistory() {
+        viewModel.saveUndoSession(editingHistory.persistedSession(for: lesson.noteKey))
     }
 
     private func clearPage() {
@@ -923,6 +1010,7 @@ public struct LessonDrawingOverlayView: View {
         textBoxes[index].colorHex = normalized
         Haptics.select()
         textUndo.push(before: before, after: textBoxes)
+        recordHistorySnapshot()
     }
 
     // MARK: - Teilen
@@ -1304,7 +1392,10 @@ public struct LessonDrawingOverlayView: View {
     }
 
     private func loadExistingNote() {
-        guard let note = viewModel.noteFor(lesson: lesson) else { return }
+        guard let note = viewModel.noteFor(lesson: lesson) else {
+            restoreOrBootstrapHistory()
+            return
+        }
 
         canvasHeight = max(
             minimumCanvasHeight,
@@ -1333,6 +1424,26 @@ public struct LessonDrawingOverlayView: View {
         if let savedDrawing = try? PKDrawing(data: note.drawingData) {
             drawing = savedDrawing
         }
+
+        restoreOrBootstrapHistory()
+    }
+
+    private func restoreOrBootstrapHistory() {
+        let current = currentHistorySnapshot()
+        if let session = viewModel.persistedUndoSession(for: lesson.noteKey) {
+            editingHistory.restore(
+                PersistedNoteUndoSession(
+                    noteKey: session.noteKey,
+                    undoStack: session.undoStack,
+                    redoStack: session.redoStack,
+                    current: current,
+                    updatedAt: session.updatedAt
+                )
+            )
+        } else {
+            editingHistory.bootstrap(current)
+        }
+        historyRevision += 1
     }
 
     private func saveAndDismiss() {
@@ -1346,15 +1457,16 @@ public struct LessonDrawingOverlayView: View {
         selectedTextBoxID = nil
         editingTextBoxID = nil
 
+        persistEditingHistory()
+
         let currentDrawing = canvasView?.drawing ?? drawing
-        let fallbackCanvasSize = CGSize(
+        // Immer die bekannte Papiergröße verwenden – `PKCanvasView.bounds`
+        // kann beim ersten Öffnen noch winzig oder 0 sein und hat dann die
+        // Vorschau im Stundenblock komisch klein gerendert.
+        let canvasSize = CGSize(
             width: paperWidth,
             height: max(180, canvasHeight - headerHeight)
         )
-        let rawCanvasSize = canvasView?.bounds.size ?? fallbackCanvasSize
-        let canvasSize = rawCanvasSize.width > 0 && rawCanvasSize.height > 0
-            ? rawCanvasSize
-            : fallbackCanvasSize
         let canvasRect = CGRect(origin: .zero, size: canvasSize)
         let croppedDrawing = currentDrawing.cropped(to: canvasRect)
 
@@ -1531,5 +1643,175 @@ public struct LessonDrawingOverlayView: View {
 
         Haptics.success()
         showToast("Notiz eingefügt.")
+        recordHistorySnapshot()
+    }
+
+    // MARK: - Pencil-Gesten
+
+    private func performPencilGesture(
+        _ action: PencilGestureAction,
+        paletteAnchor: CGPoint? = nil,
+        paletteDirection: CGVector = CGVector(dx: 0, dy: -1)
+    ) {
+        switch action {
+        case .toolbar:
+            presentSqueezePalette(anchor: paletteAnchor, direction: paletteDirection)
+        case .undo:
+            performUndo()
+        case .toggleEraser:
+            toggleEraserAndLastTool()
+        case .none:
+            break
+        }
+    }
+
+    private func toggleEraserAndLastTool() {
+        Haptics.select()
+        if case .eraser = toolSelection {
+            let fallbackHex = viewModel.drawingSettings.penColorSlots.first ?? "#1E1E1E"
+            toolSelection = lastInkingTool ?? .pen(color: UIColor(hex: fallbackHex))
+        } else {
+            lastInkingTool = toolSelection
+            toolSelection = .eraser
+        }
+    }
+
+    // MARK: - Hero-Rahmen
+
+    private func isPlausibleHeroFrame(_ frame: CGRect) -> Bool {
+        HeroTransitionPolicy.isPlausibleSourceFrame(
+            x: frame.minX,
+            y: frame.minY,
+            width: frame.width,
+            height: frame.height
+        )
+    }
+
+    private func localizedHeroFrame(windowFrame: CGRect, overlayOrigin: CGPoint) -> CGRect {
+        guard isPlausibleHeroFrame(windowFrame) else { return .zero }
+        let local = HeroTransitionPolicy.localFrame(
+            windowX: windowFrame.minX,
+            windowY: windowFrame.minY,
+            width: windowFrame.width,
+            height: windowFrame.height,
+            overlayOriginX: overlayOrigin.x,
+            overlayOriginY: overlayOrigin.y
+        )
+        return CGRect(x: local.x, y: local.y, width: local.width, height: local.height)
+    }
+
+    // MARK: - Undo-Scrubber
+
+    private func beginLinearUndoScrub(buttonWindowOrigin: CGPoint) {
+        let origin = CGPoint(
+            x: buttonWindowOrigin.x - overlayWindowOrigin.x,
+            y: buttonWindowOrigin.y - overlayWindowOrigin.y
+        )
+        undoScrubSession = UndoScrubSession(
+            origin: origin,
+            style: .linear,
+            startUndoCount: editingHistory.undoCount,
+            startRedoCount: editingHistory.redoCount,
+            currentOffset: 0,
+            circleStartAngle: 0,
+            circleRadius: 0,
+            circleCenter: .zero
+        )
+        Haptics.select()
+    }
+
+    private func updateLinearUndoScrub(translationY: CGFloat) {
+        guard var session = undoScrubSession, session.style == .linear else { return }
+        let available = max(0, UIScreen.main.bounds.height - session.origin.y - 28)
+        let undoTicks = NoteUndoSessionPolicy.linearTickCount(
+            undoCount: session.startUndoCount,
+            availableHeight: available
+        )
+        let redoTicks = min(session.startRedoCount, 8)
+        let offset = UndoScrubMath.linearOffset(
+            translationY: translationY,
+            undoTicks: undoTicks,
+            redoTicks: redoTicks
+        )
+        applyScrubOffset(offset, to: &session)
+    }
+
+    private func beginCircularUndoScrub(buttonWindowOrigin: CGPoint) {
+        let button = CGPoint(
+            x: buttonWindowOrigin.x - overlayWindowOrigin.x,
+            y: buttonWindowOrigin.y - overlayWindowOrigin.y
+        )
+        let center = squeezeAnchor.map {
+            CGPoint(x: $0.x - overlayWindowOrigin.x, y: $0.y - overlayWindowOrigin.y)
+        } ?? button
+        let radius = hypot(button.x - center.x, button.y - center.y)
+        let startAngle = atan2(button.y - center.y, button.x - center.x)
+        undoScrubSession = UndoScrubSession(
+            origin: button,
+            style: .circular,
+            startUndoCount: editingHistory.undoCount,
+            startRedoCount: editingHistory.redoCount,
+            currentOffset: 0,
+            circleStartAngle: startAngle,
+            circleRadius: max(44, radius),
+            circleCenter: center
+        )
+        Haptics.select()
+    }
+
+    private func updateCircularUndoScrub(windowLocation: CGPoint) {
+        guard var session = undoScrubSession, session.style == .circular else { return }
+        let local = CGPoint(
+            x: windowLocation.x - overlayWindowOrigin.x,
+            y: windowLocation.y - overlayWindowOrigin.y
+        )
+        let undoTicks = NoteUndoSessionPolicy.circularTickCount(undoCount: session.startUndoCount)
+        let redoTicks = NoteUndoSessionPolicy.redoTickCount(
+            redoCount: session.startRedoCount,
+            maxTicks: max(0, NoteUndoSessionPolicy.circularMaxTicks - undoTicks)
+        )
+        let stepAngle = (2 * CGFloat.pi) / CGFloat(NoteUndoSessionPolicy.circularMaxTicks)
+        let offset = UndoScrubMath.circularOffset(
+            from: session.circleStartAngle,
+            to: local,
+            center: session.circleCenter,
+            undoTicks: undoTicks,
+            redoTicks: redoTicks,
+            stepAngle: stepAngle
+        )
+        applyScrubOffset(offset, to: &session)
+    }
+
+    private func applyScrubOffset(_ offset: Int, to session: inout UndoScrubSession) {
+        let delta = offset - session.currentOffset
+        guard delta != 0 else { return }
+        if delta > 0 {
+            for _ in 0..<delta { _ = performSilentUndo() }
+        } else {
+            for _ in 0..<(-delta) { _ = performSilentRedo() }
+        }
+        session.currentOffset = offset
+        undoScrubSession = session
+        Haptics.select()
+    }
+
+    private func performSilentUndo() -> Bool {
+        guard let snapshot = editingHistory.undo() else { return false }
+        applyHistorySnapshot(snapshot)
+        historyRevision += 1
+        return true
+    }
+
+    private func performSilentRedo() -> Bool {
+        guard let snapshot = editingHistory.redo() else { return false }
+        applyHistorySnapshot(snapshot)
+        historyRevision += 1
+        return true
+    }
+
+    private func endUndoScrub() {
+        withAnimation(.easeOut(duration: 0.16)) {
+            undoScrubSession = nil
+        }
     }
 }

@@ -98,7 +98,8 @@ eintippen, Dateiinhalt einfügen, committen). Danach steht der Workflow im Tab *
   - **1 Finger**: Zeichnet ebenfalls – solange die Einstellung „Apple Pencil“ aus ist (Standard). Ist sie an, bleibt der Finger außen vor.
 - **Werkzeuge**:
   - **Stift / Textmarker / Radierer / Lasso / Text** – mit frei wählbaren Farben aus den Farb-Slots und eigener Dicke je Werkzeug.
-  - **Rückgängig & Vorwärts (Undo/Redo)** über die Werkzeugleiste, die Text-Werkzeuge und den **Doppeltipp** des Apple Pencil.
+  - **Rückgängig & Vorwärts (Undo/Redo)** über die Werkzeugleiste. Eine Sekunde auf **Rückgängig** halten öffnet einen Scrubber: in der oberen Leiste einen Balken nach unten (auch mit dem Finger), in der Squeeze-Palette einen Kreis. Die Schritte der letzten drei Notizen bleiben erhalten, auch wenn eine Notiz automatisch geschlossen wurde.
+  - **Squeeze** und **Doppeltipp** sind unter *Zeichnen & Apple Pencil* frei belegbar (Toolbar, Rückgängig, Radierer/letztes Werkzeug, Nichts). Standard: Squeeze öffnet die Toolbar, Doppeltipp wechselt Radierer und letztes Werkzeug.
 - **Kompakte Squeeze-Werkzeugpalette**: Ein Zusammendrücken des Apple Pencil Pro öffnet nahe der **letzten aktiven Hover-Position** einen kompakten, dicken Bogen. Acht runde **44-pt-Buttons** enthalten Rückgängig, Lasso, Stift, Textmarker, Radierer, Text, die Farbe (Farb-Slots erscheinen beim Hovern außen) und die Stiftdicke (durch Halten und radiales Ziehen). Unter iPadOS 26 mit aktuellem SDK wird natives interaktives Liquid Glass verwendet; ältere Versionen erhalten einen reflektierenden Material-Fallback. Erneuter Squeeze, Weiterzeichnen oder ein Fingertipp schließen die Palette. Ein Rand-Tipp schließt zunächst nur die offene Palette, nicht gleichzeitig die Notiz.
 - **Radierer mit automatischer Rückkehr**: Nach dem Radieren und Loslassen wechselt das Werkzeug automatisch zum zuletzt benutzten Werkzeug zurück (Fallback: Stift). Der Schalter *„Radierer automatisch abwählen“* (Standard: an) sitzt unter *Zeichnen & Apple Pencil*.
 - **Apple-Pencil-Einstellung**: Standardmäßig **aus**, das heißt Finger und Pencil dürfen zeichnen. Sobald die App irgendwo einen echten Apple Pencil bemerkt (Hover, Strich oder Squeeze), schaltet sie „Nur Apple Pencil“ automatisch ein und merkt sich das.
@@ -119,13 +120,13 @@ eintippen, Dateiinhalt einfügen, committen). Danach steht der Workflow im Tab *
 - **Chronologie im Raster**: Die grüne „Jetzt“-Linie liegt **zwischen** dem vergangenen und kommenden Kartenraster und läuft von Rand zu Rand – sie belegt niemals eine Rasterzelle. Im Mehrspaltenraster stehen Datum und Stunde direkt im Header jeder Karte, sodass Notizen verschiedener Tage eine Zeile gemeinsam füllen können.
 - **Chronologie bleibt**: Gelesen wird zeilenweise von links nach rechts – vergangene Einträge oben, kommende unterhalb der grünen Linie.
 - **Flüssig auch mit vielen Notizen**: Die Übersicht ist eine flache Liste aus Kartenzeilen (`NotesOverviewLayout.rowPlan`), Vorschaubilder werden **asynchron verkleinert geladen** und in einem Cache gehalten, Schatten liegen nur auf der Kartenform, und die Minuten-Aktualisierung läuft über einen einzigen `.task`-Timer. Dadurch ruckelt der Modus auch mit zehn und mehr Notizen nicht mehr.
-- **Tag-Filter**: Ist das Tag-System aktiv, erscheint oben eine Chip-Leiste mit allen Tags (Mehrfachauswahl; nichts ausgewählt = alle Notizen).
+- **Tag-Filter**: Ist das Tag-System aktiv, erscheint im Modus-Menü unter den drei Ansichten die Option **Filter** (Mehrfachauswahl mit Häkchen; nichts ausgewählt = alle Notizen).
 
 ### 🏷️ 7. Tag-System (optional)
 
-- *Einstellungen → Tag-System*: Schalter **„Tag System aktivieren“** (Standard aus), darunter die Liste der Tags (Name + Farbe, maximal 20, Reihenfolge per Pfeile).
-- In der Notiz steht neben dem Fachnamen eine gestrichelte graue Pille **„+ Tag hinzufügen“**; ein Tipp öffnet die kleine Auswahl. Ein gesetzter Tag füllt die Pille in seiner Farbe (weiße Schrift bei dunklen Farben); erneutes Tippen wechselt oder entfernt ihn.
-- Im Stundenplan erscheint der Tag unten rechts in der Notiz-Vorschau.
+- *Einstellungen → Tag-System*: Schalter **„Tag System aktivieren“** (Standard aus), darunter die Liste der Tags (Name + Farbe, maximal 20). Bearbeiten über das Stift-Symbol, Reihenfolge per Ziehen an den drei Strichen rechts.
+- In der Notiz steht neben dem Fachnamen eine gestrichelte graue Pille **„+ Tag hinzufügen“**; ein Tipp öffnet die große Auswahl. Ein gesetzter Tag füllt die Pille in seiner Farbe (weiße Schrift bei dunklen Farben); erneutes Tippen wechselt oder entfernt ihn.
+- Im Stundenplan erscheint der Tag neben dem Fachnamen. Eine leere Notiz mit Tag wird nicht gespeichert – der Tag entfällt.
 
 ### 💾 8. Sichern, Übertragen & mehrere Geräte
 

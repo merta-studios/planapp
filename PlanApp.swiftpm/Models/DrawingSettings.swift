@@ -27,6 +27,10 @@ public struct DrawingSettings: Codable, Equatable {
     /// Standard-Skalierung des Hintergrund-Musters neuer Notizen
     /// (1 = Mitte des Reglers in der Zeichenfläche).
     public var defaultBackgroundScale: Double
+    /// Aktion beim Squeeze des Apple Pencil Pro.
+    public var squeezeAction: PencilGestureAction
+    /// Aktion beim Doppeltipp (Apple Pencil 2 und Pro).
+    public var doubleTapAction: PencilGestureAction
 
     public static let defaultPenColorSlots: [String] = [
         "#1E1E1E", // Schwarz
@@ -55,7 +59,9 @@ public struct DrawingSettings: Codable, Equatable {
         applePencilOnly: Bool = false,
         autoDeselectEraser: Bool = true,
         dynamicPenWidth: Bool = true,
-        defaultBackgroundScale: Double = 1
+        defaultBackgroundScale: Double = 1,
+        squeezeAction: PencilGestureAction = .toolbar,
+        doubleTapAction: PencilGestureAction = .toggleEraser
     ) {
         self.penWidth = penWidth
         self.markerWidth = markerWidth
@@ -69,6 +75,8 @@ public struct DrawingSettings: Codable, Equatable {
         self.autoDeselectEraser = autoDeselectEraser
         self.dynamicPenWidth = dynamicPenWidth
         self.defaultBackgroundScale = NoteBackgroundMetrics.clampedScale(defaultBackgroundScale)
+        self.squeezeAction = squeezeAction
+        self.doubleTapAction = doubleTapAction
     }
 
     enum CodingKeys: String, CodingKey {
@@ -77,6 +85,7 @@ public struct DrawingSettings: Codable, Equatable {
         case penColorSlots, markerColorSlots
         case applePencilOnly, autoDeselectEraser
         case dynamicPenWidth, defaultBackgroundScale
+        case squeezeAction, doubleTapAction
         case defaultPenColorHex, defaultMarkerColorHex, defaultTool
     }
 
@@ -117,6 +126,8 @@ public struct DrawingSettings: Codable, Equatable {
         self.dynamicPenWidth = try container.decodeIfPresent(Bool.self, forKey: .dynamicPenWidth) ?? true
         let decodedScale = try container.decodeIfPresent(Double.self, forKey: .defaultBackgroundScale) ?? 1
         self.defaultBackgroundScale = NoteBackgroundMetrics.clampedScale(decodedScale)
+        self.squeezeAction = try container.decodeIfPresent(PencilGestureAction.self, forKey: .squeezeAction) ?? .toolbar
+        self.doubleTapAction = try container.decodeIfPresent(PencilGestureAction.self, forKey: .doubleTapAction) ?? .toggleEraser
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -133,6 +144,8 @@ public struct DrawingSettings: Codable, Equatable {
         try container.encode(autoDeselectEraser, forKey: .autoDeselectEraser)
         try container.encode(dynamicPenWidth, forKey: .dynamicPenWidth)
         try container.encode(defaultBackgroundScale, forKey: .defaultBackgroundScale)
+        try container.encode(squeezeAction, forKey: .squeezeAction)
+        try container.encode(doubleTapAction, forKey: .doubleTapAction)
     }
 
     public static var `default`: DrawingSettings {

@@ -13,10 +13,11 @@ public struct LessonBlockView: View {
 
     @State private var isHovered: Bool = false
     @State private var pinchScale: CGFloat = 1.0
-    /// Aktueller Bildschirm-Rahmen dieser Karte (globale Koordinaten). Wird
-    /// live nachgeführt, damit die Zoom-Animation der Zeichenfläche exakt aus
-    /// der Position und Größe dieser Karte heraus starten kann.
-    @State private var globalFrame: CGRect = .zero
+    /// Live-Sonde für den Fenster-Rahmen. Der GeometryReader hat beim ersten
+    /// Öffnen oft 0 oder eine Mini-Größe geliefert – die UIView-Sonde liest
+    /// den echten Rahmen erst beim Antippen.
+    @State private var frameHolder = ViewFrameHolder()
+    @State private var measuredWidth: CGFloat = 0
     /// Gemessene Höhe des Text-Bereichs (Titelzeile + Zusatzinfos). Die
     /// Notiz-Vorschau darf sich bis knapp an diesen Text heran vergrößern.
     @State private var textContentHeight: CGFloat = 26
@@ -117,6 +118,10 @@ public struct LessonBlockView: View {
                             .strikethrough(lesson.isCancelled, color: .red)
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
+
+                        if let noteTag {
+                            NoteTagPill(tag: noteTag, size: isCompact ? .mini : .small)
+                        }
 
                         Spacer(minLength: 0)
 
@@ -230,7 +235,7 @@ public struct LessonBlockView: View {
                let imgData = note.croppedImageData {
                 // Verfügbare Breite: komplette Blockbreite abzüglich der
                 // Paddings (Vorschau-Kasten + Blockrand).
-                let maxW = max(24, globalFrame.width - 16)
+                let maxW = max(24, measuredWidth - 16)
                 // Verfügbare Höhe: Blockhöhe abzüglich oberem Padding,
                 // gemessenem Text und etwas Abstand nach unten.
                 // Minimaler Extra-Abstand zum Textbereich, damit die Vorschau
@@ -255,28 +260,17 @@ public struct LessonBlockView: View {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .strokeBorder(Color.black.opacity(0.12), lineWidth: 0.5)
                 )
-                // Tag unten rechts in der Notiz-Vorschau.
-                .overlay(alignment: .bottomTrailing) {
-                    if let noteTag {
-                        NoteTagPill(tag: noteTag, size: .mini)
-                            .padding(3)
-                    }
-                }
                 .padding(5)
                 .allowsHitTesting(false)
-            } else if hasVisibleNote, let noteTag {
-                // Notiz ohne Vorschaubild (z. B. nur Tag): Tag trotzdem zeigen.
-                NoteTagPill(tag: noteTag, size: .mini)
-                    .padding(6)
-                    .allowsHitTesting(false)
             }
         }
+        .background(ViewFrameProbe(holder: frameHolder))
         .background(
             GeometryReader { proxy in
                 Color.clear
-                    .onAppear { updateGlobalFrameIfNeeded(proxy.frame(in: .global)) }
-                    .onChange(of: proxy.frame(in: .global)) { _, newValue in
-                        updateGlobalFrameIfNeeded(newValue)
+                    .onAppear { measuredWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { _, newValue in
+                        measuredWidth = newValue
                     }
             }
         )
@@ -333,7 +327,7 @@ public struct LessonBlockView: View {
                 .onEnded { scale in
                     if scale > 1.15 {
                         Haptics.tap()
-                        viewModel.openNote(for: lesson, sourceFrame: globalFrame)
+                        viewModel.openNote(for: lesson, sourceFrame: sourceFrameForAnimation())
                     }
                     pinchScale = 1.0
                 }
@@ -404,26 +398,13 @@ public struct LessonBlockView: View {
         }
     }
 
-    private func updateGlobalFrameIfNeeded(_ newFrame: CGRect) {
-        // GeometryReader kann während Sheet-/Scroll-Animationen sehr viele fast
-        // identische Werte liefern. Während Settings/Overlay sichtbar sind, ist
-        // der Quellrahmen ohnehin nicht nutzbar; danach reicht der nächste
-        // relevante Layout-Wert. Nur relevante Änderungen als State setzen,
-        // sonst werden alle Stundenblöcke unnötig neu gerendert.
-        guard !viewModel.isSettingsPresented, !viewModel.isDrawingOverlayPresented else { return }
-        let threshold: CGFloat = 2
-        guard abs(globalFrame.origin.x - newFrame.origin.x) > threshold
-            || abs(globalFrame.origin.y - newFrame.origin.y) > threshold
-            || abs(globalFrame.size.width - newFrame.size.width) > threshold
-            || abs(globalFrame.size.height - newFrame.size.height) > threshold else {
-            return
-        }
-        globalFrame = newFrame
+    private func sourceFrameForAnimation() -> CGRect {
+        frameHolder.plausibleWindowFrame
     }
 
     private func openCurrentNote() {
         Haptics.tap()
-        viewModel.openNote(for: lesson, sourceFrame: globalFrame)
+        viewModel.openNote(for: lesson, sourceFrame: sourceFrameForAnimation())
     }
 
     private func requestDeleteConfirmation() {

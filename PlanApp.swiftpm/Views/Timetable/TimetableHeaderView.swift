@@ -5,6 +5,7 @@ import UIKit
 /// visible; only the decorative app title is removed on compact widths.
 public struct TimetableHeaderView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
+    @State private var isTagFilterPresented = false
 
     public init() {}
 
@@ -34,6 +35,10 @@ public struct TimetableHeaderView: View {
         .frame(maxWidth: .infinity, minHeight: 60)
         .background(.ultraThinMaterial)
         .zIndex(50)
+        .sheet(isPresented: $isTagFilterPresented) {
+            TagFilterSheet()
+                .environmentObject(viewModel)
+        }
     }
 
     private var appTitle: some View {
@@ -89,18 +94,7 @@ public struct TimetableHeaderView: View {
     /// mit Häkchen beim aktiven Modus.
     private var viewModeMenu: some View {
         Menu {
-            ForEach(TimetableViewMode.allCases) { mode in
-                Button {
-                    Haptics.select()
-                    viewModel.setViewMode(mode)
-                } label: {
-                    if viewModel.viewMode == mode {
-                        Label(mode.displayName, systemImage: "checkmark")
-                    } else {
-                        Label(mode.displayName, systemImage: mode.systemImage)
-                    }
-                }
-            }
+            viewModeMenuItems
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: viewModel.viewMode.systemImage)
@@ -119,6 +113,41 @@ public struct TimetableHeaderView: View {
         .fixedSize()
         .accessibilityLabel("Ansichts-Modus: \(viewModel.viewMode.displayName)")
         .accessibilityHint("Öffnet die Auswahl des Ansichts-Modus")
+    }
+
+    @ViewBuilder
+    private var viewModeMenuItems: some View {
+        ForEach(TimetableViewMode.allCases) { mode in
+            Button {
+                Haptics.select()
+                viewModel.setViewMode(mode)
+            } label: {
+                if viewModel.viewMode == mode {
+                    Label(mode.displayName, systemImage: "checkmark")
+                } else {
+                    Label(mode.displayName, systemImage: mode.systemImage)
+                }
+            }
+        }
+
+        if viewModel.viewMode == .notesOnly,
+           viewModel.tagSettings.isEnabled,
+           !viewModel.tagSettings.tags.isEmpty {
+            Divider()
+            Button {
+                Haptics.tap()
+                DispatchQueue.main.async {
+                    isTagFilterPresented = true
+                }
+            } label: {
+                Label(tagFilterMenuTitle, systemImage: "line.3.horizontal.decrease")
+            }
+        }
+    }
+
+    private var tagFilterMenuTitle: String {
+        let count = viewModel.activeTagFilter.count
+        return count == 0 ? "Filter" : "Filter (\(count))"
     }
 
     /// Stiftname und separat ausgelesener Pencil-Akku. Ein fehlender BLE-Wert
@@ -187,18 +216,7 @@ public struct TimetableHeaderView: View {
     /// Kompakte Variante des Modus-Buttons (nur Symbol) für schmale Breiten.
     private var compactViewModeMenu: some View {
         Menu {
-            ForEach(TimetableViewMode.allCases) { mode in
-                Button {
-                    Haptics.select()
-                    viewModel.setViewMode(mode)
-                } label: {
-                    if viewModel.viewMode == mode {
-                        Label(mode.displayName, systemImage: "checkmark")
-                    } else {
-                        Label(mode.displayName, systemImage: mode.systemImage)
-                    }
-                }
-            }
+            viewModeMenuItems
         } label: {
             Image(systemName: viewModel.viewMode.systemImage)
                 .font(.system(size: 15, weight: .semibold))

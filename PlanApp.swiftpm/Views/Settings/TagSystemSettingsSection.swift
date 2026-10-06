@@ -71,14 +71,23 @@ struct TagSystemSettingsSection: View {
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
-                        VStack(spacing: 0) {
-                            ForEach(Array(viewModel.tagSettings.tags.enumerated()), id: \.element.id) { index, tag in
-                                tagRow(tag, index: index, total: viewModel.tagSettings.tags.count)
-                                if index < viewModel.tagSettings.tags.count - 1 {
-                                    Divider()
-                                }
+                        List {
+                            ForEach(viewModel.tagSettings.tags) { tag in
+                                tagRow(tag)
+                                    .listRowInsets(EdgeInsets(top: 6, leading: 4, bottom: 6, trailing: 4))
+                                    .listRowBackground(Color.clear)
+                                    .listRowSeparator(.visible)
                             }
+                            .onMove { source, destination in
+                                Haptics.select()
+                                viewModel.moveTags(fromOffsets: source, toOffset: destination)
+                            }
+                            .deleteDisabled(true)
                         }
+                        .listStyle(.plain)
+                        .environment(\.editMode, .constant(.active))
+                        .scrollDisabled(true)
+                        .frame(height: CGFloat(max(viewModel.tagSettings.tags.count, 1)) * 56)
                     }
 
                     Button(action: addTag) {
@@ -98,7 +107,7 @@ struct TagSystemSettingsSection: View {
                     .disabled(!viewModel.tagSettings.canAddTag)
                     .opacity(viewModel.tagSettings.canAddTag ? 1 : 0.55)
 
-                    Text("Antippen zum Umbenennen oder Umfärben. Die Pfeile ändern die Reihenfolge. Wird ein Tag gelöscht, verlieren die betroffenen Notizen nur ihren Tag – der Inhalt bleibt.")
+                    Text("Zum Umbenennen oder Umfärben das Stift-Symbol antippen. Die drei Striche rechts halten und ziehen, um die Reihenfolge zu ändern. Wird ein Tag gelöscht, verlieren die betroffenen Notizen nur ihren Tag – der Inhalt bleibt.")
                         .font(.system(size: 12, weight: .regular, design: .default))
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -140,69 +149,39 @@ struct TagSystemSettingsSection: View {
 
     // MARK: - Zeile
 
-    private func tagRow(_ tag: NoteTag, index: Int, total: Int) -> some View {
+    private func tagRow(_ tag: NoteTag) -> some View {
         HStack(spacing: 10) {
+            NoteTagPill(tag: tag, size: .regular)
+            Text(tag.displayName)
+                .font(.system(size: 14, weight: .regular, design: .default))
+                .foregroundColor(.primary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+
             Button {
                 Haptics.tap()
                 editingTag = tag
             } label: {
-                HStack(spacing: 10) {
-                    NoteTagPill(tag: tag, size: .regular)
-                    Text(tag.displayName)
-                        .font(.system(size: 14, weight: .regular, design: .default))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .contentShape(Rectangle())
+                Image(systemName: "pencil")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.blue)
+                    .frame(width: 32, height: 32)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Tag bearbeiten")
 
-            HStack(spacing: 2) {
-                Button {
-                    Haptics.select()
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        viewModel.moveTag(id: tag.id, by: -1)
-                    }
-                } label: {
-                    Image(systemName: "chevron.up")
-                        .font(.system(size: 12, weight: .semibold))
-                        .frame(width: 30, height: 30)
-                }
-                .buttonStyle(.plain)
-                .disabled(index == 0)
-                .opacity(index == 0 ? 0.3 : 1)
-                .accessibilityLabel("Nach oben")
-
-                Button {
-                    Haptics.select()
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        viewModel.moveTag(id: tag.id, by: 1)
-                    }
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 12, weight: .semibold))
-                        .frame(width: 30, height: 30)
-                }
-                .buttonStyle(.plain)
-                .disabled(index >= total - 1)
-                .opacity(index >= total - 1 ? 0.3 : 1)
-                .accessibilityLabel("Nach unten")
-
-                Button(role: .destructive) {
-                    tagPendingDeletion = tag
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundColor(.red)
-                        .frame(width: 30, height: 30)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Tag löschen")
+            Button(role: .destructive) {
+                tagPendingDeletion = tag
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundColor(.red)
+                    .frame(width: 32, height: 32)
             }
-            .foregroundColor(.secondary)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Tag löschen")
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 2)
     }
 
     private func addTag() {

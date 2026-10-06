@@ -17,6 +17,7 @@ final class ApplePencilBatteryMonitor: NSObject, ObservableObject {
     }
 
     @Published private(set) var batteryLevel: Int?
+    @Published private(set) var pencilName: String? = nil
     @Published private(set) var status: Status = .idle
 
     private static let batteryService = CBUUID(string: "180F")
@@ -64,7 +65,6 @@ final class ApplePencilBatteryMonitor: NSObject, ObservableObject {
               Date().timeIntervalSince(lastSearchDate) >= 10 else { return }
 
         lastSearchDate = Date()
-        batteryLevel = nil
         status = .searching
 
         // Nur bereits mit iPadOS verbundene Geräte berücksichtigen. Ein
@@ -85,6 +85,9 @@ final class ApplePencilBatteryMonitor: NSObject, ObservableObject {
         guard let centralManager else { return }
         pencilPeripheral = peripheral
         batteryCharacteristic = nil
+        if let name = peripheral.name, !name.isEmpty {
+            pencilName = name
+        }
         peripheral.delegate = self
         isConnecting = true
         status = .connecting
@@ -142,7 +145,6 @@ extension ApplePencilBatteryMonitor: CBCentralManagerDelegate {
             pendingCharacteristicServices = 0
             pencilPeripheral = nil
             batteryCharacteristic = nil
-            batteryLevel = nil
             status = .bluetoothUnavailable
         case .resetting, .unknown:
             break
