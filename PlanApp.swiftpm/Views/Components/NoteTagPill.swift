@@ -238,6 +238,9 @@ struct TagFilterSheet: View {
                                     .foregroundColor(.blue)
                             }
                         }
+                        // Ganze Zeile ist anwählbar – nicht nur das Häkchen.
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
                 } footer: {
                     Text("Ohne Auswahl werden alle Notizen gezeigt. Mehrere Tags lassen sich gleichzeitig abhaken.")
@@ -263,6 +266,10 @@ struct TagFilterSheet: View {
                                         .foregroundColor(viewModel.activeTagFilter.contains(tag.id) ? .blue : .secondary)
                                 }
                                 .padding(.vertical, 6)
+                                // Ganze Zeile ist anwählbar – nicht nur Pille
+                                // oder das kleine Häkchen am rechten Rand.
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                         }

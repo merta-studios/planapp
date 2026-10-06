@@ -35,16 +35,10 @@ public struct DrawingToolbarView: View {
     public let onCopyTextToClipboard: () -> Void
     public let onUndo: () -> Void
     public let onRedo: () -> Void
-    /// Zweiter Tipp auf ein **bereits gewähltes** Werkzeug (Text, Radierer,
-    /// Lasso): schaltet es wieder aus und kehrt zum letzten Zeichenwerkzeug
-    /// zurück. Früher erschien an dieser Stelle nur ein Hinweis-Popover
-    /// („Passe die Textgröße …“ / „Hier gibt es keine weiteren Optionen!“) –
-    /// solche Sackgassen gibt es nicht mehr.
-    public var onDeselectSelectedTool: (() -> Void)? = nil
     public var undoCount: Int = 0
     public var redoCount: Int = 0
     public var historyRevision: Int = 0
-    public var onUndoScrubBegan: (CGPoint, CGPoint) -> Void = { _, _ in }
+    public var onUndoScrubBegan: (CGPoint, CGPoint, CGFloat?) -> Void = { _, _, _ in }
     public var onUndoScrubChanged: (CGSize, CGPoint) -> Void = { _, _ in }
     public var onUndoScrubEnded: () -> Void = {}
     /// Während des linearen Scrubs verschwindet das feststehende Symbol,
@@ -66,6 +60,69 @@ public struct DrawingToolbarView: View {
     @State private var showClearConfirmation = false
     @State private var editingPenSlotIndex: Int? = nil
     @State private var editingMarkerSlotIndex: Int? = nil
+
+    /// Werkzeuge, die im gewählten Zustand einen Mini-Hinweis statt einer
+    /// Abwahl zeigen. Früher führte der zweite Tipp auf Text/Radierer/Lasso
+    /// in eine Sackgasse (z. B. stummer Rückfall zum schwarzen Stift); jetzt
+    /// erscheint ein kleines Popover, was das Werkzeug tut.
+    @State private var activeToolHint: ToolHint? = nil
+
+    private enum ToolHint: String, Identifiable {
+        case text, lasso, eraser
+
+        var id: String { rawValue }
+
+        var systemImage: String {
+            switch self {
+            case .text: return "textformat"
+            case .lasso: return "lasso.badge.record"
+            case .eraser: return "eraser"
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .text: return "Text-Werkzeug"
+            case .lasso: return "Lasso"
+            case .eraser: return "Radierer"
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .text:
+                return "Tippe auf die Zeichenfläche, um Text einzufügen. Schriftart und Größe legst du in den Einstellungen unter „Zeichnen“ fest – dort stehen mehrere Schriften zur Auswahl."
+            case .lasso:
+                return "Führe eine geschlossene Geste um den Bereich, den du verschieben, kopieren oder löschen möchtest."
+            case .eraser:
+                return "Wische über Striche oder Textfelder, um sie zu entfernen. Die Breite passt du über den Dicke-Regler an."
+            }
+        }
+    }
+
+    private func toolHintBinding(for hint: ToolHint) -> Binding<Bool> {
+        Binding(
+            get: { activeToolHint == hint },
+            set: { newValue in
+                if !newValue { activeToolHint = nil }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func toolHintPopover(_ hint: ToolHint) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(hint.title, systemImage: hint.systemImage)
+                .font(.footnote.weight(.semibold))
+            Text(hint.message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .lineSpacing(2)
+        }
+        .padding(14)
+        .frame(width: 260, alignment: .leading)
+    }
 
     private var isCompactToolbar: Bool {
         InteractionPolicies.usesCompactScrollingToolbar(
@@ -101,11 +158,10 @@ public struct DrawingToolbarView: View {
         onCopyTextToClipboard: @escaping () -> Void = {},
         onUndo: @escaping () -> Void,
         onRedo: @escaping () -> Void,
-        onDeselectSelectedTool: (() -> Void)? = nil,
         undoCount: Int = 0,
         redoCount: Int = 0,
         historyRevision: Int = 0,
-        onUndoScrubBegan: @escaping (CGPoint, CGPoint) -> Void = { _, _ in },
+        onUndoScrubBegan: @escaping (CGPoint, CGPoint, CGFloat?) -> Void = { _, _, _ in },
         onUndoScrubChanged: @escaping (CGSize, CGPoint) -> Void = { _, _ in },
         onUndoScrubEnded: @escaping () -> Void = {},
         hidesUndoGlyph: Bool = false,
@@ -135,7 +191,6 @@ public struct DrawingToolbarView: View {
         self.onCopyTextToClipboard = onCopyTextToClipboard
         self.onUndo = onUndo
         self.onRedo = onRedo
-        self.onDeselectSelectedTool = onDeselectSelectedTool
         self.undoCount = undoCount
         self.redoCount = redoCount
         self.historyRevision = historyRevision
@@ -537,9 +592,10 @@ public struct DrawingToolbarView: View {
         }()
 
         return Button {
-            guard !isSelected else {
+            if isSelected {
+                // Zweiter Tipp: Mini-Hinweis statt Abwahl / Stift-Rückfall.
                 Haptics.tap()
-                onDeselectSelectedTool?()
+                activeToolHint = .text
                 return
             }
             Haptics.select()
@@ -555,9 +611,13 @@ public struct DrawingToolbarView: View {
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
+        .popover(isPresented: toolHintBinding(for: .text), arrowEdge: .top) {
+            toolHintPopover(.text)
+                .presentationCompactAdaptation(.popover)
+        }
         .accessibilityLabel("Text-Werkzeug")
         .accessibilityValue(isSelected ? "Ausgewählt" : "")
-        .accessibilityHint(isSelected ? "Erneut tippen, um das Text-Werkzeug wieder auszuschalten" : "")
+        .accessibilityHint(isSelected ? "Erneut tippen, um einen Hinweis anzuzeigen" : "")
     }
 
     // MARK: - Strichstärke (pro Werkzeug getrennt)
@@ -674,9 +734,10 @@ public struct DrawingToolbarView: View {
         }()
 
         return Button {
-            guard !isSelected else {
+            if isSelected {
+                // Zweiter Tipp: Mini-Hinweis statt Abwahl / Stift-Rückfall.
                 Haptics.tap()
-                onDeselectSelectedTool?()
+                activeToolHint = .eraser
                 return
             }
             Haptics.select()
@@ -691,9 +752,13 @@ public struct DrawingToolbarView: View {
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
+        .popover(isPresented: toolHintBinding(for: .eraser), arrowEdge: .top) {
+            toolHintPopover(.eraser)
+                .presentationCompactAdaptation(.popover)
+        }
         .accessibilityLabel("Radierer")
         .accessibilityValue(isSelected ? "Ausgewählt" : "")
-        .accessibilityHint(isSelected ? "Erneut tippen, um wieder zum Zeichenwerkzeug zu wechseln" : "")
+        .accessibilityHint(isSelected ? "Erneut tippen, um einen Hinweis anzuzeigen" : "")
     }
 
     private var lassoButton: some View {
@@ -703,9 +768,10 @@ public struct DrawingToolbarView: View {
         }()
 
         return Button {
-            guard !isSelected else {
+            if isSelected {
+                // Zweiter Tipp: Mini-Hinweis statt Abwahl / Stift-Rückfall.
                 Haptics.tap()
-                onDeselectSelectedTool?()
+                activeToolHint = .lasso
                 return
             }
             Haptics.select()
@@ -720,9 +786,13 @@ public struct DrawingToolbarView: View {
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
+        .popover(isPresented: toolHintBinding(for: .lasso), arrowEdge: .top) {
+            toolHintPopover(.lasso)
+                .presentationCompactAdaptation(.popover)
+        }
         .accessibilityLabel("Lasso-Werkzeug")
         .accessibilityValue(isSelected ? "Ausgewählt" : "")
-        .accessibilityHint(isSelected ? "Erneut tippen, um das Lasso wieder auszuschalten" : "")
+        .accessibilityHint(isSelected ? "Erneut tippen, um einen Hinweis anzuzeigen" : "")
     }
 
     // MARK: - Verlauf & mehr Optionen

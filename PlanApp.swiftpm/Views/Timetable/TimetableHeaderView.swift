@@ -231,7 +231,10 @@ public struct TimetableHeaderView: View {
     }
 
     private func regularHeader(relativeTo date: Date) -> some View {
+        // Im Modus „Nur Notizen“ gibt es kein Woche-Karussell – der
+        // „Heute“-Sprung gehört nur zu den beiden Stundenplan-Modi.
         let showsJumpButton = !viewModel.isViewingRelevantCurrentWeek(relativeTo: date)
+            && viewModel.viewMode != .notesOnly
 
         return HStack(spacing: 14) {
             appTitle
@@ -264,6 +267,7 @@ public struct TimetableHeaderView: View {
 
     private func compactHeader(relativeTo date: Date) -> some View {
         let showsJumpButton = !viewModel.isViewingRelevantCurrentWeek(relativeTo: date)
+            && viewModel.viewMode != .notesOnly
 
         return HStack(spacing: 8) {
             appLogo
@@ -299,6 +303,7 @@ public struct TimetableHeaderView: View {
     /// Kopfzeile auch bei 320–430 pt Breite in eine Zeile passt.
     private func phoneHeader(relativeTo date: Date) -> some View {
         let showsJumpButton = !viewModel.isViewingRelevantCurrentWeek(relativeTo: date)
+            && viewModel.viewMode != .notesOnly
         let isStale = viewModel.isTimetableStale(relativeTo: date)
         let syncColor = isStale ? Color.red : Color(red: 0.10, green: 0.62, blue: 0.28)
 

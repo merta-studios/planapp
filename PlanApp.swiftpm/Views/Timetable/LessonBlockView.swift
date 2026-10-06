@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Block-Karte für ein Unterrichtsfach im Stundenplan
 public struct LessonBlockView: View {
@@ -21,12 +22,7 @@ public struct LessonBlockView: View {
     /// Gemessene Höhe des Text-Bereichs (Titelzeile + Zusatzinfos). Die
     /// Notiz-Vorschau darf sich bis knapp an diesen Text heran vergrößern.
     @State private var textContentHeight: CGFloat = 26
-    @State private var showLessonActions = false
-    /// Kurzlebiger Merker: Nach einem langen Druck darf der beim Loslassen
-    /// zusätzlich erkannte Tipp nicht sofort die Notiz öffnen.
-    @State private var didPresentLessonOptions = false
     @State private var showDeleteNoteConfirmation = false
-    @State private var showTagOptions = false
 
     public init(lesson: Lesson, blockHeight: CGFloat, noteNamespace: Namespace.ID, isCompact: Bool = false) {
         self.lesson = lesson
@@ -291,68 +287,26 @@ public struct LessonBlockView: View {
                 isHovered = false
             }
         }
+        // Apple Pencil Pro: Squeeze (und Pencil-Button-Tap) beim Hovern
+        // öffnet dasselbe, block-gewidmete Menü wie der lange Druck.
         .background(
-            PencilSqueezeActionAttachment {
-                guard isHovered else { return }
-                presentLessonOptions()
+            LessonBlockSqueezeMenuBridge(isSqueezeEnabled: isHovered) {
+                lessonUIMenu()
             }
         )
-        // Genau EIN Weg zu den Optionen: langer Druck mit Finger, Pencil oder
-        // Trackpad öffnet denselben Dialog wie der Squeeze des Apple Pencil Pro
-        // und der „Optionen“-Knopf unten.
+        // EIN Weg zu den Optionen: langes Drücken (Finger, Pencil, Trackpad)
+        // öffnet das systemeigene Kontextmenü – direkt am Block verankert,
+        // wie in der Notiz-Übersicht. Das frühere zentrale „Optionen“-
+        // confirmationDialog (Variante „Optionen oben“) ist weg; es gab zwei
+        // Darstellungen desselben Menüs, jetzt nur noch die block-gewidmete.
         //
-        // Vorher hing zusätzlich ein `.contextMenu` mit demselben Inhalt am
-        // Block. Das Systemmenü wurde beim Aktualisieren der Karte (Hover-
-        // Verlust, Hover-Effekt, Auto-Refresh der Notiz-Vorschauen) abgerissen
-        // und sofort neu aufgebaut – die Optionen erschienen, verschwanden und
-        // erschienen erneut. Ohne diesen zweiten Präsentationsweg bleibt die
-        // Auswahl stabil stehen.
-        .onLongPressGesture(minimumDuration: 0.35, maximumDistance: 44) {
-            presentLessonOptions()
-        }
-        // VoiceOver: dieselben Optionen ohne langen Druck erreichbar.
-        .accessibilityAction(named: "Optionen") {
-            presentLessonOptions()
-        }
-        .confirmationDialog(
-            "Optionen",
-            isPresented: $showLessonActions,
-            titleVisibility: .visible
-        ) {
-            lessonActionButtons
-            Button("Abbrechen", role: .cancel) {}
-        }
-        .confirmationDialog(
-            "Tag",
-            isPresented: $showTagOptions,
-            titleVisibility: .visible
-        ) {
-            if viewModel.tagSettings.tags.isEmpty {
-                Button("Keine Tags angelegt") {}
-                    .disabled(true)
-            } else {
-                ForEach(viewModel.tagSettings.tags) { tag in
-                    Button {
-                        Haptics.select()
-                        viewModel.setTag(tag.id, for: lesson)
-                    } label: {
-                        if viewModel.tag(for: lesson)?.id == tag.id {
-                            Label(tag.displayName, systemImage: "checkmark")
-                        } else {
-                            Text(tag.displayName)
-                        }
-                    }
-                }
-            }
-            if viewModel.tag(for: lesson) != nil {
-                Button("Tag entfernen", role: .destructive) {
-                    Haptics.tap()
-                    viewModel.setTag(nil, for: lesson)
-                }
-            }
-            Button("Abbrechen", role: .cancel) {}
-        } message: {
-            Text("Tag dieser Notiz ändern oder entfernen, ohne die Zeichenfläche zu öffnen.")
+        // Stabilität: Das Menü gehört dem System (UIKit), nicht dem
+        // SwiftUI-Body. Neubewertungen der Karte (Hover-Effekt,
+        // Vorschau-Refresh) bauen es nicht ab und neu auf – die Optionen
+        // bleiben stabil stehen. VoiceOver bekommt die Inhalte automatisch
+        // als Aktionsmenü vom `.contextMenu`.
+        .contextMenu {
+            lessonContextMenuContent
         }
         .confirmationDialog(
             "Notiz löschen?",
@@ -388,8 +342,11 @@ public struct LessonBlockView: View {
         }
     }
 
+    /// Inhalt des block-gewidmeten Kontextmenüs (langer Druck). Die
+    /// „Tag“-Auswahl ist jetzt Untermenü – es gibt kein separates
+    /// „Tag“-confirmationDialog mehr.
     @ViewBuilder
-    private var lessonActionButtons: some View {
+    private var lessonContextMenuContent: some View {
         let hasVisibleNote = viewModel.hasVisibleNote(for: lesson)
 
         Button {
@@ -420,10 +377,32 @@ public struct LessonBlockView: View {
         }
 
         if hasVisibleNote, viewModel.tagSettings.isEnabled {
-            Button {
-                Haptics.tap()
-                DispatchQueue.main.async {
-                    showTagOptions = true
+            Menu {
+                if viewModel.tagSettings.tags.isEmpty {
+                    Button("Keine Tags angelegt") {}
+                        .disabled(true)
+                } else {
+                    ForEach(viewModel.tagSettings.tags) { tag in
+                        Button {
+                            Haptics.select()
+                            viewModel.setTag(tag.id, for: lesson)
+                        } label: {
+                            if viewModel.tag(for: lesson)?.id == tag.id {
+                                Label(tag.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(tag.displayName)
+                            }
+                        }
+                    }
+                }
+                if viewModel.tag(for: lesson) != nil {
+                    Divider()
+                    Button(role: .destructive) {
+                        Haptics.tap()
+                        viewModel.setTag(nil, for: lesson)
+                    } label: {
+                        Label("Tag entfernen", systemImage: "xmark.circle")
+                    }
                 }
             } label: {
                 Label("Tag", systemImage: "tag")
@@ -448,6 +427,80 @@ public struct LessonBlockView: View {
         }
     }
 
+    /// Dasselbe Menü als UIKit-`UIMenu` – für den Apple-Pencil-Pro-Squeeze,
+    /// der das SwiftUI-Kontextmenü nicht programmatisch öffnen kann. Der
+    /// Builder liest immer den aktuellen ViewModel-Zustand (wird bei jedem
+    /// Render neu übergeben).
+    private func lessonUIMenu() -> UIMenu {
+        let hasVisibleNote = viewModel.hasVisibleNote(for: lesson)
+        var elements: [UIMenuElement] = []
+
+        elements.append(UIAction(
+            title: hasVisibleNote ? "Notiz bearbeiten" : "Notiz erstellen",
+            image: UIImage(systemName: "square.and.pencil")
+        ) { _ in
+            openCurrentNote()
+        })
+        elements.append(UIAction(
+            title: "Notiz für die nächste Stunde erstellen",
+            image: UIImage(systemName: "calendar.badge.plus")
+        ) { _ in
+            Haptics.tap()
+            let target = lesson
+            Task { await viewModel.openNoteForNextOccurrence(after: target) }
+        })
+        if hasVisibleNote {
+            elements.append(UIAction(title: "Kopieren", image: UIImage(systemName: "doc.on.doc")) { _ in
+                Haptics.tap()
+                viewModel.copyNote(for: lesson)
+            })
+        }
+        if hasVisibleNote, viewModel.tagSettings.isEnabled {
+            var tagElements: [UIMenuElement] = []
+            for tag in viewModel.tagSettings.tags {
+                let isSelected = viewModel.tag(for: lesson)?.id == tag.id
+                tagElements.append(UIAction(
+                    title: tag.displayName,
+                    image: isSelected ? UIImage(systemName: "checkmark") : nil
+                ) { _ in
+                    Haptics.select()
+                    viewModel.setTag(tag.id, for: lesson)
+                })
+            }
+            if viewModel.tag(for: lesson) != nil {
+                tagElements.append(.divider())
+                tagElements.append(UIAction(
+                    title: "Tag entfernen",
+                    image: UIImage(systemName: "xmark.circle"),
+                    attributes: .destructive
+                ) { _ in
+                    Haptics.tap()
+                    viewModel.setTag(nil, for: lesson)
+                })
+            }
+            elements.append(UIMenu(title: "Tag", image: UIImage(systemName: "tag"), children: tagElements))
+        }
+        if viewModel.hasCopiedNote {
+            elements.append(UIAction(
+                title: hasVisibleNote ? "Einfügen (ersetzt Notiz)" : "Einfügen",
+                image: UIImage(systemName: "doc.on.clipboard")
+            ) { _ in
+                Haptics.tap()
+                viewModel.pasteCopiedNote(into: lesson)
+            })
+        }
+        if hasVisibleNote {
+            elements.append(UIAction(
+                title: "Notiz löschen",
+                image: UIImage(systemName: "trash"),
+                attributes: .destructive
+            ) { _ in
+                requestDeleteConfirmation()
+            })
+        }
+        return UIMenu(title: "Optionen", children: elements)
+    }
+
     /// Lehrer/Raum nebeneinander (iPad) bzw. untereinander (iPhone).
     @ViewBuilder
     private func detailStack<Content: View>(spacing: CGFloat, @ViewBuilder content: () -> Content) -> some View {
@@ -462,22 +515,10 @@ public struct LessonBlockView: View {
         frameHolder.plausibleWindowFrame
     }
 
-    /// Öffnet die Options-Auswahl. Der Merker verhindert, dass ein nach dem
-    /// langen Druck ausgelöster Tipp zusätzlich die Notiz öffnet.
-    private func presentLessonOptions() {
-        guard !showLessonActions else { return }
-        Haptics.tap()
-        didPresentLessonOptions = true
-        showLessonActions = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-            didPresentLessonOptions = false
-        }
-    }
-
-    /// Tipp auf den Block: öffnet die Notiz – außer unmittelbar nach einem
-    /// langen Druck (dann ist die Options-Auswahl gemeint).
+    /// Tipp auf den Block: öffnet die Notiz. Nach einem langen Druck
+    /// (Kontextmenü) verschlingt das System die Berührung – es gibt keinen
+    /// zusätzlichen Tipp mehr zu filtern.
     private func handleBlockTap() {
-        guard !didPresentLessonOptions else { return }
         openCurrentNote()
     }
 
@@ -490,6 +531,84 @@ public struct LessonBlockView: View {
         Haptics.warning()
         DispatchQueue.main.async {
             showDeleteNoteConfirmation = true
+        }
+    }
+}
+
+/// Unsichtbare UIKit-Brücke für das block-gewidmete „Optionen“-Menü:
+/// Apple-Pencil-Pro-Squeeze (und der Pencil-Button-Tap) fordern das
+/// `UIContextMenuInteraction`-Menü programmatisch an. Der lange Druck selbst
+/// läuft über das SwiftUI-`.contextMenu` des Blocks; beide Wege zeigen das
+/// identische Menü.
+///
+/// Der `buildMenu`-Closure wird bei jedem SwiftUI-Render aktualisiert, daher
+/// baut das Menü immer aus dem aktuellen Zustand. Weil UIKit das Menü
+/// präsentiert, kann ein Re-Render der Karte (Hover, Vorschau-Refresh) ein
+/// offenes Menü nicht abreißen.
+private struct LessonBlockSqueezeMenuBridge: UIViewRepresentable {
+    /// Nur beim Hovern über den Block (dasselbe Verhalten wie vor der
+    /// Umstellung auf das Kontextmenü).
+    var isSqueezeEnabled: Bool
+    var buildMenu: () -> UIMenu
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = true
+
+        let squeeze = UIPencilInteraction()
+        squeeze.delegate = context.coordinator
+        view.addInteraction(squeeze)
+        context.coordinator.pencilInteraction = squeeze
+
+        let menu = UIContextMenuInteraction(delegate: context.coordinator)
+        view.addUIContextMenuInteraction(menu)
+        context.coordinator.contextMenuInteraction = menu
+
+        context.coordinator.update(from: self)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.update(from: self)
+    }
+
+    final class Coordinator: NSObject, UIPencilInteractionDelegate, UIContextMenuInteractionDelegate {
+        var isSqueezeEnabled = false
+        var buildMenu: () -> UIMenu = { UIMenu(title: "") }
+        weak var pencilInteraction: UIPencilInteraction?
+        weak var contextMenuInteraction: UIContextMenuInteraction?
+
+        func update(from parent: LessonBlockSqueezeMenuBridge) {
+            isSqueezeEnabled = parent.isSqueezeEnabled
+            buildMenu = parent.buildMenu
+        }
+
+        @available(iOS 17.5, *)
+        func pencilInteraction(
+            _ interaction: UIPencilInteraction,
+            didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze
+        ) {
+            guard squeeze.phase == .ended, isSqueezeEnabled else { return }
+            Haptics.tap()
+            contextMenuInteraction?.requestMenu()
+        }
+
+        func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
+            guard isSqueezeEnabled else { return }
+            Haptics.tap()
+            contextMenuInteraction?.requestMenu()
+        }
+
+        func contextMenuInteraction(
+            _ interaction: UIContextMenuInteraction,
+            willBeginWithCompletion completion: @escaping (UIMenu?) -> Void
+        ) {
+            completion(buildMenu())
         }
     }
 }

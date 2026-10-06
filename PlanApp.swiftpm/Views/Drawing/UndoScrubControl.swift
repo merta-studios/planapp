@@ -12,10 +12,16 @@ struct UndoScrubSession: Equatable {
     var origin: CGPoint
     var style: UndoScrubStyle
     var startUndoCount: Int
+    /// Wiederholbare Schritte zum Sitzungsstart. Solange kann der Scrubber
+    /// in die **andere** Richtung ziehen und genau die Schritte wiederher-
+    /// stellen, die in dieser Sitzung rückgängig gemacht wurden (Redo).
+    /// Mehr geht nicht: Ältere Redo-Schritte sind beim Sitzungsstart schon
+    /// verbraucht.
+    var startRedoCount: Int
     /// Tatsächlich angewandte Schritte (bestimmt die hervorgehobene Stufe).
     var currentOffset: Int
     /// Ziel des Fingers. Der Knopf **gleitet** dorthin, statt zu springen;
-    /// die Schritte werden dabei einzeln angewandt.
+    /// die Schritte werden dabei einzeln angewandt. Negativ = Redo.
     var targetOffset: Int
     /// Kreis: Winkel des Undo-Buttons beim Start (Bogenmaß).
     var circleStartAngle: CGFloat
@@ -23,6 +29,11 @@ struct UndoScrubSession: Equatable {
     var circleCenter: CGPoint
     /// Höhe des Overlays, damit der lineare Balken am unteren Rand stoppt.
     var containerHeight: CGFloat
+    /// Kreis: letzte gemessene Fingerposition (Winkel), damit die Drehung
+    /// kontinuierlich mitaddiert werden kann (kein Positions-Sprung).
+    var circleLastAngle: CGFloat? = nil
+    /// Kreis: seit Scrub-Start kontinuierlich mitaddierte Gesamtdrehung.
+    var circleAccumulatedAngle: CGFloat = 0
 }
 
 /// Unsichtbarer Trefferbereich über dem Rückgängig-Knopf. Die Verfolgung liegt
@@ -34,8 +45,13 @@ struct UndoScrubHandle: UIViewRepresentable {
     var style: UndoScrubStyle
     /// Fenster-/Global-Mittelpunkt des Kreisbogens (nur Kreis-Bar).
     var circleCenterInGlobal: CGPoint = .zero
+    /// Gewünschte on-screen-Radialgröße des Kreises (nur Kreis-Bar).
+    /// Die Palette meldet ihren echten Bogendurchmesser, damit der Scrub-Kreis
+    /// immer exakt so groß ist wie die Kreis-Bar selbst – unabhängig davon,
+    /// ob die geometrische Mittelpunkts-Sonde schon einen Wert geliefert hat.
+    var circleRadiusOverride: CGFloat? = nil
     var onTap: () -> Void
-    var onScrubBegan: (_ buttonCenter: CGPoint, _ circleCenter: CGPoint) -> Void
+    var onScrubBegan: (_ buttonCenter: CGPoint, _ circleCenter: CGPoint, _ intendedRadius: CGFloat?) -> Void
     var onScrubChanged: (_ translation: CGSize, _ windowLocation: CGPoint) -> Void
     var onScrubEnded: () -> Void
 
@@ -57,6 +73,7 @@ struct UndoScrubHandle: UIViewRepresentable {
         box.allowsFinger = allowsFinger
         box.style = style
         box.circleCenterInGlobal = circleCenterInGlobal
+        box.circleRadiusOverride = circleRadiusOverride
         box.onTap = onTap
         box.onScrubBegan = onScrubBegan
         box.onScrubChanged = onScrubChanged
@@ -76,8 +93,9 @@ final class UndoScrubCallbackBox {
     var allowsFinger = true
     var style: UndoScrubStyle = .linear
     var circleCenterInGlobal: CGPoint = .zero
+    var circleRadiusOverride: CGFloat? = nil
     var onTap: () -> Void = {}
-    var onScrubBegan: (CGPoint, CGPoint) -> Void = { _, _ in }
+    var onScrubBegan: (CGPoint, CGPoint, CGFloat?) -> Void = { _, _, _ in }
     var onScrubChanged: (CGSize, CGPoint) -> Void = { _, _ in }
     var onScrubEnded: () -> Void = {}
     weak var view: UIView?
@@ -194,7 +212,9 @@ final class UndoScrubWindowTracker: UIGestureRecognizer, UIGestureRecognizerDele
         isScrubbing = false
         cancelFallback?.cancel()
         cancelFallback = nil
-        Haptics.attachFeedbackView(touch.view ?? host)
+        // Für die Pencil-Pro-Haptik zählt die eigentliche Knopf-View, nicht
+        // irgendeine SwiftUI-Hosting-View unter dem Stift.
+        Haptics.attachFeedbackView(box.view ?? touch.view ?? host)
         holdWorkItem?.cancel()
         let item = DispatchWorkItem { [weak self] in
             self?.beginScrubIfStillHolding()
@@ -328,7 +348,7 @@ final class UndoScrubWindowTracker: UIGestureRecognizer, UIGestureRecognizerDele
         let buttonCenter = box.view.map { $0.convert($0.bounds.center, to: nil) } ?? startLocation
         Haptics.attachFeedbackView(box.view ?? view)
         Haptics.pencilSnap(intensity: 0.85)
-        box.onScrubBegan(buttonCenter, box.circleCenterInGlobal)
+        box.onScrubBegan(buttonCenter, box.circleCenterInGlobal, box.circleRadiusOverride)
     }
 
     private func clearTracking() {
@@ -363,19 +383,23 @@ struct UndoScrubOverlay: View {
             undoCount: session.startUndoCount,
             availableHeight: max(0, session.containerHeight - session.origin.y - 28)
         )
+        // Wiederhol-Bereich über dem Knopf (dünner gezeichnet): Die Schritte
+        // dieser Sitzung, die gerade rückgängig gemacht wurden.
+        let redoTicks = max(0, session.startRedoCount)
         let spacing = CGFloat(NoteUndoSessionPolicy.linearTickSpacing)
+        let totalDown = CGFloat(undoTicks) * spacing
+        let totalUp = CGFloat(redoTicks) * spacing
 
         return ZStack {
-            let totalDown = CGFloat(undoTicks) * spacing
             Capsule()
                 .fill(.ultraThinMaterial)
-                .frame(width: 44, height: totalDown + 44)
+                .frame(width: 44, height: totalDown + totalUp + 44)
                 .overlay(
                     Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
                 )
                 .position(
                     x: session.origin.x,
-                    y: session.origin.y + totalDown / 2
+                    y: session.origin.y + (totalDown - totalUp) / 2
                 )
 
             if undoTicks > 0 {
@@ -384,6 +408,15 @@ struct UndoScrubOverlay: View {
                         .fill(Color.secondary.opacity(step == appliedOffset ? 0.95 : 0.45))
                         .frame(width: 18, height: 3)
                         .position(x: session.origin.x, y: session.origin.y + CGFloat(step) * spacing)
+                }
+            }
+
+            if redoTicks > 0 {
+                ForEach(1...redoTicks, id: \.self) { step in
+                    Capsule()
+                        .fill(Color.accentColor.opacity(step == -appliedOffset ? 0.95 : 0.30))
+                        .frame(width: 18, height: 3)
+                        .position(x: session.origin.x, y: session.origin.y - CGFloat(step) * spacing)
                 }
             }
 
@@ -404,14 +437,22 @@ struct UndoScrubOverlay: View {
         let handleOnButton = radius < 8
         let start = session.circleStartAngle
         let sign = CGFloat(InteractionPolicies.circularUndoSweepSign)
-        // Nur ein halber Kreis: Der Scrubber endet nach 180°, statt sich auf
-        // der Rückseite weiterzudrehen. Dadurch kann die Berührung nicht mehr
-        // „auf die andere Seite“ springen.
+        // Voller Kreis: Die Stufen füllen die kompletten 360° aus. Der
+        // kontinuierlich mitaddierte Winkel (statt einer Positions-Messung)
+        // verhindert Sprünge an der Startposition.
         let stepAngle = undoTicks > 0
-            ? CGFloat(NoteUndoSessionPolicy.circularStepAngle())
+            ? CGFloat(NoteUndoSessionPolicy.circularStepAngle(undoCount: session.startUndoCount))
             : 0
         let lineWidth = CGFloat(InteractionPolicies.circularRingLineWidth)
         let undoSweep = CGFloat(undoTicks) * stepAngle * sign
+        // Bei Redo (negativer Offset) läuft der Knopf spiegelbildlich über
+        // denselben Bogen: Schritt k liegt dort, wo Undo-Schritt
+        // undoTicks − k steht – den entsprechend hervorheben.
+        let redoMirrorTick: Int? = {
+            guard appliedOffset < 0, undoTicks > 0 else { return nil }
+            let r = abs(appliedOffset) % undoTicks
+            return r == 0 ? undoTicks : undoTicks - r
+        }()
 
         return ZStack {
             if undoTicks > 0 {
@@ -425,7 +466,13 @@ struct UndoScrubOverlay: View {
                         step: step,
                         stepAngle: Double(stepAngle)
                     ))
-                    tick(at: angle, center: center, radius: radius, lineWidth: lineWidth, emphasized: step == appliedOffset)
+                    tick(
+                        at: angle,
+                        center: center,
+                        radius: radius,
+                        lineWidth: lineWidth,
+                        emphasized: step == appliedOffset || step == redoMirrorTick
+                    )
                 }
             }
 
