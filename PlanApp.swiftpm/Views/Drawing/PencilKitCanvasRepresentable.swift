@@ -870,25 +870,32 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 /// Eigener Gesture-Recognizer, der ohne Bewegung `.began` erreicht.
 /// `UIPanGestureRecognizer` wartet auf einen Translation-Schwellenwert und
 /// hat die Stillhalte-Geste für gerade Linien deshalb oft nie gesehen.
+///
+/// Wichtig: Die Touch-Methoden der UIKit-Superklasse erwarten das Ereignis als
+/// **nicht-optionales** `UIEvent`. Wird hier `UIEvent?` deklariert, lässt sich
+/// der Parameter nicht mehr an `super` weitergeben („Value of optional type
+/// 'UIEvent?' must be unwrapped to a value of type 'UIEvent'“). Der Parameter
+/// wird deshalb – wie in `IntentionalFingerTapRecognizer` – nicht-optional
+/// deklariert; UIKit liefert bei Gesten immer ein Ereignis mit.
 final class StrokeHoldGestureRecognizer: UIGestureRecognizer {
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesBegan(touches, with: event)
         state = .began
     }
 
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesMoved(touches, with: event)
         if state == .began || state == .changed {
             state = .changed
         }
     }
 
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesEnded(touches, with: event)
         state = .ended
     }
 
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesCancelled(touches, with: event)
         state = .cancelled
     }
