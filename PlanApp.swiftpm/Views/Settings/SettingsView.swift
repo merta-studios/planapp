@@ -61,9 +61,6 @@ public struct SettingsView: View {
             }
         }
         .onAppear(perform: applyLaunchCategoryIfNeeded)
-        // Die app-eigene Tastatur liegt über der gesamten Navigation und
-        // dockt dadurch auch auf Sync-Unterseiten am unteren Fensterrand an.
-        .appKeyboardHost()
     }
 
     /// Springt beim Öffnen direkt auf die gewünschte Kategorie, wenn eine

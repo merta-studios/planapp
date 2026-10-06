@@ -5,10 +5,15 @@ public struct PeriodColumnView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
     public let rowHeight: CGFloat
     public let headerHeight: CGFloat
+    public let width: CGFloat
+    /// Kompakt (iPhone): nur Stundennummer und Beginn, kleinere Schrift.
+    public let isCompact: Bool
 
-    public init(rowHeight: CGFloat, headerHeight: CGFloat) {
+    public init(rowHeight: CGFloat, headerHeight: CGFloat, width: CGFloat = 76, isCompact: Bool = false) {
         self.rowHeight = rowHeight
         self.headerHeight = headerHeight
+        self.width = width
+        self.isCompact = isCompact
     }
 
     public var body: some View {
@@ -18,13 +23,19 @@ public struct PeriodColumnView: View {
                 Rectangle()
                     .fill(Color(UIColor.secondarySystemBackground).opacity(0.8))
 
-                HStack(spacing: 4) {
+                if isCompact {
                     Image(systemName: "clock")
-                        .font(.system(size: 13, weight: .regular, design: .default))
+                        .font(.system(size: 12, weight: .regular, design: .default))
                         .foregroundColor(.secondary)
-                    Text("Std.")
-                        .font(.system(size: 13, weight: .regular, design: .default))
-                        .foregroundColor(.secondary)
+                } else {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 13, weight: .regular, design: .default))
+                            .foregroundColor(.secondary)
+                        Text("Std.")
+                            .font(.system(size: 13, weight: .regular, design: .default))
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
             .frame(height: headerHeight)
@@ -39,25 +50,39 @@ public struct PeriodColumnView: View {
                                 : Color(UIColor.systemGray6).opacity(0.2)
                         )
 
-                    VStack(spacing: 2) {
-                        Text(period.startTime)
-                            .font(.system(size: 11, weight: .regular, design: .default))
-                            .foregroundColor(.secondary)
+                    if isCompact {
+                        VStack(spacing: 1) {
+                            Text("\(period.periodNumber)")
+                                .font(.system(size: 13, weight: .semibold, design: .default))
+                                .foregroundColor(.primary)
+                            Text(period.startTime)
+                                .font(.system(size: 8, weight: .regular, design: .default))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                        }
+                        .padding(.vertical, 2)
+                    } else {
+                        VStack(spacing: 2) {
+                            Text(period.startTime)
+                                .font(.system(size: 11, weight: .regular, design: .default))
+                                .foregroundColor(.secondary)
 
-                        Text("\(period.periodNumber)")
-                            .font(.system(size: 18, weight: .regular, design: .default))
-                            .foregroundColor(.primary)
+                            Text("\(period.periodNumber)")
+                                .font(.system(size: 18, weight: .regular, design: .default))
+                                .foregroundColor(.primary)
 
-                        Text(period.endTime)
-                            .font(.system(size: 11, weight: .regular, design: .default))
-                            .foregroundColor(.secondary)
+                            Text(period.endTime)
+                                .font(.system(size: 11, weight: .regular, design: .default))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 4)
                     }
-                    .padding(.vertical, 4)
                 }
                 .frame(height: rowHeight)
             }
         }
-        .frame(width: 76)
+        .frame(width: width)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }

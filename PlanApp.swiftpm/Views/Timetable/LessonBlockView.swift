@@ -7,6 +7,9 @@ public struct LessonBlockView: View {
     public let lesson: Lesson
     public let blockHeight: CGFloat
     public let noteNamespace: Namespace.ID
+    /// Kompakte Darstellung für schmale Spalten (iPhone): kleinere Schrift,
+    /// weniger Abstand, keine Symbole vor Lehrer/Raum.
+    public let isCompact: Bool
 
     @State private var isHovered: Bool = false
     @State private var pinchScale: CGFloat = 1.0
@@ -20,11 +23,16 @@ public struct LessonBlockView: View {
     @State private var showLessonActions = false
     @State private var showDeleteNoteConfirmation = false
 
-    public init(lesson: Lesson, blockHeight: CGFloat, noteNamespace: Namespace.ID) {
+    public init(lesson: Lesson, blockHeight: CGFloat, noteNamespace: Namespace.ID, isCompact: Bool = false) {
         self.lesson = lesson
         self.blockHeight = blockHeight
         self.noteNamespace = noteNamespace
+        self.isCompact = isCompact
     }
+
+    private var contentPadding: CGFloat { isCompact ? 5 : 8 }
+    private var titleFontSize: CGFloat { isCompact ? 11 : 15 }
+    private var detailFontSize: CGFloat { isCompact ? 9 : 12 }
 
     /// Modus "Notizen hervorgehoben": Blöcke ohne sichtbare Notiz werden stark
     /// aufgehellt. Während eine Notiz geöffnet ist, nie aufhellen.
@@ -48,6 +56,7 @@ public struct LessonBlockView: View {
         let isActive = viewModel.isDrawingOverlayPresented
             && viewModel.activeNoteLesson?.noteKey == lesson.noteKey
         let hasGradient = display.gradientEndColor != nil
+        let noteTag = viewModel.tag(for: lesson)
         let cardColors: [Color] = {
             if isActive {
                 return [
@@ -101,7 +110,7 @@ public struct LessonBlockView: View {
                     // Obere Zeile: Fachname + Status-Badges
                     HStack(alignment: .top, spacing: 6) {
                         Text(displayName)
-                            .font(.system(size: 15, weight: .regular, design: .default))
+                            .font(.system(size: titleFontSize, weight: isCompact ? .semibold : .regular, design: .default))
                             .foregroundColor(
                                 lesson.isCancelled ? .secondary : Color.black
                             )
@@ -111,22 +120,34 @@ public struct LessonBlockView: View {
 
                         Spacer(minLength: 0)
 
-                        // Badges
-                        VStack(alignment: .trailing, spacing: 3) {
+                        // Badges (auf dem iPhone nur als farbiger Punkt, damit
+                        // der Fachname lesbar bleibt)
+                        if isCompact {
                             if lesson.isCancelled {
-                                StatusBadge(.cancelled)
+                                Circle().fill(Color.red).frame(width: 6, height: 6)
                             } else if lesson.isSubstitution {
-                                StatusBadge(.substitution)
+                                Circle().fill(Color.orange).frame(width: 6, height: 6)
+                            }
+                        } else {
+                            VStack(alignment: .trailing, spacing: 3) {
+                                if lesson.isCancelled {
+                                    StatusBadge(.cancelled)
+                                } else if lesson.isSubstitution {
+                                    StatusBadge(.substitution)
+                                }
                             }
                         }
                     }
 
-                    // Anpassbare Zusatz-Informationen (Lehrer, Raum, Details)
-                    HStack(spacing: 8) {
+                    // Anpassbare Zusatz-Informationen (Lehrer, Raum, Details).
+                    // Kompakt (iPhone) untereinander statt nebeneinander.
+                    detailStack(spacing: isCompact ? 1 : 8) {
                         if settings.showTeacher && !lesson.teacherRaw.isEmpty {
                             HStack(spacing: 3) {
-                                Image(systemName: "person")
-                                    .font(.system(size: 10, weight: .regular, design: .default))
+                                if !isCompact {
+                                    Image(systemName: "person")
+                                        .font(.system(size: 10, weight: .regular, design: .default))
+                                }
                                 if let orig = originalTeacherDisplayName, lesson.isSubstitution {
                                     Text(orig)
                                         .strikethrough(true, color: .red)
@@ -137,14 +158,17 @@ public struct LessonBlockView: View {
                                         .strikethrough(lesson.isCancelled, color: .red)
                                 }
                             }
-                            .font(.system(size: 12, weight: .regular, design: .default))
+                            .font(.system(size: detailFontSize, weight: .regular, design: .default))
                             .foregroundColor(lesson.isCancelled ? .secondary : Color.black.opacity(0.70))
+                            .lineLimit(1)
                         }
 
                         if settings.showRoom && !lesson.roomRaw.isEmpty {
                             HStack(spacing: 3) {
-                                Image(systemName: "mappin.and.ellipse")
-                                    .font(.system(size: 10, weight: .regular, design: .default))
+                                if !isCompact {
+                                    Image(systemName: "mappin.and.ellipse")
+                                        .font(.system(size: 10, weight: .regular, design: .default))
+                                }
                                 if let orig = lesson.originalRoom, lesson.isSubstitution {
                                     Text(orig)
                                         .strikethrough(true, color: .red)
@@ -155,13 +179,14 @@ public struct LessonBlockView: View {
                                         .strikethrough(lesson.isCancelled, color: .red)
                                 }
                             }
-                            .font(.system(size: 12, weight: .regular, design: .default))
+                            .font(.system(size: detailFontSize, weight: .regular, design: .default))
                             .foregroundColor(lesson.isCancelled ? .secondary : Color.black.opacity(0.70))
+                            .lineLimit(1)
                         }
                     }
 
                     // Vertretungsnotiz / Grund
-                    if settings.showSubstitutionDetails && !lesson.substitutionText.isEmpty {
+                    if !isCompact, settings.showSubstitutionDetails && !lesson.substitutionText.isEmpty {
                         Text(lesson.substitutionText)
                             .font(.system(size: 11, weight: .regular, design: .default))
                             .foregroundColor(lesson.isCancelled ? .red.opacity(0.9) : Color.black.opacity(0.85))
@@ -182,7 +207,7 @@ public struct LessonBlockView: View {
 
                 Spacer(minLength: 0)
             }
-            .padding(8)
+            .padding(contentPadding)
             .opacity(dimmedForNotesHighlight ? 0.28 : 1)
         }
         .frame(height: blockHeight)
@@ -217,19 +242,33 @@ public struct LessonBlockView: View {
                     cacheKey: "\(note.id)|\(note.updatedAt.timeIntervalSinceReferenceDate)|\(imgData.count)|timetable"
                 )
                 .frame(maxWidth: maxW, maxHeight: maxH)
+                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
                 .padding(3)
+                // Schatten nur auf der weißen Form, nicht auf dem Bild – das
+                // hält das Drei-Wochen-Karussell beim Wischen flüssig.
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(Color.white)
+                        .shadow(color: Color.black.opacity(0.10), radius: 3, x: 0, y: 1.5)
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .strokeBorder(Color.black.opacity(0.12), lineWidth: 0.5)
                 )
-                .shadow(color: Color.black.opacity(0.10), radius: 3, x: 0, y: 1.5)
+                // Tag unten rechts in der Notiz-Vorschau.
+                .overlay(alignment: .bottomTrailing) {
+                    if let noteTag {
+                        NoteTagPill(tag: noteTag, size: .mini)
+                            .padding(3)
+                    }
+                }
                 .padding(5)
                 .allowsHitTesting(false)
+            } else if hasVisibleNote, let noteTag {
+                // Notiz ohne Vorschaubild (z. B. nur Tag): Tag trotzdem zeigen.
+                NoteTagPill(tag: noteTag, size: .mini)
+                    .padding(6)
+                    .allowsHitTesting(false)
             }
         }
         .background(
@@ -329,11 +368,39 @@ public struct LessonBlockView: View {
         }
 
         if hasVisibleNote {
+            Button {
+                Haptics.tap()
+                viewModel.copyNote(for: lesson)
+            } label: {
+                Label("Kopieren", systemImage: "doc.on.doc")
+            }
+        }
+
+        if viewModel.hasCopiedNote {
+            Button {
+                Haptics.tap()
+                viewModel.pasteCopiedNote(into: lesson)
+            } label: {
+                Label(hasVisibleNote ? "Einfügen (ersetzt Notiz)" : "Einfügen", systemImage: "doc.on.clipboard")
+            }
+        }
+
+        if hasVisibleNote {
             Button(role: .destructive) {
                 requestDeleteConfirmation()
             } label: {
                 Label("Notiz löschen", systemImage: "trash")
             }
+        }
+    }
+
+    /// Lehrer/Raum nebeneinander (iPad) bzw. untereinander (iPhone).
+    @ViewBuilder
+    private func detailStack<Content: View>(spacing: CGFloat, @ViewBuilder content: () -> Content) -> some View {
+        if isCompact {
+            VStack(alignment: .leading, spacing: spacing) { content() }
+        } else {
+            HStack(spacing: spacing) { content() }
         }
     }
 

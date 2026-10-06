@@ -8,7 +8,7 @@ import SwiftUI
 /// "Nur Notizen"-Übersicht verwendet. In der Übersicht kann der Farbkreis
 /// ausgeblendet werden, weil dort der komplette Karten-Hintergrund bereits die
 /// Fach-Farbe bzw. den Fach-Verlauf trägt.
-public struct NoteHeaderContent: View {
+public struct NoteHeaderContent<Accessory: View>: View {
     public let lesson: Lesson
     public let display: SubjectDisplay
     public let displaySettings: BlockDisplaySettings
@@ -20,6 +20,8 @@ public struct NoteHeaderContent: View {
     private let teacherDisplayName: String
     private let originalTeacherDisplayName: String?
     private let relativeTo: Date
+    /// Optionales Element direkt neben dem Fachnamen (z. B. die Tag-Pille).
+    private let accessory: Accessory
 
     public init(
         lesson: Lesson,
@@ -31,7 +33,8 @@ public struct NoteHeaderContent: View {
         isCompact: Bool = false,
         teacherDisplayName: String? = nil,
         originalTeacherDisplayName: String? = nil,
-        relativeTo: Date = Date()
+        relativeTo: Date = Date(),
+        @ViewBuilder accessory: () -> Accessory
     ) {
         self.lesson = lesson
         self.display = display
@@ -43,6 +46,7 @@ public struct NoteHeaderContent: View {
         self.teacherDisplayName = teacherDisplayName ?? lesson.teacherRaw
         self.originalTeacherDisplayName = originalTeacherDisplayName ?? lesson.originalTeacher
         self.relativeTo = relativeTo
+        self.accessory = accessory()
     }
 
     public var body: some View {
@@ -60,11 +64,12 @@ public struct NoteHeaderContent: View {
     /// Spalten lesbar, ohne die 64-pt-Kopfzeile der Zeichenfläche zu ändern.
     private var compactHeader: some View {
         VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 4) {
+            HStack(spacing: 6) {
                 Text(display.name)
                     .font(.system(size: 15, weight: .semibold))
                     .strikethrough(lesson.isCancelled, color: .red)
                     .lineLimit(1)
+                accessory
                 Spacer(minLength: 0)
                 Text("\(lesson.periodNumber). Std.")
                     .font(.system(size: 11, weight: .semibold))
@@ -94,10 +99,13 @@ public struct NoteHeaderContent: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(display.name)
-                    .font(.system(size: 18, weight: .semibold, design: .default))
-                    .strikethrough(lesson.isCancelled, color: .red)
-                    .lineLimit(1)
+                HStack(spacing: 10) {
+                    Text(display.name)
+                        .font(.system(size: 18, weight: .semibold, design: .default))
+                        .strikethrough(lesson.isCancelled, color: .red)
+                        .lineLimit(1)
+                    accessory
+                }
 
                 if hasHeaderDetails {
                     headerDetails
@@ -206,5 +214,35 @@ public struct NoteHeaderContent: View {
             return lesson.dateString
         }
         return "\(date.relativeDayDescription(relativeTo: relativeTo)) • \(date.germanDateString)"
+    }
+}
+
+extension NoteHeaderContent where Accessory == EmptyView {
+    /// Kopfzeile ohne Zusatz-Element neben dem Fachnamen.
+    public init(
+        lesson: Lesson,
+        display: SubjectDisplay,
+        displaySettings: BlockDisplaySettings,
+        periods: [Period],
+        primaryColor: Color = .primary,
+        showsColorCircle: Bool = true,
+        isCompact: Bool = false,
+        teacherDisplayName: String? = nil,
+        originalTeacherDisplayName: String? = nil,
+        relativeTo: Date = Date()
+    ) {
+        self.init(
+            lesson: lesson,
+            display: display,
+            displaySettings: displaySettings,
+            periods: periods,
+            primaryColor: primaryColor,
+            showsColorCircle: showsColorCircle,
+            isCompact: isCompact,
+            teacherDisplayName: teacherDisplayName,
+            originalTeacherDisplayName: originalTeacherDisplayName,
+            relativeTo: relativeTo,
+            accessory: { EmptyView() }
+        )
     }
 }

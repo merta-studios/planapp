@@ -15,9 +15,6 @@ public struct TimetableView: View {
     @State private var toastIsError: Bool = false
     @Namespace private var noteNamespace
 
-    private let headerHeight: CGFloat = 54
-    private let periodColumnWidth: CGFloat = 76
-
     public init() {}
 
     private var previousWeekStart: Date {
@@ -51,7 +48,15 @@ public struct TimetableView: View {
             let availableWidth = geometry.size.width
             let availableHeight = geometry.size.height - 75
             let periodCount = max(1, viewModel.periods.count)
-            let calculatedRowHeight = max(80, (availableHeight - headerHeight) / CGFloat(periodCount))
+            // iPhone (und sehr schmale Fenster): kompakter Stundenplan mit
+            // schmaleren Spalten, damit alle fünf Tage auf den Bildschirm passen.
+            let isCompact = DeviceLayout.usesCompactTimetable(width: availableWidth)
+            let headerHeight = DeviceLayout.timetableHeaderHeight(compact: isCompact)
+            let periodColumnWidth = DeviceLayout.periodColumnWidth(compact: isCompact)
+            let calculatedRowHeight = max(
+                DeviceLayout.minimumRowHeight(compact: isCompact),
+                (availableHeight - headerHeight) / CGFloat(periodCount)
+            )
 
             ZStack {
                 // Hintergrund
@@ -80,7 +85,13 @@ public struct TimetableView: View {
                         // deutlichen Rucklern beim Umschalten.
                         NotesOverviewListView(noteNamespace: noteNamespace)
                     } else {
-                        weekCarousel(availableWidth: availableWidth, calculatedRowHeight: calculatedRowHeight)
+                        weekCarousel(
+                            availableWidth: availableWidth,
+                            calculatedRowHeight: calculatedRowHeight,
+                            headerHeight: headerHeight,
+                            periodColumnWidth: periodColumnWidth,
+                            isCompact: isCompact
+                        )
                     }
                 }
 
@@ -167,7 +178,13 @@ public struct TimetableView: View {
     // MARK: - Wochen-Karussell (Standard & Notizen hervorgehoben)
 
     /// Das vorbereitete 3-Wochen-Karussell (vorherige, aktuelle, nächste Woche).
-    private func weekCarousel(availableWidth: CGFloat, calculatedRowHeight: CGFloat) -> some View {
+    private func weekCarousel(
+        availableWidth: CGFloat,
+        calculatedRowHeight: CGFloat,
+        headerHeight: CGFloat,
+        periodColumnWidth: CGFloat,
+        isCompact: Bool
+    ) -> some View {
         ScrollView(.vertical, showsIndicators: false) {
             HStack(alignment: .top, spacing: 0) {
                 // VORHERIGE WOCHE (immer links vorgerendert bereit)
@@ -177,6 +194,7 @@ public struct TimetableView: View {
                     calculatedRowHeight: calculatedRowHeight,
                     headerHeight: headerHeight,
                     periodColumnWidth: periodColumnWidth,
+                    isCompact: isCompact,
                     noteNamespace: noteNamespace
                 )
                 .frame(width: availableWidth)
@@ -188,6 +206,7 @@ public struct TimetableView: View {
                     calculatedRowHeight: calculatedRowHeight,
                     headerHeight: headerHeight,
                     periodColumnWidth: periodColumnWidth,
+                    isCompact: isCompact,
                     noteNamespace: noteNamespace
                 )
                 .frame(width: availableWidth)
@@ -199,6 +218,7 @@ public struct TimetableView: View {
                     calculatedRowHeight: calculatedRowHeight,
                     headerHeight: headerHeight,
                     periodColumnWidth: periodColumnWidth,
+                    isCompact: isCompact,
                     noteNamespace: noteNamespace
                 )
                 .frame(width: availableWidth)
@@ -378,22 +398,20 @@ struct SingleWeekGridView: View {
     let calculatedRowHeight: CGFloat
     let headerHeight: CGFloat
     let periodColumnWidth: CGFloat
+    let isCompact: Bool
     let noteNamespace: Namespace.ID
 
     var body: some View {
         let schoolDays = weekStart.schoolWeekDays()
-        let horizontalPadding: CGFloat = 32
-        let totalColumnSpacing: CGFloat = 20
-        let dayColumnWidth = max(
-            120,
-            (availableWidth - horizontalPadding - periodColumnWidth - totalColumnSpacing) / 5
-        )
+        let dayColumnWidth = DeviceLayout.dayColumnWidth(availableWidth: availableWidth, compact: isCompact)
 
-        HStack(alignment: .top, spacing: 4) {
+        HStack(alignment: .top, spacing: isCompact ? 2 : 4) {
             // SPALTE 0: Stundennummern und Uhrzeiten
             PeriodColumnView(
                 rowHeight: calculatedRowHeight,
-                headerHeight: headerHeight
+                headerHeight: headerHeight,
+                width: periodColumnWidth,
+                isCompact: isCompact
             )
 
             // SPALTEN 1 bis 5: Wochentage (Montag - Freitag)
@@ -403,12 +421,13 @@ struct SingleWeekGridView: View {
                     columnIndex: index + 1,
                     rowHeight: calculatedRowHeight,
                     headerHeight: headerHeight,
+                    isCompact: isCompact,
                     noteNamespace: noteNamespace
                 )
                 .frame(width: dayColumnWidth)
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, isCompact ? 4 : 16)
         .padding(.vertical, 8)
     }
 }

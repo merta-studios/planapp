@@ -18,6 +18,20 @@ struct SqueezePaletteButtonStyle: ButtonStyle {
     }
 }
 
+/// Dieselbe Glas-Oberfläche wie bei den Palette-Buttons, für Elemente, die
+/// kein `Button` sind (z. B. der Dicken-Regler mit eigener Zieh-Geste).
+struct SqueezePaletteSurface: ViewModifier {
+    var isSelected = false
+    var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .modifier(SqueezeButtonGlassSurface(isSelected: isSelected, isHovered: isHovered))
+            .brightness(isSelected ? -0.08 : (isHovered ? 0.035 : 0))
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+    }
+}
+
 private struct SqueezeButtonGlassSurface: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
     let isSelected: Bool

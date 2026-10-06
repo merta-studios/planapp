@@ -12,6 +12,10 @@ public struct DrawingSettingsSection: View {
     @State private var draftSettings: DrawingSettings = .default
     @State private var didLoadDraft = false
 
+    /// iPhone: ohne Apple Pencil gibt es weder Stift/Textmarker noch
+    /// Pencil-Optionen – diese Einstellungen werden dort ausgeblendet.
+    private let isPhone = DeviceLayout.isPhone
+
     public init() {}
 
     public var body: some View {
@@ -28,19 +32,21 @@ public struct DrawingSettingsSection: View {
 
             // 1. STANDARD-DICKEN
             VStack(alignment: .leading, spacing: 14) {
-                thicknessSlider(
-                    title: "Standard-Dicke Stift",
-                    systemImage: "pencil.tip",
-                    value: draftBinding(\.penWidth),
-                    range: 1...20
-                )
+                if !isPhone {
+                    thicknessSlider(
+                        title: "Standard-Dicke Stift",
+                        systemImage: "pencil.tip",
+                        value: draftBinding(\.penWidth),
+                        range: 1...20
+                    )
 
-                thicknessSlider(
-                    title: "Standard-Dicke Textmarker",
-                    systemImage: "highlighter",
-                    value: draftBinding(\.markerWidth),
-                    range: 4...40
-                )
+                    thicknessSlider(
+                        title: "Standard-Dicke Textmarker",
+                        systemImage: "highlighter",
+                        value: draftBinding(\.markerWidth),
+                        range: 4...40
+                    )
+                }
 
                 thicknessSlider(
                     title: "Standard-Dicke Radierer",
@@ -111,35 +117,107 @@ public struct DrawingSettingsSection: View {
                 Text("Neue Notizen starten mit diesem Hintergrund. Pro Notiz kannst du ihn im Drei-Punkte-Menü ändern.")
                     .font(.system(size: 12, weight: .regular, design: .default))
                     .foregroundColor(.secondary)
+
+                Divider()
+
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 14, weight: .regular, design: .default))
+                        .foregroundColor(.blue)
+                    Text("Standard-Mustergröße")
+                        .font(.system(size: 14, weight: .regular, design: .default))
+                    Spacer()
+                    Text(String(format: "%.0f %%", draftSettings.defaultBackgroundScale * 100))
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+
+                HStack(spacing: 10) {
+                    Image(systemName: "minus.magnifyingglass")
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                    Slider(
+                        value: Binding(
+                            get: { NoteBackgroundMetrics.sliderValue(forScale: draftSettings.defaultBackgroundScale) },
+                            set: { draftSettings.defaultBackgroundScale = NoteBackgroundMetrics.scale(forSliderValue: $0) }
+                        ),
+                        in: -1...1,
+                        onEditingChanged: handleSliderEditingChanged
+                    )
+                    Image(systemName: "plus.magnifyingglass")
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                }
+
+                DrawingCanvasBackgroundView(
+                    style: draftSettings.defaultBackgroundStyle == .blank ? .grid : draftSettings.defaultBackgroundStyle,
+                    scale: draftSettings.defaultBackgroundScale
+                )
+                .frame(height: 96)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .strokeBorder(Color.gray.opacity(0.25), lineWidth: 1)
+                )
+
+                Text("Größe von Linien, Kästchen und Punkten, mit der neue Notizen starten. Die Mitte ist die normale Größe; pro Notiz lässt sich die Größe im Drei-Punkte-Menü unter „Mustergröße“ anpassen.")
+                    .font(.system(size: 12, weight: .regular, design: .default))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(14)
             .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
 
             // 4. EINGABE & RADIERER
             VStack(alignment: .leading, spacing: 12) {
-                Toggle(isOn: Binding(
-                    get: { draftSettings.applePencilOnly },
-                    set: { newValue in
-                        draftSettings.applePencilOnly = newValue
-                        commitDraftSettings()
-                    }
-                )) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "pencil.tip")
-                            .font(.system(size: 14, weight: .regular, design: .default))
-                            .foregroundColor(.orange)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Apple Pencil")
+                if !isPhone {
+                    Toggle(isOn: Binding(
+                        get: { draftSettings.applePencilOnly },
+                        set: { newValue in
+                            draftSettings.applePencilOnly = newValue
+                            commitDraftSettings()
+                        }
+                    )) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "pencil.tip")
                                 .font(.system(size: 14, weight: .regular, design: .default))
-                            Text("Aus: Zeichnen mit Finger und Apple Pencil. An: Nur mit dem Apple Pencil zeichnen. Schaltet sich automatisch ein, sobald ein Apple Pencil erkannt wird.")
-                                .font(.system(size: 12, weight: .regular, design: .default))
-                                .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                                .foregroundColor(.orange)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Apple Pencil")
+                                    .font(.system(size: 14, weight: .regular, design: .default))
+                                Text("Aus: Zeichnen mit Finger und Apple Pencil. An: Nur mit dem Apple Pencil zeichnen. Schaltet sich automatisch ein, sobald ein Apple Pencil erkannt wird.")
+                                    .font(.system(size: 12, weight: .regular, design: .default))
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
-                }
 
-                Divider()
+                    Divider()
+
+                    Toggle(isOn: Binding(
+                        get: { draftSettings.dynamicPenWidth },
+                        set: { newValue in
+                            draftSettings.dynamicPenWidth = newValue
+                            commitDraftSettings()
+                        }
+                    )) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "scribble.variable")
+                                .font(.system(size: 14, weight: .regular, design: .default))
+                                .foregroundColor(.purple)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Dynamische Stiftdicke")
+                                    .font(.system(size: 14, weight: .regular, design: .default))
+                                Text("An: Der Stift reagiert wie der PencilKit-Füller auf Druck und Geschwindigkeit. Aus: Kugelschreiber – jeder Strich ist exakt gleich dick.")
+                                    .font(.system(size: 12, weight: .regular, design: .default))
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+
+                    Divider()
+                }
 
                 Toggle(isOn: Binding(
                     get: { draftSettings.autoDeselectEraser },

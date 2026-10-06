@@ -65,6 +65,24 @@ public final class TimetableViewModel: ObservableObject {
     /// Wird persistent gespeichert und beim Start wiederhergestellt.
     @Published public var viewMode: TimetableViewMode = .standard
 
+    /// Tag-System (Einstellungen → „Tag-System“). Änderungen an Tags
+    /// (Name/Farbe) müssen die Notiz-Karten neu beschriften.
+    @Published public var tagSettings: NoteTagSettings = NoteTagSettings() {
+        didSet { notesOverviewPresentationRevision &+= 1 }
+    }
+
+    /// Ausgewählte Tag-Filter der „Nur Notizen“-Übersicht. Leer = alle Notizen.
+    @Published public var activeTagFilter: Set<UUID> = []
+
+    /// Interne „Zwischenablage“ für Notizen (Kontextmenü → Kopieren/Einfügen).
+    /// Enthält die komplette Notiz inkl. Zeichnung, Textfeldern, Hintergrund
+    /// und Tag. Bleibt für die Dauer der Sitzung erhalten.
+    @Published public private(set) var copiedNote: LessonNote? = nil
+
+    /// Höchstzahl manuell angelegter Fächer bzw. Lehrkräfte.
+    public static let maximumSubjectCustomizations = 50
+    public static let maximumTeacherNameCustomizations = 50
+
     /// Modellhinweis aus tatsächlich beobachtetem Pencil-Input. Ein Squeeze
     /// identifiziert den Pro; die Akkuanzeige bleibt leer, solange CoreBluetooth
     /// keinen tatsächlichen Pencil-Batteriewert liefert.
@@ -150,6 +168,7 @@ public final class TimetableViewModel: ObservableObject {
         self.lessonNotes = storage.loadAllLessonNotes()
         self.viewMode = storage.loadViewMode()
         self.appearance = storage.loadAppearance()
+        self.tagSettings = storage.loadTagSettings()
         self.lastSyncDate = untisCredentials.lastSyncDate
 
         // Alte, versehentlich leer gespeicherte Notizen (PKDrawing-Daten ohne
@@ -567,9 +586,13 @@ public final class TimetableViewModel: ObservableObject {
         croppedImageData: Data?,
         lineCount: Int,
         textBoxes: [NoteTextBox] = [],
-        backgroundStyle: NoteBackgroundStyle = .blank
+        backgroundStyle: NoteBackgroundStyle = .blank,
+        backgroundScale: Double = NoteBackgroundMetrics.defaultScale,
+        tagID: UUID? = nil
     ) {
         let key = lesson.noteKey
+        // Ein Tag zählt nur, solange er im Tag-System noch existiert.
+        let resolvedTagID = tagSettings.tag(withID: tagID)?.id
         let note = LessonNote(
             id: key,
             drawingData: drawingData,
@@ -577,6 +600,8 @@ public final class TimetableViewModel: ObservableObject {
             lineCount: lineCount,
             textBoxes: textBoxes,
             backgroundStyle: backgroundStyle,
+            backgroundScale: backgroundScale,
+            tagID: resolvedTagID,
             updatedAt: Date()
         )
 
@@ -611,6 +636,158 @@ public final class TimetableViewModel: ObservableObject {
         visibleNoteKeys.remove(key)
         storage.deleteLessonNote(for: key)
         successMessage = "Notiz gelöscht."
+    }
+
+    // MARK: - Notizen kopieren & einfügen
+
+    /// Ob eine gültige kopierte Notiz zum Einfügen bereitliegt.
+    public var hasCopiedNote: Bool {
+        guard let copiedNote else { return false }
+        return copiedNote.hasVisibleContent
+    }
+
+    /// Kopiert die komplette Notiz einer Stunde (Zeichnung, Textfelder,
+    /// Hintergrund, Tag) in die interne Zwischenablage.
+    public func copyNote(for lesson: Lesson) {
+        guard let note = lessonNotes[lesson.noteKey], note.hasVisibleContent else { return }
+        copyNote(note)
+    }
+
+    /// Kopiert einen beliebigen Notiz-Zustand (z. B. den aktuell geöffneten
+    /// Editor-Zustand) in die interne Zwischenablage.
+    public func copyNote(_ note: LessonNote) {
+        guard note.hasVisibleContent else { return }
+        copiedNote = note
+        successMessage = "Notiz kopiert."
+    }
+
+    /// Fügt die kopierte Notiz in die Stunde ein. Eine vorhandene Notiz wird
+    /// vollständig ersetzt.
+    public func pasteCopiedNote(into lesson: Lesson) {
+        guard let copiedNote, copiedNote.hasVisibleContent else { return }
+        let key = lesson.noteKey
+        let pasted = LessonNote(
+            id: key,
+            drawingData: copiedNote.drawingData,
+            croppedImageData: copiedNote.croppedImageData,
+            lineCount: copiedNote.lineCount,
+            textBoxes: copiedNote.textBoxes,
+            backgroundStyle: copiedNote.backgroundStyle,
+            backgroundScale: copiedNote.backgroundScale,
+            tagID: tagSettings.tag(withID: copiedNote.tagID)?.id,
+            updatedAt: Date()
+        )
+        lessonNotes[key] = pasted
+        visibleNoteKeys.insert(key)
+        storage.saveLessonNote(pasted)
+        successMessage = "Notiz eingefügt."
+    }
+
+    // MARK: - Tag-System
+
+    public func saveTagSettings() {
+        storage.saveTagSettings(tagSettings)
+    }
+
+    /// Tag einer Stunde (nur wenn das Tag-System aktiv ist und der Tag noch existiert).
+    public func tag(for lesson: Lesson) -> NoteTag? {
+        guard tagSettings.isEnabled else { return nil }
+        return tagSettings.tag(withID: lessonNotes[lesson.noteKey]?.tagID)
+    }
+
+    /// Tag zu einer Notiz-ID (nur wenn das Tag-System aktiv ist).
+    public func tag(forNoteKey key: String) -> NoteTag? {
+        guard tagSettings.isEnabled else { return nil }
+        return tagSettings.tag(withID: lessonNotes[key]?.tagID)
+    }
+
+    /// Setzt oder entfernt den Tag einer vorhandenen Notiz direkt (ohne den
+    /// Editor zu öffnen).
+    public func setTag(_ tagID: UUID?, for lesson: Lesson) {
+        let key = lesson.noteKey
+        guard var note = lessonNotes[key] else { return }
+        note.tagID = tagSettings.tag(withID: tagID)?.id
+        note.updatedAt = Date()
+        if note.hasVisibleContent {
+            lessonNotes[key] = note
+            visibleNoteKeys.insert(key)
+            storage.saveLessonNote(note)
+        } else {
+            lessonNotes.removeValue(forKey: key)
+            visibleNoteKeys.remove(key)
+            storage.deleteLessonNote(for: key)
+        }
+    }
+
+    public func setTagSystemEnabled(_ isEnabled: Bool) {
+        guard tagSettings.isEnabled != isEnabled else { return }
+        tagSettings.isEnabled = isEnabled
+        if !isEnabled { activeTagFilter.removeAll() }
+        saveTagSettings()
+    }
+
+    /// Legt einen neuen Tag an. Gibt `false` zurück, wenn das Limit erreicht ist.
+    @discardableResult
+    public func addTag(name: String, colorHex: String) -> Bool {
+        guard tagSettings.canAddTag else {
+            errorMessage = "Maximal \(NoteTagSettings.maximumTagCount) Tags möglich."
+            return false
+        }
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        tagSettings.tags.append(NoteTag(name: cleanName.isEmpty ? "Tag \(tagSettings.tags.count + 1)" : cleanName, colorHex: colorHex))
+        saveTagSettings()
+        return true
+    }
+
+    public func updateTag(_ tag: NoteTag) {
+        guard let index = tagSettings.tags.firstIndex(where: { $0.id == tag.id }) else { return }
+        tagSettings.tags[index] = tag
+        saveTagSettings()
+    }
+
+    /// Entfernt einen Tag und löst ihn von allen Notizen.
+    public func deleteTag(id: UUID) {
+        tagSettings.tags.removeAll(where: { $0.id == id })
+        activeTagFilter.remove(id)
+        saveTagSettings()
+
+        let affectedKeys = lessonNotes.compactMap { entry -> String? in
+            entry.value.tagID == id ? entry.key : nil
+        }
+        for key in affectedKeys {
+            guard var note = lessonNotes[key] else { continue }
+            note.tagID = nil
+            if note.hasVisibleContent {
+                lessonNotes[key] = note
+                storage.saveLessonNote(note)
+            } else {
+                lessonNotes.removeValue(forKey: key)
+                visibleNoteKeys.remove(key)
+                storage.deleteLessonNote(for: key)
+            }
+        }
+    }
+
+    public func moveTags(fromOffsets source: IndexSet, toOffset destination: Int) {
+        tagSettings.tags.move(fromOffsets: source, toOffset: destination)
+        saveTagSettings()
+    }
+
+    /// Verschiebt einen Tag um eine Position nach oben (-1) oder unten (+1).
+    public func moveTag(id: UUID, by delta: Int) {
+        guard let index = tagSettings.tags.firstIndex(where: { $0.id == id }) else { return }
+        let target = index + delta
+        guard target >= 0, target < tagSettings.tags.count else { return }
+        tagSettings.tags.swapAt(index, target)
+        saveTagSettings()
+    }
+
+    public func toggleTagFilter(_ id: UUID) {
+        if activeTagFilter.contains(id) {
+            activeTagFilter.remove(id)
+        } else {
+            activeTagFilter.insert(id)
+        }
     }
 
     /// Öffnet das nächste Vorkommen desselben Fachs innerhalb der nächsten drei Wochen.
@@ -735,13 +912,32 @@ public final class TimetableViewModel: ObservableObject {
         storage.saveCustomizations(subjectCustomizations)
     }
 
-    public func addOrUpdateCustomization(_ item: SubjectCustomization) {
+    /// Ob noch ein weiteres Fach angelegt werden darf (max. 50).
+    public var canAddSubjectCustomization: Bool {
+        subjectCustomizations.count < TimetableViewModel.maximumSubjectCustomizations
+    }
+
+    /// Ob noch eine weitere Lehrkraft angelegt werden darf (max. 50).
+    public var canAddTeacherNameCustomization: Bool {
+        teacherNameCustomizations.count < TimetableViewModel.maximumTeacherNameCustomizations
+    }
+
+    /// Fügt ein Fach hinzu oder aktualisiert es. Neue Fächer werden ab dem
+    /// Limit von 50 abgelehnt (Rückgabe `false`), Änderungen bestehender
+    /// Fächer sind immer erlaubt.
+    @discardableResult
+    public func addOrUpdateCustomization(_ item: SubjectCustomization) -> Bool {
         if let idx = subjectCustomizations.firstIndex(where: { $0.id == item.id }) {
             subjectCustomizations[idx] = item
         } else {
+            guard canAddSubjectCustomization else {
+                errorMessage = "Maximal \(TimetableViewModel.maximumSubjectCustomizations) Fächer möglich. Bitte zuerst ein Fach löschen."
+                return false
+            }
             subjectCustomizations.append(item)
         }
         saveSubjectCustomizations()
+        return true
     }
 
     public func deleteCustomization(at offsets: IndexSet) {
@@ -764,7 +960,10 @@ public final class TimetableViewModel: ObservableObject {
         storage.saveTeacherNameCustomizations(teacherNameCustomizations)
     }
 
-    public func addOrUpdateTeacherNameCustomization(_ item: TeacherNameCustomization) {
+    /// Fügt eine Lehrkraft hinzu oder aktualisiert sie. Neue Einträge werden
+    /// ab dem Limit von 50 abgelehnt (Rückgabe `false`).
+    @discardableResult
+    public func addOrUpdateTeacherNameCustomization(_ item: TeacherNameCustomization) -> Bool {
         let normalizedNew = normalizedTeacherKey(item.systemAbbreviation)
         if let idx = teacherNameCustomizations.firstIndex(where: { $0.id == item.id }) {
             teacherNameCustomizations[idx] = item
@@ -777,9 +976,14 @@ public final class TimetableViewModel: ObservableObject {
                 displayName: item.displayName
             )
         } else {
+            guard canAddTeacherNameCustomization else {
+                errorMessage = "Maximal \(TimetableViewModel.maximumTeacherNameCustomizations) Lehrkräfte möglich. Bitte zuerst einen Eintrag löschen."
+                return false
+            }
             teacherNameCustomizations.append(item)
         }
         saveTeacherNameCustomizations()
+        return true
     }
 
     public func deleteTeacherNameCustomization(id: UUID) {
@@ -809,14 +1013,21 @@ public final class TimetableViewModel: ObservableObject {
         storage.savePeriods(periods)
     }
 
-    /// Liest alle Fächer aus dem aktuellen Stundenplan aus und fügt neue Fächer der Liste hinzu
+    /// Liest alle Fächer aus dem aktuellen Stundenplan aus und fügt neue Fächer
+    /// der Liste hinzu – bis zum Limit von 50 Fächern.
     public func importDiscoveredSubjects() {
         var addedCount = 0
-        let existingOriginals = Set(subjectCustomizations.map { $0.originalSubject.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
+        var skippedByLimit = 0
+        var existingOriginals = Set(subjectCustomizations.map { $0.originalSubject.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
 
         for lesson in lessons {
             let original = lesson.subjectRaw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !original.isEmpty, !existingOriginals.contains(original.lowercased()) else { continue }
+            guard canAddSubjectCustomization else {
+                skippedByLimit += 1
+                continue
+            }
+            existingOriginals.insert(original.lowercased())
 
             let customName: String
             if let preset = SubjectCustomization.defaultPresets.first(where: { $0.originalSubject.caseInsensitiveCompare(original) == .orderedSame }) {
@@ -833,11 +1044,89 @@ public final class TimetableViewModel: ObservableObject {
         }
 
         saveSubjectCustomizations()
-        if addedCount > 0 {
+        if skippedByLimit > 0 {
+            self.errorMessage = "\(addedCount) Fächer importiert – \(skippedByLimit) weitere passen nicht mehr (max. \(TimetableViewModel.maximumSubjectCustomizations) Fächer)."
+        } else if addedCount > 0 {
             self.successMessage = "\(addedCount) Fächer aus Stundenplan importiert!"
         } else {
             self.successMessage = "Keine neuen Fächer zum Importieren gefunden."
         }
+    }
+
+    // MARK: - Export & Import (komplette Sicherung)
+
+    /// Erstellt eine vollständige Sicherung aller gespeicherten Daten als
+    /// Base64-Text (siehe `AppBackupCodec`).
+    public func exportBackupString() -> String? {
+        let backup = AppBackup(
+            createdAt: Date(),
+            credentials: untisCredentials,
+            subjectCustomizations: subjectCustomizations,
+            teacherNameCustomizations: teacherNameCustomizations,
+            displaySettings: displaySettings,
+            drawingSettings: drawingSettings,
+            periods: periods,
+            lessons: lessons,
+            notes: Array(lessonNotes.values).sorted { $0.id < $1.id },
+            viewMode: viewMode.rawValue,
+            appearance: appearance.rawValue,
+            tagSettings: tagSettings
+        )
+        do {
+            return try AppBackupCodec.encode(backup)
+        } catch {
+            errorMessage = "Export fehlgeschlagen: \(error.localizedDescription)"
+            return nil
+        }
+    }
+
+    /// Liest eine Sicherung aus Text ein, ohne sie anzuwenden (Vorschau für
+    /// die Bestätigung). `nil`, wenn der Text keine gültige Sicherung ist.
+    public func decodeBackup(from text: String) -> AppBackup? {
+        try? AppBackupCodec.decode(text)
+    }
+
+    /// Ersetzt sämtliche Daten der App durch die Sicherung.
+    public func applyBackup(_ backup: AppBackup) {
+        untisCredentials = backup.credentials
+        subjectCustomizations = Array(backup.subjectCustomizations.prefix(TimetableViewModel.maximumSubjectCustomizations))
+        teacherNameCustomizations = Array(backup.teacherNameCustomizations.prefix(TimetableViewModel.maximumTeacherNameCustomizations))
+        displaySettings = backup.displaySettings
+        drawingSettings = backup.drawingSettings
+        periods = backup.periods.isEmpty ? Period.defaultPeriods : backup.periods
+        lessons = backup.lessons
+        tagSettings = backup.tagSettings
+        activeTagFilter.removeAll()
+        if let mode = TimetableViewMode(rawValue: backup.viewMode) {
+            viewMode = mode
+        }
+        if let restoredAppearance = AppAppearance(rawValue: backup.appearance) {
+            appearance = restoredAppearance
+        }
+        lastSyncDate = untisCredentials.lastSyncDate
+        lastSyncFailure = nil
+        loadedWeekKeys.removeAll()
+
+        var restoredNotes: [String: LessonNote] = [:]
+        for note in backup.notes where note.hasVisibleContent {
+            restoredNotes[note.id] = note
+        }
+        lessonNotes = restoredNotes
+        rebuildVisibleNoteCache()
+
+        storage.saveCredentials(untisCredentials)
+        storage.saveCustomizations(subjectCustomizations)
+        storage.saveTeacherNameCustomizations(teacherNameCustomizations)
+        storage.saveDisplaySettings(displaySettings)
+        storage.saveDrawingSettings(drawingSettings)
+        storage.savePeriods(periods)
+        storage.saveLessons(lessons)
+        storage.saveViewMode(viewMode)
+        storage.saveAppearance(appearance)
+        storage.saveTagSettings(tagSettings)
+        storage.replaceAllLessonNotes(with: Array(restoredNotes.values))
+
+        successMessage = "Import abgeschlossen: \(restoredNotes.count) Notizen, \(lessons.count) Stunden."
     }
 
     // MARK: - Untis API Sync & Demo Data

@@ -8,6 +8,8 @@ public struct DayColumnView: View {
     public let columnIndex: Int
     public let rowHeight: CGFloat
     public let headerHeight: CGFloat
+    /// Kompakt (iPhone): kurze Wochentagsnamen, kleinere Blöcke.
+    public let isCompact: Bool
     public let noteNamespace: Namespace.ID
 
     public init(
@@ -15,12 +17,14 @@ public struct DayColumnView: View {
         columnIndex: Int,
         rowHeight: CGFloat,
         headerHeight: CGFloat,
+        isCompact: Bool = false,
         noteNamespace: Namespace.ID
     ) {
         self.day = day
         self.columnIndex = columnIndex
         self.rowHeight = rowHeight
         self.headerHeight = headerHeight
+        self.isCompact = isCompact
         self.noteNamespace = noteNamespace
     }
 
@@ -75,22 +79,24 @@ public struct DayColumnView: View {
     }
 
     private var headerLabels: some View {
-        VStack(spacing: 3) {
+        VStack(spacing: isCompact ? 1 : 3) {
             HStack(spacing: 4) {
-                Text(day.weekdayLongString)
-                    .font(.system(size: 14, weight: .regular, design: .default))
+                Text(isCompact ? String(day.weekdayLongString.prefix(2)) : day.weekdayLongString)
+                    .font(.system(size: isCompact ? 12 : 14, weight: isCompact && isToday ? .semibold : .regular, design: .default))
                     .foregroundColor(isToday ? .blue : .primary)
 
-                if isToday {
+                if isToday, !isCompact {
                     StatusBadge(.today)
                 }
             }
 
-            Text(day.headerDateString)
-                .font(.system(size: 12, weight: .regular, design: .default))
+            Text(isCompact ? day.compactHeaderDateString : day.headerDateString)
+                .font(.system(size: isCompact ? 9 : 12, weight: .regular, design: .default))
                 .foregroundColor(isToday ? .blue.opacity(0.85) : .secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, isCompact ? 3 : 6)
     }
 
     // MARK: - Timetable content
@@ -115,7 +121,7 @@ public struct DayColumnView: View {
         if viewModel.lessonsFor(day: day).isEmpty,
            !viewModel.isWeekPendingInitialLoad(day.startOfWeek()) {
             Text("Kein Unterricht")
-                .font(.system(size: 15, weight: .semibold, design: .default))
+                .font(.system(size: isCompact ? 11 : 15, weight: .semibold, design: .default))
                 .foregroundColor(Color(UIColor.systemGray))
                 .fixedSize()
                 .rotationEffect(.degrees(-90))
@@ -173,9 +179,10 @@ public struct DayColumnView: View {
             LessonBlockView(
                 lesson: lesson,
                 blockHeight: blockHeight,
-                noteNamespace: noteNamespace
+                noteNamespace: noteNamespace,
+                isCompact: isCompact
             )
-            .padding(.horizontal, 3)
+            .padding(.horizontal, isCompact ? 1.5 : 3)
             .offset(y: yOffset)
         }
     }

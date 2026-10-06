@@ -20,6 +20,13 @@ public struct DrawingSettings: Codable, Equatable {
     /// das Werkzeug zurück zum zuletzt benutzten Werkzeug (Fallback: Stift).
     /// Standardmäßig **an**.
     public var autoDeselectEraser: Bool
+    /// Dynamische Stiftdicke (Standard **an**): Der PencilKit-Stift reagiert
+    /// auf Druck und Geschwindigkeit. Aus: PencilKit-Kugelschreiber
+    /// (Monoline), der immer gleich dick schreibt.
+    public var dynamicPenWidth: Bool
+    /// Standard-Skalierung des Hintergrund-Musters neuer Notizen
+    /// (1 = Mitte des Reglers in der Zeichenfläche).
+    public var defaultBackgroundScale: Double
 
     public static let defaultPenColorSlots: [String] = [
         "#1E1E1E", // Schwarz
@@ -46,7 +53,9 @@ public struct DrawingSettings: Codable, Equatable {
         penColorSlots: [String] = DrawingSettings.defaultPenColorSlots,
         markerColorSlots: [String] = DrawingSettings.defaultMarkerColorSlots,
         applePencilOnly: Bool = false,
-        autoDeselectEraser: Bool = true
+        autoDeselectEraser: Bool = true,
+        dynamicPenWidth: Bool = true,
+        defaultBackgroundScale: Double = 1
     ) {
         self.penWidth = penWidth
         self.markerWidth = markerWidth
@@ -58,6 +67,8 @@ public struct DrawingSettings: Codable, Equatable {
         self.markerColorSlots = markerColorSlots.isEmpty ? DrawingSettings.defaultMarkerColorSlots : markerColorSlots
         self.applePencilOnly = applePencilOnly
         self.autoDeselectEraser = autoDeselectEraser
+        self.dynamicPenWidth = dynamicPenWidth
+        self.defaultBackgroundScale = NoteBackgroundMetrics.clampedScale(defaultBackgroundScale)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -65,6 +76,7 @@ public struct DrawingSettings: Codable, Equatable {
         case defaultBackgroundStyle
         case penColorSlots, markerColorSlots
         case applePencilOnly, autoDeselectEraser
+        case dynamicPenWidth, defaultBackgroundScale
         case defaultPenColorHex, defaultMarkerColorHex, defaultTool
     }
 
@@ -102,6 +114,9 @@ public struct DrawingSettings: Codable, Equatable {
         // (fälschlich) auf „nur Apple Pencil“ stellen.
         self.applePencilOnly = try container.decodeIfPresent(Bool.self, forKey: .applePencilOnly) ?? false
         self.autoDeselectEraser = try container.decodeIfPresent(Bool.self, forKey: .autoDeselectEraser) ?? true
+        self.dynamicPenWidth = try container.decodeIfPresent(Bool.self, forKey: .dynamicPenWidth) ?? true
+        let decodedScale = try container.decodeIfPresent(Double.self, forKey: .defaultBackgroundScale) ?? 1
+        self.defaultBackgroundScale = NoteBackgroundMetrics.clampedScale(decodedScale)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -116,6 +131,8 @@ public struct DrawingSettings: Codable, Equatable {
         try container.encode(markerColorSlots, forKey: .markerColorSlots)
         try container.encode(applePencilOnly, forKey: .applePencilOnly)
         try container.encode(autoDeselectEraser, forKey: .autoDeselectEraser)
+        try container.encode(dynamicPenWidth, forKey: .dynamicPenWidth)
+        try container.encode(defaultBackgroundScale, forKey: .defaultBackgroundScale)
     }
 
     public static var `default`: DrawingSettings {

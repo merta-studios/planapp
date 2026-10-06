@@ -104,7 +104,12 @@ eintippen, Dateiinhalt einfügen, committen). Danach steht der Workflow im Tab *
 - **Apple-Pencil-Einstellung**: Standardmäßig **aus**, das heißt Finger und Pencil dürfen zeichnen. Sobald die App irgendwo einen echten Apple Pencil bemerkt (Hover, Strich oder Squeeze), schaltet sie „Nur Apple Pencil“ automatisch ein und merkt sich das.
 - **Apple Pencil Hover**: Alle Buttons und Karten unterstützen iPadOS Pointer- & Hover-Effekte (`.hoverEffect(.lift)`).
 - **Automatischer Rand-Zuschnitt**: Beim Schließen wird die Zeichnung exakt an den Rändern der geschriebenen Striche zugeschnitten und als gestochen scharfe Vorschau direkt im Stundenplan-Block angezeigt!
-- **Tastatur ändert die Notiz nicht**: Das Text-Werkzeug öffnet die app-eigene Tastatur **schwebend über** dem Zettel. Der Zettel behält beim Tippen seine Größe und seine Position – nichts rutscht nach oben und nichts wird klein gerechnet. Nur wenn das bearbeitete Textfeld sonst hinter der Tastatur läge, rückt der Zettel gerade so weit hoch, dass das Feld sichtbar bleibt (ohne Zoom).
+- **Tastatur ändert die Notiz nicht**: Das Text-Werkzeug nutzt die Systemtastatur. Der Zettel behält beim Tippen seine Größe und seine Position – nichts rutscht nach oben und nichts wird klein gerechnet. Nur wenn das bearbeitete Textfeld sonst hinter der Tastatur läge, rückt der Zettel gerade so weit hoch, dass das Feld sichtbar bleibt (ohne Zoom).
+- **Gerade Linien**: Stift oder Textmarker am Ende eines Strichs etwa **2 Sekunden still halten** – der Strich rastet als gerade Linie ein, der Apple Pencil Pro bestätigt das mit einer kurzen Vibration. Weiterziehen hebt das Einrasten wieder auf.
+- **Dynamische Stiftdicke**: Unter *Zeichnen & Apple Pencil* schaltbar (Standard an). Aus = Kugelschreiber (Monoline) mit konstanter Dicke.
+- **Mustergröße**: Im „…“-Menü der Zeichenfläche regelt ein Schieberegler die Größe von Linien, Kästchen und Punkten (Mitte = Standard, bis halb so klein / doppelt so groß). Der Standardwert für neue Notizen steht in den Einstellungen.
+- **Notiz kopieren & einfügen**: Stunden-Block (oder Karte in „Nur Notizen“) gedrückt halten → *Kopieren* (wenn eine Notiz existiert) bzw. *Einfügen* (ersetzt die Zielnotiz komplett). Dieselben Optionen gibt es im „…“-Menü der geöffneten Notiz.
+- **Dark Mode**: Die Zeichenfläche läuft fest im hellen Erscheinungsbild – schwarze Tinte bleibt beim Öffnen einer Notiz schwarz, auch wenn das Gerät im Dark Mode ist.
 
 ### 🗒️ 6. Ansichts-Modus „Nur Notizen“ als Raster
 
@@ -113,8 +118,27 @@ eintippen, Dateiinhalt einfügen, committen). Danach steht der Workflow im Tab *
 - **Gleiche Kartenbreiten**: Alle Karten eines Abschnitts haben dieselbe Breite, und die Karten einer Zeile dieselbe Höhe – die Übersicht wirkt wie eine Tafel, nicht wie eine lose Liste.
 - **Chronologie im Raster**: Die grüne „Jetzt“-Linie liegt **zwischen** dem vergangenen und kommenden Kartenraster und läuft von Rand zu Rand – sie belegt niemals eine Rasterzelle. Im Mehrspaltenraster stehen Datum und Stunde direkt im Header jeder Karte, sodass Notizen verschiedener Tage eine Zeile gemeinsam füllen können.
 - **Chronologie bleibt**: Gelesen wird zeilenweise von links nach rechts – vergangene Einträge oben, kommende unterhalb der grünen Linie.
+- **Flüssig auch mit vielen Notizen**: Die Übersicht ist eine flache Liste aus Kartenzeilen (`NotesOverviewLayout.rowPlan`), Vorschaubilder werden **asynchron verkleinert geladen** und in einem Cache gehalten, Schatten liegen nur auf der Kartenform, und die Minuten-Aktualisierung läuft über einen einzigen `.task`-Timer. Dadurch ruckelt der Modus auch mit zehn und mehr Notizen nicht mehr.
+- **Tag-Filter**: Ist das Tag-System aktiv, erscheint oben eine Chip-Leiste mit allen Tags (Mehrfachauswahl; nichts ausgewählt = alle Notizen).
 
-### 🌙 7. Darstellung & Dark Mode (Schrift bleibt schwarz)
+### 🏷️ 7. Tag-System (optional)
+
+- *Einstellungen → Tag-System*: Schalter **„Tag System aktivieren“** (Standard aus), darunter die Liste der Tags (Name + Farbe, maximal 20, Reihenfolge per Pfeile).
+- In der Notiz steht neben dem Fachnamen eine gestrichelte graue Pille **„+ Tag hinzufügen“**; ein Tipp öffnet die kleine Auswahl. Ein gesetzter Tag füllt die Pille in seiner Farbe (weiße Schrift bei dunklen Farben); erneutes Tippen wechselt oder entfernt ihn.
+- Im Stundenplan erscheint der Tag unten rechts in der Notiz-Vorschau.
+
+### 💾 8. Sichern, Übertragen & mehrere Geräte
+
+- *Einstellungen → Daten & Zurücksetzen*: **„Export alles“** erzeugt einen Base64-Text (`PLANAPP1:` + komprimiertes JSON) mit **allem** – Notizen, Stundenplan, Zugangsdaten, Fächer, Lehrkräfte, Tags und sämtlichen Einstellungen – zum Teilen oder Kopieren. **„Import“** liest eine solche Sicherung aus der Zwischenablage, zeigt vorher eine Zusammenfassung und ersetzt nach Bestätigung alle Daten.
+- **iCloud**: Eine automatische iCloud-/CloudKit-Synchronisation ist ohne Apple-Entwicklerkonto (Swift Playgrounds, Sideloadly) nicht möglich – die App bekommt keine iCloud-Berechtigung. Export & Import über AirDrop, Dateien-App (iCloud Drive) oder Universal-Zwischenablage ist der verlässliche Weg.
+- **Limits**: maximal **50** eigene Fächer und **50** Lehrkraft-Einträge (Zähler und Hinweis in den Einstellungen).
+
+### 📱 9. iPhone
+
+- Der Stundenplan wird auf dem iPhone **kompakt** dargestellt: schmale Stundenspalte, zweibuchstabige Wochentage, kleinere Blöcke – alle fünf Tage passen auf den Bildschirm. Die Kopfzeile schrumpft auf Symbole. „Nur Notizen“ zeigt eine Karte pro Zeile.
+- In der Notiz gibt es ohne Apple Pencil nur **Lasso, Text und Radierer** (per Finger); die Farb-Slots wirken als **Textfarben**. Rückgängig/Wiederholen und das „…“-Menü bleiben. Pencil-spezifische Einstellungen sind auf dem iPhone ausgeblendet. Das iPad bleibt unverändert.
+
+### 🌙 10. Darstellung & Dark Mode (Schrift bleibt schwarz)
 
 - **Papier bleibt Papier**: Alle Notiz- und Zeichenflächen sind – wie ein echter Notizblock – **immer weiß**, und die Schrift darauf ist und bleibt **schwarz**. Das gilt für Blockschrift, Textfelder, Vorschauen und gerenderte Notizbilder.
 - **Einstellbare Darstellung**: Unter *Einstellungen → Darstellung* lässt sich **Hell** (Standard), **Dunkel** oder **Automatisch** (folgt dem iPad) wählen. Standard ist **Hell**, damit ein dunkles System-Design nirgends weiße Schrift auf weißem Papier erzeugen kann.
@@ -162,15 +186,11 @@ planapp/
 │   │   │   ├── PencilKitCanvasRepresentable.swift # PencilKit Wrapper, Pencil-Erkennung & Squeeze
 │   │   │   ├── PencilSqueezePaletteView.swift# Abgerundete Squeeze-Bogenpalette
 │   │   │   └── DrawingToolbarView.swift      # Vorgegebene Stift-, Textmarker- & Radier-Tools
-│   │   ├── Keyboard/
-│   │   │   ├── TextInputHub.swift            # Eingabe-Hub, Tastatur-Erkennung & Diagnose
-│   │   │   ├── AppKeyboardView.swift         # App-eigene Tastatur im Apple-Stil (Ebenen, Akzente, Emoji)
-│   │   │   ├── AppKeyboardLayout.swift       # Adaptive Tastaturmaße & Safe-Area-Abstände
-│   │   │   └── AppKeyboardHost.swift         # Einbindung pro Eingabeansicht (eingebettet/schwebend)
 │   │   ├── Settings/
 │   │   │   ├── SettingsView.swift            # Einstellungen-Übersicht (Kategorien)
 │   │   │   ├── SettingsCategory.swift        # Kategorien & Detailseiten
-│   │   │   ├── KeyboardSettingsSection.swift # Tastatur-Modus, Tipp-Feedback & Live-Status
+│   │   │   ├── TagSystemSettingsSection.swift # Tag-System: Schalter, Tags (Name + Farbe), Reihenfolge
+│   │   │   ├── DataTransferSection.swift     # Export alles / Import (Base64-Text, Zwischenablage)
 │   │   │   ├── AppearanceSettingsSection.swift # Hell/Dunkel/Automatisch
 │   │   │   ├── DrawingSettingsSection.swift  # Stiftdicken, Pencil-Einstellungen & Radierer
 │   │   │   ├── PencilGesturesSection.swift   # Bedienhinweise (Pencil & Gesten)
@@ -188,7 +208,7 @@ planapp/
 │       ├── ColorExtensions.swift             # Hex-Konvertierung & Kontrastfarben
 │       ├── DateExtensions.swift              # Kalenderwochen & Tagesberechnungen
 │       ├── GlobalCoordinateSpace.swift       # Gemeinsamer Koordinatenraum für Hover-Positionen
-│       ├── KeyboardFeedback.swift            # Klang & Haptik bei jedem Tastendruck
+│       ├── DeviceLayout.swift                # iPhone/iPad-Erkennung & kompakte Stundenplan-Maße
 │       ├── Haptics.swift                     # Zentrale Haptik-Helfer
 │       └── PencilInteractions.swift          # Apple Pencil Pro Squeeze- & Hover-Handler
 ├── README.md
@@ -215,175 +235,18 @@ let url  = AppResources.url(forResource: "AppLogo", withExtensions: ["png"])
 
 ---
 
-## ⌨️ Bildschirmtastatur: warum es so lange nicht ging – und wie es jetzt läuft
+## ⌨️ Texteingabe: Systemtastatur
 
-### Das eigentliche Problem
+Textfelder auf der Zeichenfläche und alle Eingabefelder der Einstellungen
+benutzen die **normale Systemtastatur** von iPadOS/iOS. Eine frühere
+app-eigene Bildschirmtastatur wurde vollständig entfernt.
 
-**In Apps, die in Swift Playgrounds auf dem iPad laufen, liefert iPadOS die
-Texteingabe nicht an die App.** Ein Tippen setzt den Cursor, aber:
+Hinweis: In **Swift Playgrounds** kann die Systemtastatur gelegentlich
+ausbleiben (eine Eigenheit der Playgrounds-Laufzeit, kein Fehler der App). In
+der installierten App – z. B. per Sideloadly oder Xcode – funktioniert sie
+zuverlässig.
 
-- die Bildschirmtastatur erscheint nicht,
-- es kommt auch kein Zeichen einer angeschlossenen Hardware-Tastatur an,
-- nur „Einsetzen“ aus der Zwischenablage funktioniert.
-
-Das ist **kein Fehler dieser App** und auch kein Fokus-Problem. Es ist ein seit
-**iPadOS 16.1** dokumentierter Fehler von Swift Playgrounds (Apple Developer
-Forums, [Thread 715614 – „iPad OS 16.1, Playgrounds and input fields“](https://developer.apple.com/forums/thread/715614)),
-der in Berichten bis **iPadOS 18** und **iPadOS 26** (Playgrounds 4.6.4)
-auftritt. Genau deshalb konnten alle früheren Versuche nichts bewirken:
-`becomeFirstResponder()`, `@FocusState`, Wartezeiten, `reloadInputViews()`,
-Key-Window-Prüfungen oder Diagnose-Logs kommen alle nicht dagegen an – sie
-reparieren den Fokusablauf einer Umgebung, die die Tastatur gar nicht erst
-herausgibt.
-
-### Die Lösung in dieser App
-
-Die App bringt eine **eigene Bildschirmtastatur** mit (`Views/Keyboard/`).
-Sie ist eine normale SwiftUI-Ansicht innerhalb der App, braucht also weder die
-Systemtastatur noch Tastenereignisse von iPadOS – sie funktioniert immer, weil
-sie nur Tipps benötigt.
-
-Die Tastatur wird als Teil der normalen Ansichts-Hierarchie verwaltet – ihre
-Tasten funktionieren auf echten Geräten zuverlässig, und Tipps auf die Tastatur
-können keine Gesten dahinterliegender Ebenen auslösen (kein ungewolltes
-Schließen von Notiz oder Einstellungen). In Einstellungen und Sync-Formularen
-ist sie dabei **immer am unteren Rand des aktiven App-Fensters angedockt**,
-nicht innerhalb des gerade sichtbaren Scroll-Inhalts. Der oberste sichtbare Host
-zeigt die Tastatur, darunterliegende Hosts bleiben leer – es gibt also nie zwei
-Tastaturen gleichzeitig. Bei Rotation, Split View und Stage Manager skaliert die
-Höhe mit dem Fenster (höchstens ~42 % der Fensterhöhe, mindestens 240 pt); die
-unterste Tastenreihe bleibt oberhalb des Home-Indikators.
-
-Dafür gibt es **zwei Darstellungen** (`AppKeyboardPresentation`):
-
-| Darstellung | Verhalten | Verwendet in |
-| --- | --- | --- |
-| **Angedockt** (`.embedded`, Standard) | Liegt als Overlay am unteren Rand des aktiven App-Fensters; das aktive Settings-Feld wird bei Bedarf dorthin gescrollt | Einstellungen und Bearbeiten-Sheets |
-| **Schwebend** (Overlay, abgerundet, mit Schatten) | Die Tastatur liegt **über** dem Inhalt, dessen Layout sich nicht ändert | Zeichenfläche (Notiz) |
-
-Auf der Zeichenfläche ist das entscheidend: Die Notiz behält beim Tippen Größe
-und Position. Früher hat die eingebettete Tastatur die Safe Area verändert –
-die Notiz wurde dadurch klein gerechnet und nach oben geschoben. Jetzt
-schwebt die Tastatur über dem Zettel (leicht durchscheinend, damit die Notiz
-darunter sichtbar bleibt), und nur das gerade bearbeitete Textfeld holt die
-Notiz bei Bedarf ohne Skalierung ein Stück nach oben.
-
-Der Ablauf:
-
-1. `TextInputHub` beobachtet die Bearbeitung aller Textfelder
-   (`UITextField`/`UITextView`-Benachrichtigungen, dazu gehört auch das
-   SwiftUI-`TextField`) und zusätzlich das First-Responder-Feld nach jedem Tipp.
-2. Bleibt die Systemtastatur aus (oder zeigt iPadOS nur den ca. 44 pt hohen
-   Kurzbefehl-Streifen einer Hardware-Tastatur), blendet die App ihre eigene
-   Tastatur ein (`Views/Keyboard/AppKeyboardView.swift`).
-3. Getippt wird über die öffentliche `UIKeyInput`-Schnittstelle
-   (`insertText(_:)` / `deleteBackward()`) direkt in das fokussierte Feld –
-   also über denselben Weg, den auch die echte Tastatur nimmt. Cursorposition,
-   Sicherheitsfeld (Passwort) und die SwiftUI-Bindungen bleiben dadurch
-   korrekt; anschließend wird das Feld zusätzlich über die Textänderung
-   informiert.
-
-Erscheint die Systemtastatur doch (z. B. in Xcode oder wenn keine
-Hardware-Tastatur gekoppelt ist), tritt die App-Tastatur automatisch zurück.
-
-### ⌨️ Aufbau der App-Tastatur (Apple-Stil)
-
-Die Tastatur ist bewusst **wie die Tastatur von iPadOS** aufgebaut – im Layout,
-in den Farben und in der Bedienung:
-
-- **Ebenen**: Buchstaben (QWERTZ mit `Ü Ö Ä ß`) → `123` (Zahlen) → `#+=`
-  (Sonderzeichen) → Emoji. Die Ebenen-Tasten sitzen wie bei Apple unten links
-  (`123`, `#+=`, `ABC`) und in der dritten Reihe.
-- **Untere Reihe wie bei Apple**: Ebenen-Taste, Emoji-Taste (öffnet die
-  Emoji-Ebene), breite Leertaste, Punkt mit kleinem **`?!,`**-Hinweis,
-  Eingabetaste.
-- **Eingabetaste mit Aktion**: Sie zeigt die Aktion des Felds („Fertig“,
-  „Weiter“, „Suchen“, „Senden“ …) bzw. das ⏎-Symbol. In mehrzeiligen Feldern
-  fügt sie einen Zeilenumbruch ein, in einzeiligen Feldern beendet sie die
-  Bearbeitung – genau wie bei Apple.
-- **Akzent-Popup**: Langes Drücken auf eine Taste zeigt die Alternativen
-  (`a` → `à á â ä æ …`, `o` → `ò ó ô ö œ ø …`, `s` → `ß ś š`, `.` → `, ? ! …`,
-  `0` → `°`). Seitliches Ziehen wählt aus; das gewählte Zeichen ist im Popup
-  hervorgehoben.
-- **Umschalten wie bei Apple**: Die Umschalttaste zeigt den gefüllten Pfeil
-  (Shift) und wird beim **Doppeltipp** zur Feststelltaste (`capslock.fill`).
-  Nach einem Satzende schaltet die Tastatur im Satzmodus automatisch wieder
-  groß. „ß“ bleibt „ß“ – daraus wird kein „SS“.
-- **Doppelter Leertipp wird zu „. “** – in Sicherheitsfeldern (Passwort)
-  bewusst nicht.
-- **Tasten lösen beim Loslassen aus**; die Löschtaste wirkt sofort und
-  wiederholt sich beim Halten (mit fester Obergrenze, damit nichts
-  „durchläuft“).
-- **Feedback beim Tippen wie bei Apple**: Jeder Tastendruck gibt ein leises
-  Klickgeräusch und eine feine Haptik aus. Weil das iPad (außer dem Apple
-  Pencil Pro) keinen Taptic Engine hat, ist dort der **Klang** das
-  eigentliche Feedback – genau wie bei der iPad-Tastatur, deren Lautstärke
-  und Stummschalter mitgelten.
-- **Aussehen**: helle Tasten auf grauem Grund im Light Mode, graue Tasten auf
-  dunklem Grund im Dark Mode, flache Tasten mit 1 pt Schattenkante, abgerundete
-  Ecken – dazu eine schmale Kurzbefehl-Leiste mit Cursor-Pfeilen, Einfügen und
-  Ausblenden.
-
-**Einstellbar** unter *Einstellungen → Tastatur & Eingabe*:
-
-| Modus | Verhalten |
-| --- | --- |
-| **Automatisch** (Standard) | App-Tastatur nur, wenn das System keine vollständige Tastatur zeigt |
-| **Immer anzeigen** | App-Tastatur bei jedem Textfeld, auch zusätzlich zur Systemtastatur |
-| **Nur Systemtastatur** | App-Tastatur aus |
-
-Dort gibt es außerdem den Schalter **Feedback beim Tippen** („Klang & Haptik“,
-Standard: an, mit Hörprobe) und eine **Live-Statusanzeige** (Systemtastatur sichtbar?,
-App-Tastatur aktiv?, Textfeld erkannt?, Hardware-Tastatur erkannt?,
-Key-Window?, letztes Ereignis). Damit ist sofort sichtbar, was iPadOS gerade
-tut – statt nur zu vermuten, dass etwas „repariert“ sei.
-
-### Wenn zusätzlich die Systemtastatur erscheinen soll
-
-1. Hardware-Tastatur (Magic Keyboard, Bluetooth) abtrennen.
-2. Swift Playgrounds vollständig schließen und **mit abgetrennter Tastatur**
-   neu öffnen (der Fehler tritt danach oft wieder auf, sobald der
-   Playgrounds-Editor den Fokus hatte).
-3. Ggf. den iPad neu starten.
-4. Hilfreich sein kann: *Einstellungen → Bedienungshilfen → Tippen →
-   AssistiveTouch → „Bildschirmtastatur einblenden“*.
-
-### Technische Randnotizen
-
-- `appKeyboardHost()` wird auf jeder Eingabeansicht installiert (Einstellungen,
-  Fach-/Lehrer-Bearbeiten-Sheets, Zeichenfläche). Der `TextInputHub` merkt sich
-  die Host-Reihenfolge; nur der oberste Host blendet die Tastatur ein, dadurch
-  entstehen auch in verschachtelten Sheets nie zwei Tastaturen. Auf ein
-  eigenes Overlay-Fenster wird bewusst verzichtet: Es erhielt auf echten
-  Geräten keine zuverlässigen Tipps und ließ Sheets/Notizen beim Tippen auf
-  die Tastatur ungewollt schließen.
-- `appKeyboardHost(presentation:)` bestimmt die Darstellung: `.embedded`
-  (Standard, als angedocktes Overlay am unteren App-Fensterrand) für
-  Einstellungen und Sheets, `.floating` (abgerundetes Overlay über dem Inhalt)
-  für die Zeichenfläche. Die Notiz berechnet ihre
-  Skalierung ausschließlich aus `geometry.size`; auf einen Wechsel der Safe
-  Area reagiert sie nicht mehr, und `.ignoresSafeArea(.keyboard)` verhindert
-  auch bei der Systemtastatur, dass die Zeichenfläche verkleinert wird.
-- Die Tastenhöhe (`AppKeyboardLayout.keyHeight`) reserviert fest die 32 pt
-  hohe Kurzbefehl-Leiste und den Home-Indikator-Abstand; dadurch füllen die
-  vier Reihen exakt die Tastaturhöhe, ohne dass etwas verrutscht. Die
-  schwebende Variante verwendet `AppKeyboardLayout.floatingHeight` – dieselbe
-  Höhe, nur über den Inhalt gelegt.
-- Die Kopfzeile der geöffneten Notiz verwendet die adaptive System-Textfarbe:
-  **weiß im Dark Mode, dunkel im Light Mode**. Das weiße Papier und die dort
-  gewählten Text-/Stiftfarben ändern sich dadurch nicht.
-- Layout-Checks und die iPad-Testschritte stehen unter
-  [`Tests/KeyboardAndDarkMode.md`](Tests/KeyboardAndDarkMode.md).
-- Die Zeichenflächen-Textfelder (`NoteTextEditor`/`CustomNoteTextView`) melden
-  sich zusätzlich ausdrücklich beim Hub an – so funktioniert das Text-Werkzeug
-  auch dann, wenn der programmatische Fokus in der Playgrounds-Umgebung nicht
-  greift.
-- Es gibt weiterhin keine `reloadInputViews()`-Aufrufe: Sie können laufende
-  Tastaturübergänge abbrechen.
-- Eine Key-Window-Reparatur (`window.makeKey()`) läuft höchstens einmal pro
-  App-Start und nur, wenn kein Systemfenster (z. B. ein Alert) oberhalb liegt.
-  Sie kann in manchen Konfigurationen die Systemtastatur zurückholen, ist aber
-  nicht die eigentliche Lösung – das ist die App-Tastatur.
+---
 
 
 ## 🧪 Regressionstests für Interaktion und Layout
