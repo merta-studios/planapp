@@ -281,6 +281,7 @@ struct PencilSqueezePaletteView: View {
                 // mehr „zu groß“ werden, wenn die Mittelpunkts-Sonde noch
                 // keinen aktuellen Wert liefert.
                 circleRadiusOverride: arcRadius * paletteScale,
+                circleButtonAngle: angleForElement(at: paletteElements.firstIndex(where: { $0.isUndo }) ?? 0),
                 onTap: {
                     Haptics.tap()
                     onUndo()

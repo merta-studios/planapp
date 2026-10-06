@@ -243,7 +243,8 @@ public struct NotesOverviewListView: View {
                 viewModel: viewModel,
                 lesson: lesson,
                 sourceFrame: { hoverTracker.frame(for: lesson) },
-                requestDelete: { deleteTarget = lesson }
+                requestDelete: { deleteTarget = lesson },
+                usesSubmenus: false
             )
             Button("Abbrechen", role: .cancel) {}
         }
@@ -616,6 +617,9 @@ private struct NoteOverviewActions: View {
     let lesson: Lesson
     let sourceFrame: () -> CGRect
     let requestDelete: () -> Void
+    /// Kontextmenü: Tag als Untermenü. Im Optionen-Dialog gibt es keine
+    /// Untermenüs – dort stehen die Tags direkt als Einträge.
+    var usesSubmenus: Bool = true
 
     var body: some View {
         Button {
@@ -648,6 +652,18 @@ private struct NoteOverviewActions: View {
             Label("Kopieren", systemImage: "doc.on.doc")
         }
 
+        if viewModel.tagSettings.isEnabled {
+            if usesSubmenus {
+                Menu {
+                    tagButtons
+                } label: {
+                    Label("Tag", systemImage: "tag")
+                }
+            } else {
+                tagButtons
+            }
+        }
+
         if viewModel.hasCopiedNote {
             Button {
                 Haptics.tap()
@@ -665,6 +681,37 @@ private struct NoteOverviewActions: View {
             }
         } label: {
             Label("Notiz löschen", systemImage: "trash")
+        }
+    }
+
+    @ViewBuilder
+    private var tagButtons: some View {
+        let currentTagID = viewModel.tag(for: lesson)?.id
+        if viewModel.tagSettings.tags.isEmpty {
+            Button("Keine Tags angelegt") {}
+                .disabled(true)
+        } else {
+            ForEach(viewModel.tagSettings.tags) { tag in
+                Button {
+                    Haptics.select()
+                    viewModel.setTag(tag.id, for: lesson)
+                } label: {
+                    if currentTagID == tag.id {
+                        Label(usesSubmenus ? tag.displayName : "Tag: \(tag.displayName)", systemImage: "checkmark")
+                    } else {
+                        Text(usesSubmenus ? tag.displayName : "Tag: \(tag.displayName)")
+                    }
+                }
+            }
+        }
+        if currentTagID != nil {
+            if usesSubmenus { Divider() }
+            Button(role: .destructive) {
+                Haptics.tap()
+                viewModel.setTag(nil, for: lesson)
+            } label: {
+                Label("Tag entfernen", systemImage: "xmark.circle")
+            }
         }
     }
 }

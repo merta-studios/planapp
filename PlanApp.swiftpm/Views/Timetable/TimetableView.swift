@@ -43,6 +43,9 @@ public struct TimetableView: View {
         return viewModel.shouldShowUntisSetupGuide(for: viewModel.selectedWeekStart)
     }
 
+    /// Filter-Auswahl direkt aus dem blauen Filter-Balken.
+    @State private var isFilterEditorPresented = false
+
     /// Ob der große „Filter zurücksetzen“-Button unter der Kopfzeile steht.
     private var showsNotesFilterReset: Bool {
         viewModel.viewMode == .notesOnly && !viewModel.activeTagFilter.isEmpty
@@ -64,40 +67,66 @@ public struct TimetableView: View {
     @ViewBuilder
     private var notesFilterResetBanner: some View {
         if showsNotesFilterReset {
-            Button {
-                Haptics.tap()
-                withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
-                    viewModel.activeTagFilter.removeAll()
-                }
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundColor(.blue)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Filter zurücksetzen")
-                            .font(.system(size: 17, weight: .semibold, design: .default))
-                            .foregroundColor(.primary)
-                        Text(activeFilterSummary)
-                            .font(.system(size: 12, weight: .medium, design: .default))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+            HStack(spacing: 10) {
+                Button {
+                    Haptics.tap()
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                        viewModel.activeTagFilter.removeAll()
                     }
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundColor(.blue)
 
-                    Spacer(minLength: 8)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Filter zurücksetzen")
+                                .font(.system(size: 17, weight: .semibold, design: .default))
+                                .foregroundColor(.primary)
+                            Text(activeFilterSummary)
+                                .font(.system(size: 12, weight: .medium, design: .default))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
 
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(.secondary)
+                        Spacer(minLength: 8)
+
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.leading, 20)
+                    .padding(.trailing, 6)
+                    .padding(.vertical, 14)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
-                .frame(maxWidth: .infinity)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Filter zurücksetzen")
+                .accessibilityHint("Entfernt alle Tag-Filter und zeigt wieder alle Notizen")
+
+                // Schnellzugriff: die aktiven Filter direkt bearbeiten.
+                Button {
+                    Haptics.tap()
+                    isFilterEditorPresented = true
+                } label: {
+                    Label("Filter bearbeiten", systemImage: "slider.horizontal.3")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.blue)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color.blue.opacity(0.14))
+                        )
+                        .contentShape(Capsule(style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .hoverEffect(.lift)
+                .padding(.trailing, 12)
+                .accessibilityLabel("Filter bearbeiten")
             }
-            .buttonStyle(.plain)
             .liquidGlassButton(cornerRadius: 22, tint: .blue)
-            .hoverEffect(.lift)
             .padding(.horizontal, 16)
             .padding(.top, 6)
             .padding(.bottom, 10)
@@ -106,8 +135,6 @@ public struct TimetableView: View {
                     .combined(with: .opacity)
                     .combined(with: .scale(scale: 0.96, anchor: .top))
             )
-            .accessibilityLabel("Filter zurücksetzen")
-            .accessibilityHint("Entfernt alle Tag-Filter und zeigt wieder alle Notizen")
         }
     }
 
@@ -226,6 +253,10 @@ public struct TimetableView: View {
         // Tastatur mit eigenem Abstand – sie liegen in einer eigenen Hierarchie.)
         .ignoresSafeArea(.keyboard, edges: .bottom)
         // Einstellungs-Sheet
+        .sheet(isPresented: $isFilterEditorPresented) {
+            TagFilterSheet()
+                .environmentObject(viewModel)
+        }
         .sheet(isPresented: $viewModel.isSettingsPresented) {
             SettingsView()
                 .environmentObject(viewModel)

@@ -646,6 +646,9 @@ public struct LessonDrawingOverlayView: View {
                         lastStrokeMutation = Date()
                         recordHistorySnapshot()
                     },
+                    onCommitDrawingSteps: { steps in
+                        commitDrawingSteps(steps)
+                    },
                     onRequestUndo: {
                         performPencilGesture(viewModel.drawingSettings.doubleTapAction)
                     },
@@ -1124,7 +1127,7 @@ public struct LessonDrawingOverlayView: View {
 
         let restoredDrawing = (try? PKDrawing(data: snapshot.drawingData)) ?? PKDrawing()
         drawing = restoredDrawing
-        canvasView?.drawing = restoredDrawing
+        setCanvasDrawing(restoredDrawing)
         // Der Canvas-eigene Undo-Stack ist deaktiviert (siehe
         // `PencilKitCanvasRepresentable`); diese Aufrufe bleiben als
         // Sicherheitsnetz für ältere PencilKit-Versionen.
@@ -1137,6 +1140,33 @@ public struct LessonDrawingOverlayView: View {
             editingTextBoxID = nil
         }
         lastStrokeMutation = Date()
+    }
+
+    /// Schreibt eine Zeichnung von außen auf die Zeichenfläche. Über den
+    /// Coordinator, damit der folgende Delegate-Callback nicht als neuer
+    /// Strich (mit veraltetem Stand) in die Historie zurückläuft.
+    private func setCanvasDrawing(_ newDrawing: PKDrawing) {
+        if let coordinator = canvasView?.delegate as? PencilKitCanvasRepresentable.Coordinator {
+            coordinator.applyExternalDrawing(newDrawing)
+        } else {
+            canvasView?.drawing = newDrawing
+        }
+    }
+
+    /// Verzeichnet jeden Zustand als eigenen Rückgängig-Schritt (gerade
+    /// Linie: 1. komplette schräge Linie, 2. Geradeziehen).
+    private func commitDrawingSteps(_ steps: [PKDrawing]) {
+        guard !steps.isEmpty else { return }
+        for step in steps {
+            drawing = step
+            if !isApplyingHistory, showsEditor {
+                editingHistory.record(
+                    NoteHistorySnapshot(drawingData: step.dataRepresentation(), textBoxes: textBoxes)
+                )
+            }
+        }
+        lastStrokeMutation = Date()
+        historyRevision += 1
     }
 
     private func persistEditingHistory() {
@@ -1153,7 +1183,7 @@ public struct LessonDrawingOverlayView: View {
 
         let emptyDrawing = PKDrawing()
         drawing = emptyDrawing
-        canvasView?.drawing = emptyDrawing
+        setCanvasDrawing(emptyDrawing)
         canvasView?.undoManager?.removeAllActions()
         lastStrokeMutation = .distantPast
 
@@ -1452,7 +1482,7 @@ public struct LessonDrawingOverlayView: View {
 
         let emptyDrawing = PKDrawing()
         drawing = emptyDrawing
-        canvasView?.drawing = emptyDrawing
+        setCanvasDrawing(emptyDrawing)
         // Die Striche wurden nicht über den Canvas-Undo-Stack entfernt,
         // sondern ersetzt. Der alte Stack würde sonst gegen den kombinierten
         // Schritt unten arbeiten.
@@ -1772,7 +1802,11 @@ public struct LessonDrawingOverlayView: View {
             tailCenterX: tailCenterX,
             tailOnTop: tailOnTop
         )
-        let bodyRect = bubble.bodyRect(in: panel)
+        // Innenfläche in den LOKALEN Koordinaten des Panels: Das Panel wird
+        // selbst schon per `.offset` platziert. Mit `bodyRect(in: panel)`
+        // wurde der Inhalt doppelt verschoben – Tags und „Tag entfernen“
+        // rutschten dadurch aus dem Fenster.
+        let bodyRect = bubble.bodyRect(in: CGRect(origin: .zero, size: panel.size))
         // Anker der Skalierung: der Zungenspitzen-Punkt, also genau dort, wo
         // die Pille liegt. Die Blase wächst von der Pille hinein und wieder
         // heraus – kein einfaches Ein-/Ausblenden.
@@ -1919,7 +1953,7 @@ public struct LessonDrawingOverlayView: View {
 
         let pastedDrawing = (try? PKDrawing(data: copied.drawingData)) ?? PKDrawing()
         drawing = pastedDrawing
-        canvasView?.drawing = pastedDrawing
+        setCanvasDrawing(pastedDrawing)
         canvasView?.undoManager?.removeAllActions()
         lastStrokeMutation = .distantPast
 
@@ -2055,7 +2089,12 @@ public struct LessonDrawingOverlayView: View {
             origin: button,
             style: .circular,
             startUndoCount: editingHistory.undoCount,
-            startRedoCount: editingHistory.redoCount,
+            // Undo- und Redo-Bereich teilen sich höchstens einen vollen Kreis.
+            startRedoCount: min(
+                editingHistory.redoCount,
+                max(0, NoteUndoSessionPolicy.circularMaxTicks
+                    - NoteUndoSessionPolicy.circularTickCount(undoCount: editingHistory.undoCount))
+            ),
             currentOffset: 0,
             targetOffset: 0,
             circleStartAngle: startAngle,
