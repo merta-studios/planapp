@@ -7,31 +7,32 @@ enum UndoScrubStyle: Equatable {
     case circular
 }
 
-/// Laufende Scrubber-Sitzung: Ursprung im Overlay, Schrittweite vom Startzustand.
+/// Laufende Scrubber-Sitzung: Ursprung im Overlay und die Vorräte, die beim
+/// Halten feststehen.
+///
+/// Bewusst **ohne** mitwachsende Zähler: Die Anzeige eines Haltens zeigt genau
+/// die Schritte, die es in diesem Moment gibt. Während des Ziehens kommt nichts
+/// hinzu – sonst würde der Balken mit jedem rückgängig gemachten Schritt in die
+/// andere Richtung „nachwachsen“.
 struct UndoScrubSession: Equatable {
     /// Eindeutige Kennung der Sitzung. Die Schritt-Taktgeber prüfen sie:
     /// Ein noch laufender Takt einer alten Sitzung darf keine Schritte auf
-    /// eine neue Sitzung anwenden (sonst zeigte die Kreis-Bar Schritte, die
-    /// es gar nicht mehr gibt).
+    /// eine neue Sitzung anwenden.
     var id: UUID = UUID()
     var origin: CGPoint
     var style: UndoScrubStyle
-    /// Schritte, die in dieser Sitzung höchstens rückgängig gemacht werden
-    /// können – der Stand beim Halten. Die Grenze ist der letzte gespeicherte
-    /// Schritt; über den vollen Kreis hinaus sind deshalb **mehrere
-    /// Umdrehungen** erlaubt.
+    /// Rückgängig-Schritte, die diese Sitzung höchstens machen kann – der
+    /// Stand der Historie beim Halten.
     var undoCapacity: Int
-    /// Wiederholbare Schritte zum Sitzungsstart. In die **andere** Richtung
-    /// ziehen stellt die Schritte wieder her (Redo).
+    /// Wiederhol-Schritte, die beim Halten möglich waren. In die **andere**
+    /// Richtung ziehen stellt zusätzlich die Schritte wieder her, die in
+    /// dieser Sitzung gerade rückgängig gemacht wurden.
     var redoCapacity: Int
-    /// **Jetzt** noch mögliche Schritte – bei jeder Bewegung frisch aus der
-    /// echten Historie gelesen, nicht nur beim Einblenden der Bar.
-    var availableUndoCount: Int
-    var availableRedoCount: Int
     /// Tatsächlich angewandte Schritte (bestimmt die hervorgehobene Stufe).
+    /// Positiv = rückgängig, negativ = wiederholen.
     var currentOffset: Int
     /// Ziel des Fingers. Der Knopf **gleitet** dorthin, statt zu springen;
-    /// die Schritte werden dabei einzeln angewandt. Negativ = Redo.
+    /// die Schritte werden dabei einzeln angewandt.
     var targetOffset: Int
     /// Kreis: Winkel des Undo-Buttons beim Start (Bogenmaß).
     var circleStartAngle: CGFloat
@@ -40,19 +41,19 @@ struct UndoScrubSession: Equatable {
     /// Höhe des Overlays, damit der lineare Balken am unteren Rand stoppt.
     var containerHeight: CGFloat
 
-    /// Angewandte Schritte innerhalb der laufenden Kreis-Umdrehung. Negative
-    /// Werte (Redo über den Sitzungsstart hinaus) zählen hier als 0 – der
-    /// Knopf liegt dann auf der Redo-Seite vor dem Startwinkel.
-    var stepsInCurrentRevolution: Int {
-        let maxTicks = max(1, NoteUndoSessionPolicy.circularMaxTicks)
-        return max(0, currentOffset) % maxTicks
+    /// Wie weit der Knopf in Wiederhol-Richtung zurück darf: der Vorrat beim
+    /// Halten plus die Schritte, die diese Sitzung selbst rückgängig gemacht
+    /// hat (die sind ja wieder verfügbar). `limit` begrenzt die Reichweite auf
+    /// das, was die Anzeige an Stufen zeigt.
+    func maximumRedoSteps(limit: Int? = nil) -> Int {
+        let steps = max(0, redoCapacity) + max(0, currentOffset)
+        guard let limit else { return steps }
+        return min(steps, max(0, limit))
     }
 
-    /// Wie weit der Scrubber in Undo-Richtung laufen darf: der Vorrat der
-    /// Sitzung plus die Schritte, die zwischenzeitlich wiederhergestellt
-    /// (redone) wurden – die sind ja erneut verfügbar.
-    var maximumUndoOffset: Int {
-        max(0, undoCapacity - min(0, currentOffset))
+    /// Die im Ring hervorgehobene Stufe (0 = noch keine).
+    var highlightedTick: Int {
+        NoteUndoSessionPolicy.circularHighlightedTick(applied: max(0, currentOffset))
     }
 }
 
@@ -445,28 +446,19 @@ struct UndoScrubOverlay: View {
     }
 
     private var linearBar: some View {
-        // Positionen, an denen der Knopf stehen kann: die bereits angewandten
-        // Schritte plus die **jetzt** noch möglichen. Die Zahl kommt bei jeder
-        // Bewegung frisch aus der Historie (`availableUndoCount`) – nicht aus
-        // dem Stand vom Einblenden der Bar.
-        let undoTicks = NoteUndoSessionPolicy.linearTickCount(
-            undoCount: NoteUndoSessionPolicy.scrubTickCount(
-                applied: session.currentOffset,
-                available: session.availableUndoCount
-            ),
-            availableHeight: max(0, session.containerHeight - session.origin.y - 28)
-        )
-        // Wiederhol-Bereich über dem Knopf (dünner gezeichnet): Die Schritte
-        // dieser Sitzung, die gerade rückgängig gemacht wurden, plus die
-        // älteren, für die noch Platz ist – live gezählt, genau wie die
-        // Grenze des Balkens.
-        let redoTicks = min(
-            max(0, session.availableRedoCount),
-            NoteUndoSessionPolicy.linearRedoLimit(originY: Double(session.origin.y))
+        // Die Stufen stehen beim Halten fest: die grauen Rückgängig-Stufen
+        // unter dem Knopf und die blauen Wiederhol-Stufen darüber. Dadurch
+        // wächst nichts nach, während man zieht.
+        let ticks = NoteUndoSessionPolicy.linearScrubTicks(
+            undoCapacity: session.undoCapacity,
+            redoCapacity: session.redoCapacity,
+            appliedOffset: session.currentOffset,
+            availableHeight: max(0, session.containerHeight - session.origin.y - 28),
+            originY: Double(session.origin.y)
         )
         let spacing = CGFloat(NoteUndoSessionPolicy.linearTickSpacing)
-        let totalDown = CGFloat(undoTicks) * spacing
-        let totalUp = CGFloat(redoTicks) * spacing
+        let totalDown = CGFloat(ticks.undo) * spacing
+        let totalUp = CGFloat(ticks.redo) * spacing
 
         return ZStack {
             Capsule()
@@ -480,8 +472,8 @@ struct UndoScrubOverlay: View {
                     y: session.origin.y + (totalDown - totalUp) / 2
                 )
 
-            if undoTicks > 0 {
-                ForEach(1...undoTicks, id: \.self) { step in
+            if ticks.undo > 0 {
+                ForEach(1...ticks.undo, id: \.self) { step in
                     Capsule()
                         .fill(Color.secondary.opacity(step == appliedOffset ? 0.95 : 0.45))
                         .frame(width: 18, height: 3)
@@ -489,8 +481,8 @@ struct UndoScrubOverlay: View {
                 }
             }
 
-            if redoTicks > 0 {
-                ForEach(1...redoTicks, id: \.self) { step in
+            if ticks.redo > 0 {
+                ForEach(1...ticks.redo, id: \.self) { step in
                     Capsule()
                         .fill(Color.accentColor.opacity(step == -appliedOffset ? 0.95 : 0.30))
                         .frame(width: 18, height: 3)
@@ -509,20 +501,12 @@ struct UndoScrubOverlay: View {
     }
 
     private var circularBar: some View {
-        let maxTicks = max(1, NoteUndoSessionPolicy.circularMaxTicks)
-        // Die laufende Umdrehung: Wie viele Schritte sind in ihr schon
-        // angewandt, wie viele gehen in ihr noch? Beides frisch aus der
-        // Historie – die Bar zeigt also immer die echten möglichen Schritte.
-        let stepsInRevolution = session.stepsInCurrentRevolution
-        let ticksInRevolution = NoteUndoSessionPolicy.scrubTickCount(
-            applied: stepsInRevolution,
-            available: session.availableUndoCount,
-            limit: maxTicks
-        )
-        let overflowTicks = NoteUndoSessionPolicy.circularOverflowTicks(
-            applied: stepsInRevolution,
-            available: session.availableUndoCount
-        )
+        // Die Stufen der laufenden Umdrehung: So viele Rückgängig-Schritte gab
+        // es beim Halten (höchstens eine volle Umdrehung). Bei weniger
+        // Schritten ist der Ring ein kürzerer Teilbogen statt eines vollen
+        // Kreises; gibt es mehr, dreht man einfach weiter.
+        let tickCount = NoteUndoSessionPolicy.circularTickCount(undoCount: session.undoCapacity)
+        let highlighted = min(session.highlightedTick, max(0, tickCount))
         let radius = session.circleRadius
         let center = session.circleCenter
         let handleOnButton = radius < 8
@@ -530,40 +514,25 @@ struct UndoScrubOverlay: View {
         let sign = CGFloat(InteractionPolicies.circularUndoSweepSign)
         // Fester Winkel je Schritt: Bei wenigen Schritten ist der Rand nur ein
         // kurzer Teilbogen. Mehr als ein voller Kreis wird über weitere
-        // Umdrehungen erreicht (siehe `overflowTicks`).
-        let stepAngle = CGFloat(NoteUndoSessionPolicy.circularStepAngle(undoCount: 0))
-        let redoTicks = min(
-            max(0, session.availableRedoCount),
-            NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: ticksInRevolution)
-        )
+        // Umdrehungen erreicht – ohne zusätzliche Innenringe.
+        let stepAngle = CGFloat(NoteUndoSessionPolicy.circularStepAngle())
         let lineWidth = CGFloat(InteractionPolicies.circularRingLineWidth)
-        let undoSweep = CGFloat(ticksInRevolution) * stepAngle * sign
-        let redoSweep = -CGFloat(redoTicks) * stepAngle * sign
 
         return ZStack {
-            if ticksInRevolution > 0 || redoTicks > 0 {
-                // Ein durchgehender Bogen über Redo- und Undo-Bereich; immer
-                // mindestens so lang, dass der Knopf darauf sitzt.
-                ring(from: start + redoSweep, sweep: undoSweep - redoSweep, radius: radius, center: center, lineWidth: lineWidth)
-            }
-
-            // Zusätzliche Umdrehungen: je angefangener Umdrehung ein dünner
-            // Innenring. So sieht man beim Halten, dass über den vollen Kreis
-            // hinaus noch weitere Schritte erreichbar sind – bis zum letzten
-            // gespeicherten Schritt.
-            ForEach(Array(overflowTicks.enumerated()), id: \.offset) { index, filled in
-                let innerRadius = radius - lineWidth * 0.62 - CGFloat(index) * 18
+            if tickCount > 0 {
+                // Ein durchgehender, grauer Ringabschnitt als Führung – **ohne**
+                // blaue Wiederhol-Stufen und ohne zusätzliche Innenkreise.
                 ring(
                     from: start,
-                    sweep: CGFloat(filled) * stepAngle * sign,
-                    radius: max(lineWidth * 0.2, innerRadius),
+                    sweep: CGFloat(tickCount) * stepAngle * sign,
+                    radius: radius,
                     center: center,
-                    lineWidth: max(8, lineWidth * 0.16)
+                    lineWidth: lineWidth
                 )
             }
 
-            if ticksInRevolution > 0 {
-                ForEach(1...ticksInRevolution, id: \.self) { step in
+            if tickCount > 0 {
+                ForEach(1...tickCount, id: \.self) { step in
                     let angle = CGFloat(InteractionPolicies.circularTickAngle(
                         startAngle: Double(start),
                         step: step,
@@ -574,26 +543,8 @@ struct UndoScrubOverlay: View {
                         center: center,
                         radius: radius,
                         lineWidth: lineWidth,
-                        emphasized: step == stepsInRevolution,
-                        isSpent: step < stepsInRevolution
-                    )
-                }
-            }
-
-            if redoTicks > 0 {
-                ForEach(1...redoTicks, id: \.self) { step in
-                    let angle = CGFloat(InteractionPolicies.circularTickAngle(
-                        startAngle: Double(start),
-                        step: -step,
-                        stepAngle: Double(stepAngle)
-                    ))
-                    tick(
-                        at: angle,
-                        center: center,
-                        radius: radius,
-                        lineWidth: lineWidth,
-                        emphasized: step == -appliedOffset,
-                        tint: .accentColor
+                        emphasized: step == highlighted,
+                        isSpent: step < highlighted
                     )
                 }
             }

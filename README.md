@@ -98,7 +98,7 @@ eintippen, Dateiinhalt einfügen, committen). Danach steht der Workflow im Tab *
   - **1 Finger**: Zeichnet ebenfalls – solange die Einstellung „Apple Pencil“ aus ist (Standard). Ist sie an, bleibt der Finger außen vor.
 - **Werkzeuge**:
   - **Stift / Textmarker / Radierer / Lasso / Text** – mit frei wählbaren Farben aus den Farb-Slots und eigener Dicke je Werkzeug.
-  - **Rückgängig & Vorwärts (Undo/Redo)** über die Werkzeugleiste. Eine Sekunde auf **Rückgängig** halten öffnet einen Scrubber: in der oberen Leiste einen Balken nach unten (auch mit dem Finger), in der Squeeze-Palette einen Kreis. Der Kreis läuft nicht mehr nur einmal herum: Nach einer vollen Umdrehung dreht man einfach weiter und macht weitere Schritte rückgängig – bis zum letzten gespeicherten Schritt (weitere Umdrehungen erscheinen als dünne Innenringe). Die Stufen werden bei **jeder** Bewegung frisch aus der Historie gezählt, damit die Anzeige nie Schritte zeigt, die es nicht (mehr) gibt. Rückschritte sind weiterhin als dünne blaue Stufen in die Gegenrichtung markiert. Die Schritte der letzten drei Notizen bleiben erhalten, auch wenn eine Notiz automatisch geschlossen wurde.
+  - **Rückgängig & Vorwärts (Undo/Redo)** über die Werkzeugleiste. Eine Sekunde auf **Rückgängig** halten öffnet einen Scrubber: in der oberen Leiste einen Balken nach unten (auch mit dem Finger), in der Squeeze-Palette einen Kreis. Die sichtbaren Stufen stehen beim **Halten** fest – während des Ziehens wächst nichts nach. Der Ring hat je Schritt einen festen Winkel (18°): Bei wenigen Schritten ist er ein kürzerer Teilbogen, und er bleibt **durchgehend grau** – ohne zusätzliche Innenkreise und ohne Stufen, die in die Gegenrichtung nachwachsen. Nach einer vollen Umdrehung dreht man einfach weiter, bis der letzte gespeicherte Schritt erreicht ist. Wiederhol-Schritte zeigt nur der Balken als dünne blaue Stufen über dem Knopf (begrenzt durch den Platz bis zum oberen Rand). Die Historie verzeichnet **einen Schritt je Geste**: Das Rückgängigmachen selbst ist nie ein Schritt, und **„Seite leeren“ setzt den Undo-Speicher der Seite zurück** – ein geleerter Zettel lässt sich nicht wieder herstellen. Die Schritte der letzten drei Notizen bleiben erhalten, auch wenn eine Notiz automatisch geschlossen wurde.
   - **Squeeze** und **Doppeltipp** sind unter *Zeichnen & Apple Pencil* frei belegbar (Toolbar, Rückgängig, Radierer/letztes Werkzeug, Nichts). Standard: Squeeze öffnet die Toolbar, Doppeltipp wechselt Radierer und letztes Werkzeug.
 - **Kompakte Squeeze-Werkzeugpalette**: Ein Zusammendrücken des Apple Pencil Pro öffnet nahe der **letzten aktiven Hover-Position** einen kompakten, dicken Bogen. Acht runde **44-pt-Buttons** enthalten Rückgängig, Lasso, Stift, Textmarker, Radierer, Text, die Farbe (Farb-Slots erscheinen beim Hovern außen) und die Stiftdicke (durch Halten und radiales Ziehen). Unter iPadOS 26 mit aktuellem SDK wird natives interaktives Liquid Glass verwendet; ältere Versionen erhalten einen reflektierenden Material-Fallback. Erneuter Squeeze, Weiterzeichnen oder ein Fingertipp schließen die Palette. Ein Rand-Tipp schließt zunächst nur die offene Palette, nicht gleichzeitig die Notiz.
 - **Radierer mit automatischer Rückkehr**: Nach dem Radieren und Loslassen wechselt das Werkzeug automatisch zum zuletzt benutzten Werkzeug zurück (Fallback: Stift). Der Schalter *„Radierer automatisch abwählen“* (Standard: an) sitzt unter *Zeichnen & Apple Pencil*.
@@ -108,6 +108,7 @@ eintippen, Dateiinhalt einfügen, committen). Danach steht der Workflow im Tab *
 - **Tastatur ändert die Notiz nicht**: Das Text-Werkzeug nutzt die Systemtastatur. Der Zettel behält beim Tippen seine Größe und seine Position – nichts rutscht nach oben und nichts wird klein gerechnet. Nur wenn das bearbeitete Textfeld sonst hinter der Tastatur läge, rückt der Zettel gerade so weit hoch, dass das Feld sichtbar bleibt (ohne Zoom).
 - **Gerade Linien**: Stift oder Textmarker am Ende eines Strichs etwa **2 Sekunden still halten** – der Strich rastet als gerade Linie ein, der Apple Pencil Pro bestätigt das mit einer kurzen Vibration. Weiterziehen hebt das Einrasten wieder auf. Die gerade Linie hat **exakt die Dicke des echten Strichs**: Der gemessene Vergleich (die selbst gerechnete Linie war bei Stift/Monoline 50 % zu dünn) wird überall angewandt, wo die App eine Breite selbst zeichnet – gerade Linien und die Vorschau-Punkte in der Werkzeugleiste ebenso wie der Dicke-Regler (`InteractionPolicies.strokeWidthMatchFactor`). Textmarker und Radierer behalten ihre eigene, bereits passende Umrechnung.
 - **Dynamische Stiftdicke**: Unter *Zeichnen & Apple Pencil* schaltbar (Standard an). Aus = Kugelschreiber (Monoline) mit konstanter Dicke.
+- **Stift-Stabilisierung**: Unter *Zeichnen & Apple Pencil* (iPad) glättet ein Regler von **0 % (Standard, aus)** bis **100 %** die fertige Linie: Das Zittern der Hand verschwindet, Buchstabenform und Anfang/Ende jedes Strichs bleiben erhalten (`PenStabilization`). Bereits vorhandene Striche werden nie erneut geglättet; kurze Striche (Punkt, kleines „e“) bekommen nur ein kleines Fenster, damit die Schrift auch bei 100 % lesbar bleibt.
 - **Mustergröße**: Im „…“-Menü der Zeichenfläche regelt ein Schieberegler die Größe von Linien, Kästchen und Punkten (Mitte = Standard, bis halb so klein / doppelt so groß). Der Standardwert für neue Notizen steht in den Einstellungen.
 - **Notiz kopieren & einfügen**: Stunden-Block (oder Karte in „Nur Notizen“) gedrückt halten → *Kopieren* (wenn eine Notiz existiert) bzw. *Einfügen* (ersetzt die Zielnotiz komplett). Dieselben Optionen gibt es im „…“-Menü der geöffneten Notiz.
 - **Dark Mode**: Die Zeichenfläche läuft fest im hellen Erscheinungsbild – schwarze Tinte bleibt beim Öffnen einer Notiz schwarz, auch wenn das Gerät im Dark Mode ist.
@@ -162,7 +163,7 @@ planapp/
 │   │   ├── SubjectCustomization.swift        # Fächer-Ersetzungen & Farbkonfiguration
 │   │   ├── BlockDisplaySettings.swift        # Sichtbare Block-Elemente
 │   │   ├── LessonNote.swift                  # Handschriftliche Notizen & Bilddaten
-│   │   ├── DrawingSettings.swift             # Pencil-Einstellungen (u. a. Nur-Pencil, Radierer-Rückkehr)
+│   │   ├── DrawingSettings.swift             # Pencil-Einstellungen (u. a. Nur-Pencil, Stabilisierung, Radierer-Rückkehr)
 │   │   ├── AppAppearance.swift               # Erscheinungsbild (hell/dunkel/automatisch)
 │   │   └── UntisCredentials.swift            # WebUntis JSON-RPC Zugangsdaten
 │   ├── Services/
@@ -193,7 +194,7 @@ planapp/
 │   │   │   ├── TagSystemSettingsSection.swift # Tag-System: Schalter, Tags (Name + Farbe), Reihenfolge
 │   │   │   ├── DataTransferSection.swift     # Export alles / Import (Base64-Text, Zwischenablage)
 │   │   │   ├── AppearanceSettingsSection.swift # Hell/Dunkel/Automatisch
-│   │   │   ├── DrawingSettingsSection.swift  # Stiftdicken, Pencil-Einstellungen & Radierer
+│   │   │   ├── DrawingSettingsSection.swift  # Stiftdicken, Pencil-Einstellungen (inkl. Stabilisierung) & Radierer
 │   │   │   ├── PencilGesturesSection.swift   # Bedienhinweise (Pencil & Gesten)
 │   │   │   ├── UntisConfigSection.swift      # WebUntis Zugangsdaten & Sync-Test
 │   │   │   ├── SubjectCustomizationSection.swift # Fächer anlegen & Farben wählen
@@ -211,6 +212,7 @@ planapp/
 │       ├── GlobalCoordinateSpace.swift       # Gemeinsamer Koordinatenraum für Hover-Positionen
 │       ├── DeviceLayout.swift                # iPhone/iPad-Erkennung & kompakte Stundenplan-Maße
 │       ├── Haptics.swift                     # Zentrale Haptik-Helfer
+│       ├── PenStabilization.swift            # Stift-Stabilisierung 0–100 % (reine Glättungs-Mathematik)
 │       └── PencilInteractions.swift          # Apple Pencil Pro Squeeze- & Hover-Handler
 ├── README.md
 └── .gitignore

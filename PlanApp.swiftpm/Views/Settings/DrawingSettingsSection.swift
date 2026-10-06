@@ -302,6 +302,34 @@ public struct DrawingSettingsSection: View {
                     }
 
                     Divider()
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "scribble.variable")
+                                .font(.system(size: 14, weight: .regular, design: .default))
+                                .foregroundColor(.teal)
+                            Text("Stift-Stabilisierung")
+                                .font(.system(size: 14, weight: .regular, design: .default))
+                            Spacer(minLength: 8)
+                            Text(String(format: "%.0f %%", draftSettings.penStabilization))
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+
+                        Slider(
+                            value: draftBinding(\.penStabilization),
+                            in: PenStabilization.minimumPercent...PenStabilization.maximumPercent,
+                            step: 5,
+                            onEditingChanged: handleSliderEditingChanged
+                        )
+
+                        Text("0 % (Standard): Jeder Strich bleibt exakt so, wie du ihn schreibst. Höhere Werte glätten die fertige Linie – die Handschrift wird ruhiger und gerader, zittrige Stellen verschwinden. Anfang und Ende jedes Strichs bleiben dabei genau da, wo der Stift aufgesetzt und abgehoben wurde.")
+                            .font(.system(size: 12, weight: .regular, design: .default))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Divider()
                 }
 
                 Toggle(isOn: Binding(

@@ -27,6 +27,11 @@ public struct DrawingSettings: Codable, Equatable {
     /// auf Druck und Geschwindigkeit. Aus: PencilKit-Kugelschreiber
     /// (Monoline), der immer gleich dick schreibt.
     public var dynamicPenWidth: Bool
+    /// Stift-Stabilisierung in Prozent (0…100, Standard **0**): Je höher der
+    /// Wert, desto stärker werden fertige Striche geglättet – die Handschrift
+    /// wird ruhiger, so wie man es aus Notiz-Apps kennt. Bei 0 % bleibt jeder
+    /// Strich exakt so, wie er geschrieben wurde.
+    public var penStabilization: Double
     /// Standard-Skalierung des Hintergrund-Musters neuer Notizen
     /// (1 = Mitte des Reglers in der Zeichenfläche).
     public var defaultBackgroundScale: Double
@@ -64,6 +69,7 @@ public struct DrawingSettings: Codable, Equatable {
         applePencilOnly: Bool = false,
         autoDeselectEraser: Bool = true,
         dynamicPenWidth: Bool = true,
+        penStabilization: Double = PenStabilization.defaultPercent,
         defaultBackgroundScale: Double = 1,
         squeezeAction: PencilGestureAction = .toolbar,
         doubleTapAction: PencilGestureAction = .toggleEraser
@@ -81,6 +87,7 @@ public struct DrawingSettings: Codable, Equatable {
         self.applePencilOnly = applePencilOnly
         self.autoDeselectEraser = autoDeselectEraser
         self.dynamicPenWidth = dynamicPenWidth
+        self.penStabilization = PenStabilization.clampedPercent(penStabilization)
         self.defaultBackgroundScale = NoteBackgroundMetrics.clampedScale(defaultBackgroundScale)
         self.squeezeAction = squeezeAction
         self.doubleTapAction = doubleTapAction
@@ -91,7 +98,7 @@ public struct DrawingSettings: Codable, Equatable {
         case defaultBackgroundStyle
         case penColorSlots, markerColorSlots
         case applePencilOnly, autoDeselectEraser
-        case dynamicPenWidth, defaultBackgroundScale
+        case dynamicPenWidth, penStabilization, defaultBackgroundScale
         case squeezeAction, doubleTapAction
         case defaultPenColorHex, defaultMarkerColorHex, defaultTool
     }
@@ -135,6 +142,11 @@ public struct DrawingSettings: Codable, Equatable {
         self.applePencilOnly = try container.decodeIfPresent(Bool.self, forKey: .applePencilOnly) ?? false
         self.autoDeselectEraser = try container.decodeIfPresent(Bool.self, forKey: .autoDeselectEraser) ?? true
         self.dynamicPenWidth = try container.decodeIfPresent(Bool.self, forKey: .dynamicPenWidth) ?? true
+        // Erst mit dieser Einstellung gespeicherte Stände kennen den Wert noch
+        // nicht – alte Speicherstände starten deshalb mit 0 % (unverändert).
+        let decodedStabilization = try container.decodeIfPresent(Double.self, forKey: .penStabilization)
+            ?? PenStabilization.defaultPercent
+        self.penStabilization = PenStabilization.clampedPercent(decodedStabilization)
         let decodedScale = try container.decodeIfPresent(Double.self, forKey: .defaultBackgroundScale) ?? 1
         self.defaultBackgroundScale = NoteBackgroundMetrics.clampedScale(decodedScale)
         self.squeezeAction = try container.decodeIfPresent(PencilGestureAction.self, forKey: .squeezeAction) ?? .toolbar
@@ -156,6 +168,7 @@ public struct DrawingSettings: Codable, Equatable {
         try container.encode(applePencilOnly, forKey: .applePencilOnly)
         try container.encode(autoDeselectEraser, forKey: .autoDeselectEraser)
         try container.encode(dynamicPenWidth, forKey: .dynamicPenWidth)
+        try container.encode(penStabilization, forKey: .penStabilization)
         try container.encode(defaultBackgroundScale, forKey: .defaultBackgroundScale)
         try container.encode(squeezeAction, forKey: .squeezeAction)
         try container.encode(doubleTapAction, forKey: .doubleTapAction)
