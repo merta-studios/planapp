@@ -116,15 +116,32 @@ public struct AddTagPill: View {
 public struct NoteTagPickerView: View {
     public let tags: [NoteTag]
     public let selectedTagID: UUID?
+    /// Begrenzt die ganze Auswahl. Titel und „Tag entfernen“ bleiben sichtbar;
+    /// nur die Liste scrollt.
+    public var maxPanelHeight: CGFloat? = nil
     public let onSelect: (UUID?) -> Void
 
-    public init(tags: [NoteTag], selectedTagID: UUID?, onSelect: @escaping (UUID?) -> Void) {
+    public init(
+        tags: [NoteTag],
+        selectedTagID: UUID?,
+        maxPanelHeight: CGFloat? = nil,
+        onSelect: @escaping (UUID?) -> Void
+    ) {
         self.tags = tags
         self.selectedTagID = selectedTagID
+        self.maxPanelHeight = maxPanelHeight
         self.onSelect = onSelect
     }
 
     public var body: some View {
+        pickerStack
+            .frame(maxWidth: .infinity)
+            .frame(maxHeight: maxPanelHeight ?? 480)
+            .frame(height: maxPanelHeight)
+            .clipped()
+    }
+
+    private var pickerStack: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Tag wählen")
                 .font(.system(size: 15, weight: .semibold))
@@ -132,6 +149,8 @@ public struct NoteTagPickerView: View {
                 .padding(.horizontal, 18)
                 .padding(.top, 16)
                 .padding(.bottom, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
 
             if tags.isEmpty {
                 Text("Noch keine Tags angelegt.\nTags findest du in den Einstellungen unter „Tag-System“.")
@@ -139,7 +158,7 @@ public struct NoteTagPickerView: View {
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 18)
                     .padding(.bottom, 16)
-                    .frame(width: 320, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 ScrollView(.vertical, showsIndicators: true) {
                     VStack(alignment: .leading, spacing: 6) {
@@ -171,8 +190,9 @@ public struct NoteTagPickerView: View {
                         }
                     }
                     .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
                 }
-                .frame(width: 320, height: min(CGFloat(tags.count) * 62 + 12, 420))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
             if selectedTagID != nil {
@@ -190,10 +210,10 @@ public struct NoteTagPickerView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(.red)
+                .layoutPriority(1)
             }
         }
-        .padding(.bottom, 8)
-        .presentationCompactAdaptation(.popover)
+        .padding(.bottom, selectedTagID == nil ? 8 : 0)
     }
 }
 

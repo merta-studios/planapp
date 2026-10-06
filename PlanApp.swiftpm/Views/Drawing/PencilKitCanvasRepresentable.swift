@@ -202,7 +202,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         if uiView.overrideUserInterfaceStyle != .light {
             uiView.overrideUserInterfaceStyle = .light
         }
-        if uiView.drawing != drawing {
+        if !context.coordinator.preservesCanvasDrawing, uiView.drawing != drawing {
             uiView.drawing = drawing
         }
         applyTool(to: uiView)
@@ -299,11 +299,24 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
         // Gerade-Linie-Erkennung („Stillhalten am Strichende“)
         private var holdWorkItem: DispatchWorkItem?
-        private var isStrokeTouchActive = false
-        private var lastStrokeTouchLocation: CGPoint = .zero
+        private var activeStrokeSources: Set<String> = []
+        private var holdAnchor: CGPoint = .zero
         private var straightenRequested = false
+        private var straightenUntil: Date?
         private var strokeCountAtToolBegin = 0
         private var snapFeedbackGenerator: UIImpactFeedbackGenerator?
+        private var strokeToolActive = false
+        private var lastSignificantMovement = Date()
+        /// Strichende in Zeichenkoordinaten zum letzten beobachteten Bewegen.
+        private var stillStrokeEnd: CGPoint?
+        private var lastObservedPointCount = 0
+        private var stillnessSampler: Timer?
+        /// Solange gesetzt, darf SwiftUI die gerade eingerastete Zeichnung
+        /// nicht mit dem noch gekrümmten Binding überschreiben.
+        var preservesCanvasDrawing: Bool {
+            if let straightenUntil, straightenUntil > Date() { return true }
+            return false
+        }
 
         init(_ parent: PencilKitCanvasRepresentable) {
             self.parent = parent
@@ -311,6 +324,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
         deinit {
             holdWorkItem?.cancel()
+            stillnessSampler?.invalidate()
         }
 
         // MARK: - Apple Pencil erkennen & verfolgen
@@ -327,20 +341,20 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             default:
                 break
             }
-            trackStrokeTouch(recognizer)
+            trackStrokeTouch(recognizer, source: "pencil")
         }
 
         /// Finger-Strich (nur wenn „Nur Apple Pencil“ aus ist): dieselbe
         /// Stillhalte-Erkennung wie beim Pencil.
         @objc func handleFingerStroke(_ recognizer: UIGestureRecognizer) {
             guard !parent.pencilOnlyDrawing else { return }
-            trackStrokeTouch(recognizer)
+            trackStrokeTouch(recognizer, source: "finger")
         }
 
         /// PencilKits eigener Zeichen-Recognizer – die zuverlässigste Quelle
         /// für Beginn, Bewegung und Ende eines Strichs.
         @objc func handleDrawingGesture(_ recognizer: UIGestureRecognizer) {
-            trackStrokeTouch(recognizer)
+            trackStrokeTouch(recognizer, source: "drawing")
         }
 
         // MARK: - Gerade Linie durch Stillhalten
@@ -355,57 +369,132 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         }
 
         /// Verfolgt die Bewegung einer Zeichen-Berührung. Bleibt der Stift am
-        /// Ende eines Strichs ≈2 s still, wird der Strich beim Loslassen in
-        /// eine gerade Linie verwandelt (Pencil Pro vibriert zur Bestätigung).
-        private func trackStrokeTouch(_ recognizer: UIGestureRecognizer) {
+        /// Ende eines Strichs ≈2 s still, wird der Strich in eine gerade Linie
+        /// verwandelt (Pencil Pro vibriert zur Bestätigung).
+        ///
+        /// Mehrere Recognizer melden denselben Strich. Ein `.failed` eines
+        /// Nebenbeobachters darf den Halt nicht abbrechen, solange PencilKit
+        /// den Strich noch führt.
+        private func trackStrokeTouch(_ recognizer: UIGestureRecognizer, source: String) {
             guard let canvasView else { return }
             let location = recognizer.location(in: canvasView)
 
             switch recognizer.state {
-            case .began:
+            case .began, .changed:
                 guard isInkingToolActive else { return }
-                isStrokeTouchActive = true
-                straightenRequested = false
-                lastStrokeTouchLocation = location
-                scheduleHoldCheck()
-            case .changed:
-                guard isStrokeTouchActive else { return }
-                let distance = hypot(
-                    location.x - lastStrokeTouchLocation.x,
-                    location.y - lastStrokeTouchLocation.y
-                )
-                // Kleines Zittern zählt nicht als Bewegung.
-                if distance > 3 {
-                    lastStrokeTouchLocation = location
-                    if straightenRequested {
-                        // Nach dem Einrasten weiterziehen hebt es wieder auf.
-                        straightenRequested = false
-                    }
+                let wasActive = !activeStrokeSources.isEmpty
+                activeStrokeSources.insert(source)
+                if !wasActive {
+                    holdAnchor = location
+                    lastSignificantMovement = Date()
+                    straightenRequested = false
+                    straightenUntil = nil
+                    scheduleHoldCheck()
+                } else if hypot(location.x - holdAnchor.x, location.y - holdAnchor.y) > 12 {
+                    // Kleines Stiftzittern setzt den Halt nicht zurück.
+                    holdAnchor = location
+                    stillStrokeEnd = currentStrokeEnd()
+                    lastSignificantMovement = Date()
+                    straightenRequested = false
+                    straightenUntil = nil
                     scheduleHoldCheck()
                 }
             case .ended, .cancelled, .failed:
-                isStrokeTouchActive = false
+                activeStrokeSources.remove(source)
+                guard activeStrokeSources.isEmpty else { return }
                 holdWorkItem?.cancel()
                 holdWorkItem = nil
+                if straightenRequested {
+                    applyStraightLineSoon()
+                }
             default:
                 break
             }
         }
 
+        /// PencilKit meldet während eines stillen Haltens oft kein `.changed`.
+        /// Die Pose des Zeichen-Recognizers wird deshalb mitgelesen.
+        private func startStillnessSampler() {
+            stillnessSampler?.invalidate()
+            let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+                self?.sampleStrokeStillness()
+            }
+            stillnessSampler = timer
+            RunLoop.main.add(timer, forMode: .common)
+        }
+
+        private func sampleStrokeStillness() {
+            guard strokeToolActive, isInkingToolActive, let canvasView else { return }
+            let recognizer = canvasView.drawingGestureRecognizer
+            guard recognizer.state == .began || recognizer.state == .changed else { return }
+            let location = recognizer.location(in: canvasView)
+            guard location.x.isFinite, location.y.isFinite else { return }
+            activeStrokeSources.insert("sample")
+            let moved = hypot(location.x - holdAnchor.x, location.y - holdAnchor.y) > 12
+            let grew = strokeGrew()
+            if moved || grew {
+                holdAnchor = location
+                stillStrokeEnd = currentStrokeEnd()
+                lastSignificantMovement = Date()
+                straightenRequested = false
+                straightenUntil = nil
+                scheduleHoldCheck()
+            } else if holdWorkItem == nil {
+                scheduleHoldCheck()
+            }
+        }
+
+        private func strokeGrew() -> Bool {
+            guard let canvasView else { return false }
+            let drawing = canvasView.drawing
+            guard drawing.strokes.count > strokeCountAtToolBegin,
+                  let stroke = drawing.strokes.last else { return false }
+            let count = stroke.path.count
+            if count > lastObservedPointCount + 1 {
+                lastObservedPointCount = count
+                return true
+            }
+            lastObservedPointCount = count
+            return false
+        }
+
+        private func currentStrokeEnd() -> CGPoint? {
+            guard let canvasView else { return nil }
+            let drawing = canvasView.drawing
+            guard drawing.strokes.count > strokeCountAtToolBegin,
+                  let stroke = drawing.strokes.last else { return nil }
+            let path = stroke.path
+            guard path.count >= 1 else { return nil }
+            return path[path.index(before: path.endIndex)].location
+        }
+
         private func scheduleHoldCheck() {
             holdWorkItem?.cancel()
             let item = DispatchWorkItem { [weak self] in
-                guard let self, self.isStrokeTouchActive, self.isInkingToolActive else { return }
+                guard let self, !self.activeStrokeSources.isEmpty, self.isInkingToolActive else { return }
                 self.straightenRequested = true
+                // PencilKit übernimmt den Strich oft erst beim Loslassen.
+                // Das Fenster bleibt kurz offen, damit ein späteres Commit
+                // die Gerade nicht wieder mit der Kurve überschreibt.
+                self.straightenUntil = Date().addingTimeInterval(0.45)
                 self.playSnapFeedback()
-                // Falls PencilKit den Strich schon übernommen hat, sofort einrasten.
-                self.straightenLastStrokeIfRequested()
+                self.applyStraightLineSoon()
             }
             holdWorkItem = item
             DispatchQueue.main.asyncAfter(
                 deadline: .now() + PencilKitCanvasRepresentable.straightLineHoldDuration,
                 execute: item
             )
+        }
+
+        private func applyStraightLineSoon() {
+            straightenLastStrokeIfRequested()
+            DispatchQueue.main.async { [weak self] in
+                self?.straightenLastStrokeIfRequested()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.straightenLastStrokeIfRequested()
+            }
         }
 
         /// Haptik: Mit `view:` erzeugt der Apple Pencil Pro die Vibration selbst
@@ -427,12 +516,16 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// Ersetzt den zuletzt gezeichneten Strich durch eine gerade Linie von
         /// seinem ersten zu seinem letzten Punkt – gleiche Tinte, gleiche Dicke.
         private func straightenLastStrokeIfRequested() {
-            guard straightenRequested, let canvasView else { return }
+            let stillInWindow = straightenUntil.map { $0 > Date() } ?? false
+            guard straightenRequested || stillInWindow, let canvasView else { return }
 
             let drawing = canvasView.drawing
             guard drawing.strokes.count > strokeCountAtToolBegin,
                   let stroke = drawing.strokes.last else { return }
-            straightenRequested = false
+            if isApproximatelyStraight(stroke) {
+                straightenRequested = false
+                return
+            }
 
             let path = stroke.path
             guard path.count >= 2 else { return }
@@ -492,6 +585,30 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             parent.onStraightLineSnap()
         }
 
+        private func isApproximatelyStraight(_ stroke: PKStroke?) -> Bool {
+            guard let stroke else { return false }
+            let path = stroke.path
+            guard path.count >= 2 else { return false }
+            let start = path[path.startIndex].location
+            let end = path[path.index(before: path.endIndex)].location
+            let length = hypot(end.x - start.x, end.y - start.y)
+            guard length >= 12 else { return false }
+            let samples = min(path.count, 8)
+            for index in 0..<samples {
+                let point = path[path.index(path.startIndex, offsetBy: index * (path.count - 1) / max(1, samples - 1))].location
+                let t = ((point.x - start.x) * (end.x - start.x) + (point.y - start.y) * (end.y - start.y)) / (length * length)
+                let clamped = min(1, max(0, t))
+                let projected = CGPoint(
+                    x: start.x + (end.x - start.x) * clamped,
+                    y: start.y + (end.y - start.y) * clamped
+                )
+                if hypot(point.x - projected.x, point.y - projected.y) > 1.6 {
+                    return false
+                }
+            }
+            return true
+        }
+
         /// Hover des Apple Pencil: Position und Blickrichtung merken – ganz
         /// ohne SwiftUI-State, damit die vielen Hover-Ereignisse keine
         /// Neuzeichnung auslösen.
@@ -539,6 +656,11 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
         public func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             parent.onCanvasActivity()
+            if straightenRequested || (straightenUntil.map { $0 > Date() } ?? false) {
+                DispatchQueue.main.async { [weak self] in
+                    self?.straightenLastStrokeIfRequested()
+                }
+            }
             DispatchQueue.main.async {
                 self.parent.drawing = canvasView.drawing
                 self.parent.onStrokeMutation()
@@ -552,6 +674,16 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         public func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
             parent.onCanvasActivity()
             strokeCountAtToolBegin = canvasView.drawing.strokes.count
+            strokeToolActive = true
+            lastSignificantMovement = Date()
+            lastObservedPointCount = 0
+            stillStrokeEnd = nil
+            if isInkingToolActive {
+                activeStrokeSources.insert("tool")
+                holdAnchor = canvasView.drawingGestureRecognizer.location(in: canvasView)
+                scheduleHoldCheck()
+                startStillnessSampler()
+            }
             DispatchQueue.main.async { [weak self] in
                 self?.parent.onCanvasGestureBegan()
             }
@@ -561,10 +693,34 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// abwählen, sobald der Stift losgelassen wird).
         public func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
             parent.onCanvasActivity()
+            let held = Date().timeIntervalSince(lastSignificantMovement)
+            strokeToolActive = false
+            activeStrokeSources.remove("tool")
+            activeStrokeSources.remove("sample")
+            stillnessSampler?.invalidate()
+            stillnessSampler = nil
+            holdWorkItem?.cancel()
+            holdWorkItem = nil
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                // Erst jetzt ist der Strich sicher in `drawing` übernommen.
+                // Der Strich liegt erst beim Loslassen sicher in `drawing`.
+                // War der Stift davor lange genug still, wird jetzt geradegezogen.
+                let endIsStill: Bool = {
+                    guard let end = self.currentStrokeEnd(), let still = self.stillStrokeEnd else { return true }
+                    return hypot(end.x - still.x, end.y - still.y) <= 28
+                }()
+                if held >= PencilKitCanvasRepresentable.straightLineHoldDuration - 0.25,
+                   endIsStill,
+                   self.isInkingToolActive {
+                    let alreadySnapped = self.straightenRequested
+                    self.straightenRequested = true
+                    self.straightenUntil = Date().addingTimeInterval(0.6)
+                    if !alreadySnapped {
+                        self.playSnapFeedback()
+                    }
+                }
                 self.straightenLastStrokeIfRequested()
+                self.applyStraightLineSoon()
                 self.parent.onCanvasGestureEnded()
             }
         }
@@ -878,6 +1034,14 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 /// wird deshalb – wie in `IntentionalFingerTapRecognizer` – nicht-optional
 /// deklariert; UIKit liefert bei Gesten immer ein Ereignis mit.
 final class StrokeHoldGestureRecognizer: UIGestureRecognizer {
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
+        false
+    }
+
+    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
+        false
+    }
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesBegan(touches, with: event)
         state = .began

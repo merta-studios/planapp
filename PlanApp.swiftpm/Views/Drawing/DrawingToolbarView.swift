@@ -41,6 +41,12 @@ public struct DrawingToolbarView: View {
     public var onUndoScrubBegan: (CGPoint, CGPoint) -> Void = { _, _ in }
     public var onUndoScrubChanged: (CGSize, CGPoint) -> Void = { _, _ in }
     public var onUndoScrubEnded: () -> Void = {}
+    /// Während des linearen Scrubs verschwindet das feststehende Symbol,
+    /// damit der Knopf sichtbar zum Strich rutscht statt zu teleportieren.
+    public var hidesUndoGlyph: Bool = false
+    /// Verfügbare Breite über der Zeichenfläche. Ist die Leiste breiter,
+    /// wird sie dünner und lässt sich seitlich scrollen.
+    public var availableWidth: CGFloat = 2_000
     public let onClear: () -> Void
     /// Notiz kopieren / einfügen (interne Zwischenablage der App).
     public let canCopyNote: Bool
@@ -55,8 +61,19 @@ public struct DrawingToolbarView: View {
     @State private var editingPenSlotIndex: Int? = nil
     @State private var editingMarkerSlotIndex: Int? = nil
 
-    private let buttonSize: CGFloat = 40
-    private let buttonCornerRadius: CGFloat = 10
+    private var isCompactToolbar: Bool {
+        InteractionPolicies.usesCompactScrollingToolbar(
+            availableWidth: availableWidth,
+            contentWidth: InteractionPolicies.estimatedToolbarContentWidth(
+                penSlots: penColorSlots.count,
+                markerSlots: markerColorSlots.count,
+                isPhone: isPhoneLayout
+            )
+        )
+    }
+
+    private var buttonSize: CGFloat { isCompactToolbar ? 32 : 40 }
+    private var buttonCornerRadius: CGFloat { isCompactToolbar ? 8 : 10 }
 
     public init(
         toolSelection: Binding<DrawingToolSelection>,
@@ -84,6 +101,8 @@ public struct DrawingToolbarView: View {
         onUndoScrubBegan: @escaping (CGPoint, CGPoint) -> Void = { _, _ in },
         onUndoScrubChanged: @escaping (CGSize, CGPoint) -> Void = { _, _ in },
         onUndoScrubEnded: @escaping () -> Void = {},
+        hidesUndoGlyph: Bool = false,
+        availableWidth: CGFloat = 2_000,
         onClear: @escaping () -> Void,
         canCopyNote: Bool = false,
         canPasteNote: Bool = false,
@@ -115,6 +134,8 @@ public struct DrawingToolbarView: View {
         self.onUndoScrubBegan = onUndoScrubBegan
         self.onUndoScrubChanged = onUndoScrubChanged
         self.onUndoScrubEnded = onUndoScrubEnded
+        self.hidesUndoGlyph = hidesUndoGlyph
+        self.availableWidth = availableWidth
         self.onClear = onClear
         self.canCopyNote = canCopyNote
         self.canPasteNote = canPasteNote
@@ -123,44 +144,24 @@ public struct DrawingToolbarView: View {
     }
 
     public var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: isPhoneLayout ? 8 : 10) {
-                if isPhoneLayout {
-                    lassoButton
-                    textToolButton
-                    eraserButton
-                    toolbarDivider
-                    textColorControls
-                    toolbarDivider
-                    historyControls
-                    toolbarDivider
-                    moreOptionsButton
-                } else {
-                    penControls
-                    toolbarDivider
-                    markerControls
-                    toolbarDivider
-                    textToolButton
-                    eraserButton
-                    lassoButton
-                    toolbarDivider
-                    thicknessButton
-                    toolbarDivider
-                    historyControls
-                    toolbarDivider
-                    moreOptionsButton
+        let compact = isCompactToolbar
+        let corner = compact ? 14.0 : 18.0
+        return Group {
+            if compact {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    toolbarControls
                 }
+                .frame(maxWidth: max(1, availableWidth))
+            } else {
+                toolbarControls
             }
-            .padding(.horizontal, isPhoneLayout ? 10 : 12)
-            .padding(.vertical, 8)
-            .fixedSize(horizontal: true, vertical: false)
         }
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: corner, style: .continuous)
                 .fill(.ultraThinMaterial)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: corner, style: .continuous)
                 .strokeBorder(
                     LinearGradient(
                         colors: [Color.white.opacity(0.3), Color.white.opacity(0.1)],
@@ -170,14 +171,46 @@ public struct DrawingToolbarView: View {
                     lineWidth: 1
                 )
         )
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
         .shadow(color: Color.black.opacity(0.12), radius: 6, x: 0, y: 2)
-        // iPad: Leiste so breit wie ihr Inhalt. iPhone: volle Breite nutzen,
-        // damit die Leiste bei Bedarf horizontal scrollt statt abgeschnitten
-        // zu werden.
-        .fixedSize(horizontal: !isPhoneLayout, vertical: false)
+        // Passt die Leiste: volle Breite nur als Inhalt. Wird der Bildschirm
+        // zu schmal, ist die Leiste oben bereits dünner und scrollt seitlich.
+        .fixedSize(horizontal: !compact, vertical: false)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Zeichenwerkzeuge")
+    }
+
+    private var toolbarControls: some View {
+        HStack(spacing: isCompactToolbar ? 6 : (isPhoneLayout ? 8 : 10)) {
+            if isPhoneLayout {
+                lassoButton
+                textToolButton
+                eraserButton
+                toolbarDivider
+                textColorControls
+                toolbarDivider
+                historyControls
+                toolbarDivider
+                moreOptionsButton
+            } else {
+                penControls
+                toolbarDivider
+                markerControls
+                toolbarDivider
+                textToolButton
+                eraserButton
+                lassoButton
+                toolbarDivider
+                thicknessButton
+                toolbarDivider
+                historyControls
+                toolbarDivider
+                moreOptionsButton
+            }
+        }
+        .padding(.horizontal, isCompactToolbar ? 8 : (isPhoneLayout ? 10 : 12))
+        .padding(.vertical, isCompactToolbar ? 4 : 8)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     // MARK: - Stift-Farben
@@ -684,10 +717,11 @@ public struct DrawingToolbarView: View {
     private var undoScrubButton: some View {
         ZStack {
             Image(systemName: "arrow.uturn.backward")
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(size: isCompactToolbar ? 13 : 15, weight: .medium))
                 .frame(width: buttonSize, height: buttonSize)
                 .background(Color(UIColor.tertiarySystemBackground).opacity(0.72))
                 .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
+                .opacity(hidesUndoGlyph ? 0 : 1)
 
             UndoScrubHandle(
                 allowsFinger: true,
@@ -829,7 +863,7 @@ public struct DrawingToolbarView: View {
     }
 
     private var toolbarDivider: some View {
-        Divider().frame(height: 26)
+        Divider().frame(height: isCompactToolbar ? 18 : 26)
     }
 
     private func squareButton(

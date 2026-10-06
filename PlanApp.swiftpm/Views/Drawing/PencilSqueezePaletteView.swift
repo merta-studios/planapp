@@ -46,6 +46,8 @@ struct PencilSqueezePaletteView: View {
 
     @State private var isAdjustingWidth = false
     @State private var widthDragStartValue: CGFloat = 0
+    /// Sichtbarer Mittelpunkt des Bogens nach dem Einpassen (Global-Koordinaten).
+    @State private var visualCircleCenter: CGPoint = .zero
     /// Startpunkt der laufenden Dicken-Geste (Fensterkoordinaten).
     @State private var widthDragStartLocation: CGPoint = .zero
     /// Ob sich die Dicke in dieser Geste tatsächlich geändert hat (zählt als
@@ -173,21 +175,43 @@ struct PencilSqueezePaletteView: View {
                     .zIndex(1)
             }
 
-            if isAdjustingWidth && showsThicknessGuide {
+            if isAdjustingWidth {
                 thicknessGuide
                     .allowsHitTesting(false)
                     .transition(.opacity)
-                    .zIndex(1.5)
+                    .zIndex(4)
             }
+
+            Color.clear
+                .frame(width: 2, height: 2)
+                .position(clampedAnchor)
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: SqueezeCircleCenterPreference.self,
+                            value: CGPoint(
+                                x: proxy.frame(in: .global).midX,
+                                y: proxy.frame(in: .global).midY
+                            )
+                        )
+                    }
+                )
+                .allowsHitTesting(false)
+                .zIndex(0)
 
             ForEach(Array(paletteElements.enumerated()), id: \.offset) { index, element in
                 let angle = angleForElement(at: index)
-                paletteElementView(element)
-                    .opacity(hidesNonUndoElements && !element.isUndo ? 0 : 1)
-                    .allowsHitTesting(!hidesNonUndoElements || element.isUndo)
-                    .position(point(radius: arcRadius, angle: angle))
-                    .zIndex(2)
+                if hidesNonUndoElements && !element.isUndo {
+                    EmptyView()
+                } else {
+                    paletteElementView(element)
+                        .position(point(radius: arcRadius, angle: angle))
+                        .zIndex(element.isUndo ? 3 : 2)
+                }
             }
+        }
+        .onPreferenceChange(SqueezeCircleCenterPreference.self) { center in
+            if center != .zero { visualCircleCenter = center }
         }
         .frame(width: containerSize.width, height: containerSize.height)
     }
@@ -251,6 +275,7 @@ struct PencilSqueezePaletteView: View {
             UndoScrubHandle(
                 allowsFinger: false,
                 style: .circular,
+                circleCenterInGlobal: visualCircleCenter,
                 onTap: {
                     Haptics.tap()
                     onUndo()
@@ -450,7 +475,13 @@ struct PencilSqueezePaletteView: View {
         .animation(.spring(response: 0.22, dampingFraction: 0.8), value: isAdjustingWidth)
         .hoverEffect(.lift)
         .modifier(paletteElementHoverTracking("thickness"))
-        .highPriorityGesture(thicknessDragGesture)
+        .overlay {
+            ThicknessTouchCatcher(
+                onBegan: { beginThickness(at: $0) },
+                onMoved: { updateThickness(at: $0) },
+                onEnded: { finishThicknessGesture() }
+            )
+        }
         .accessibilityLabel("Stiftdicke \(formattedWidth) Punkt")
         .accessibilityHint("Gedrückt halten und vom Kreis weg ziehen für dicker, zum Kreis hin für dünner")
     }
@@ -472,11 +503,7 @@ struct PencilSqueezePaletteView: View {
         return CGVector(dx: cos(angle), dy: sin(angle))
     }
 
-    private var showsThicknessGuide: Bool {
-        thicknessGestureSuccessCount < SqueezeThicknessHints.guideUntilSuccessCount
-    }
-
-    /// Hilfslinien für neue Nutzer: Beim Halten erscheint durch den Button
+    /// Hilfslinien: Beim Halten erscheint durch den Button
     /// eine Linie in beide radiale Richtungen – je weiter vom Button entfernt,
     /// desto transparenter. Außen „+“ (dicker), innen „−“ (dünner).
     private var thicknessGuide: some View {
@@ -598,32 +625,26 @@ struct PencilSqueezePaletteView: View {
     /// Achse Anker → Dicken-Button projiziert: vom Kreis weg = dicker, zum
     /// Kreis hin = dünner. Dadurch zählt jede Wischrichtung mit ihrem Anteil
     /// entlang dieser Achse – auch leicht schräge Bewegungen.
-    private var thicknessDragGesture: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .global)
-            .onChanged { value in
-                updateThickness(using: value)
-            }
-            .onEnded { _ in
-                finishThicknessGesture()
-            }
+    private func beginThickness(at location: CGPoint) {
+        widthDragStartLocation = location
+        widthDragStartValue = widthBinding.wrappedValue
+        didChangeWidthInGesture = false
+        withAnimation(.easeOut(duration: 0.12)) {
+            isAdjustingWidth = true
+        }
+        Haptics.select()
     }
 
-    private func updateThickness(using drag: DragGesture.Value) {
+    private func updateThickness(at location: CGPoint) {
         if !isAdjustingWidth {
-            withAnimation(.easeOut(duration: 0.12)) {
-                isAdjustingWidth = true
-            }
-            widthDragStartLocation = drag.startLocation
-            widthDragStartValue = widthBinding.wrappedValue
-            didChangeWidthInGesture = false
-            Haptics.select()
+            beginThickness(at: location)
         }
 
-        // Globale Koordinaten sind von der Skalierung der Palette unabhängig;
+        // Fensterkoordinaten sind von der Skalierung der Palette unabhängig;
         // der Richtungsvektor der Achse ist skalierungsneutral.
         let axis = thicknessAxis
-        let deltaX = drag.location.x - widthDragStartLocation.x
-        let deltaY = drag.location.y - widthDragStartLocation.y
+        let deltaX = location.x - widthDragStartLocation.x
+        let deltaY = location.y - widthDragStartLocation.y
         let radialChange = (deltaX * axis.dx + deltaY * axis.dy) / max(paletteScale, 0.01)
 
         let range = widthRange
@@ -866,6 +887,139 @@ struct SqueezeArcShape: Shape {
 /// Merkt sich, wie oft die Dicken-Geste erfolgreich benutzt wurde. Die
 /// Hilfslinien erscheinen nur für neue Nutzer und verschwinden nach einigen
 /// erfolgreichen Anpassungen von selbst.
+struct SqueezeCircleCenterPreference: PreferenceKey {
+    static var defaultValue: CGPoint = .zero
+    static func reduce(value: inout CGPoint, nextValue: () -> CGPoint) {
+        let next = nextValue()
+        if next != .zero { value = next }
+    }
+}
+
+/// Fängt Stift und Finger auf dem Dicken-Knopf ab. SwiftUI-DragGesten haben
+/// den Halt mit dem Pencil oft verschluckt, sodass die Hilfslinie ausblieb.
+struct ThicknessTouchCatcher: UIViewRepresentable {
+    var onBegan: (CGPoint) -> Void
+    var onMoved: (CGPoint) -> Void
+    var onEnded: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIView(context: Context) -> ThicknessTouchView {
+        let view = ThicknessTouchView()
+        view.backgroundColor = .clear
+        view.coordinator = context.coordinator
+        return view
+    }
+
+    func updateUIView(_ uiView: ThicknessTouchView, context: Context) {
+        context.coordinator.parent = self
+        uiView.coordinator = context.coordinator
+    }
+
+    final class Coordinator {
+        var parent: ThicknessTouchCatcher
+        init(_ parent: ThicknessTouchCatcher) { self.parent = parent }
+    }
+}
+
+final class ThicknessTouchView: UIView, UIGestureRecognizerDelegate {
+    var coordinator: ThicknessTouchCatcher.Coordinator?
+    private var tracking = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = true
+        let recognizer = ThicknessPressRecognizer(target: self, action: #selector(handlePress(_:)))
+        recognizer.cancelsTouchesInView = false
+        recognizer.delaysTouchesBegan = false
+        recognizer.delaysTouchesEnded = false
+        recognizer.allowedTouchTypes = [
+            NSNumber(value: UITouch.TouchType.pencil.rawValue),
+            NSNumber(value: UITouch.TouchType.direct.rawValue)
+        ]
+        recognizer.delegate = self
+        addGestureRecognizer(recognizer)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.contains(point)
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        false
+    }
+
+    @objc private func handlePress(_ recognizer: UIGestureRecognizer) {
+        let location = recognizer.location(in: nil)
+        switch recognizer.state {
+        case .began:
+            tracking = true
+            coordinator?.parent.onBegan(location)
+        case .changed:
+            if !tracking {
+                tracking = true
+                coordinator?.parent.onBegan(location)
+            }
+            coordinator?.parent.onMoved(location)
+        case .ended, .cancelled, .failed:
+            let wasTracking = tracking
+            tracking = false
+            if wasTracking {
+                coordinator?.parent.onEnded()
+            }
+        default:
+            break
+        }
+    }
+}
+
+/// Beginnt beim ersten Kontakt, nicht erst nach einer Mindestbewegung.
+/// SwiftUI-Drags haben den Pencil-Halt auf dem Dicken-Knopf sonst verschluckt.
+final class ThicknessPressRecognizer: UIGestureRecognizer {
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
+        false
+    }
+
+    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
+        true
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesBegan(touches, with: event)
+        guard let touch = touches.first, (touch.type == .pencil || touch.type == .direct) else {
+            state = .failed
+            return
+        }
+        state = .began
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesMoved(touches, with: event)
+        if state == .began || state == .changed {
+            state = .changed
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesEnded(touches, with: event)
+        state = .ended
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesCancelled(touches, with: event)
+        state = .cancelled
+    }
+}
+
 enum SqueezeThicknessHints {
     static let guideUntilSuccessCount = 6
     private static let key = "planapp_squeeze_thickness_success_count"

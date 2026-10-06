@@ -218,4 +218,86 @@ expect(NoteUndoSessionPolicy.linearTickCount(undoCount: 2, availableHeight: 400)
 expect(NoteUndoSessionPolicy.circularTickCount(undoCount: 80) == NoteUndoSessionPolicy.circularMaxTicks, "Maximal ein Kreis")
 expect(NoteUndoSessionPolicy.circularTickCount(undoCount: 4) == 4, "Weniger Schritte als ein Kreis")
 
+// MARK: - Undo-Kreis, schmale Leiste, Tag-Popover, Jetzt-Sprung, Filter
+
+let ringStart = 0.8
+expect(
+    InteractionPolicies.circularRingStartsAtButton(buttonAngle: ringStart, ringStartAngle: ringStart),
+    "Runder Undo-Balken beginnt am Rückgängig-Knopf"
+)
+expect(
+    !InteractionPolicies.circularRingStartsAtButton(buttonAngle: ringStart, ringStartAngle: ringStart - .pi / 2),
+    "Ein Vierteldreh daneben ist zu weit links"
+)
+let outsideTick = InteractionPolicies.circularTickAngle(startAngle: ringStart, step: 3, stepAngle: 0.2)
+expect(outsideTick < ringStart, "Graue Striche laufen links von der Bar, nicht rechts hinein")
+expect(InteractionPolicies.circularRingLineWidth > 60, "Runder Undo-Balken ist dicker als die Kreis-Bar")
+
+expect(
+    InteractionPolicies.usesCompactScrollingToolbar(availableWidth: 507, contentWidth: 980),
+    "Split View: Leiste wird dünner und scrollt"
+)
+expect(
+    !InteractionPolicies.usesCompactScrollingToolbar(availableWidth: 1366, contentWidth: 980),
+    "Breites iPad behält die normale Leiste"
+)
+expect(
+    InteractionPolicies.estimatedToolbarContentWidth(penSlots: 4, markerSlots: 5, isPhone: false) > 700,
+    "iPad-Leiste ist breiter als ein schmales Fenster"
+)
+
+expect(
+    !InteractionPolicies.tagPickerPlacesBelow(spaceAbove: 360, spaceBelow: 80),
+    "Genug Platz über dem Knopf: Auswahl bleibt oben"
+)
+expect(
+    InteractionPolicies.tagPickerPlacesBelow(spaceAbove: 70, spaceBelow: 520),
+    "Zeichenfenster zu weit oben: Mini-Auswahl nach unten"
+)
+let cramped = InteractionPolicies.tagPickerFrame(
+    buttonMinX: 40, buttonMaxX: 120, buttonMinY: 28, buttonMaxY: 52,
+    containerWidth: 744, containerHeight: 700, contentHeight: 480
+)
+expect(cramped.placesBelow, "Wenig Platz oben öffnet nach unten")
+expect(cramped.y >= 52, "Panel beginnt unter dem Knopf")
+expect(cramped.y + cramped.height <= 700, "Panel bleibt im Bild")
+expect(cramped.height <= 480, "Panel wird nicht höher als der Inhalt")
+let tightBelow = InteractionPolicies.tagPickerFrame(
+    buttonMinX: 40, buttonMaxX: 120, buttonMinY: 180, buttonMaxY: 210,
+    containerWidth: 744, containerHeight: 400, contentHeight: 480
+)
+expect(tightBelow.placesBelow, "Knappes Fenster öffnet nach unten")
+expect(tightBelow.height < 480, "Zu wenig Platz kürzt die Liste, schneidet sie nicht ab")
+expect(tightBelow.y + tightBelow.height <= 400, "Gekürztes Panel bleibt im Bild")
+
+expect(
+    InteractionPolicies.shouldShowNowJumpButton(lineMinY: -30, lineMaxY: -2, viewportHeight: 640),
+    "Linie oberhalb: Jetzt-Knopf"
+)
+expect(
+    !InteractionPolicies.shouldShowNowJumpButton(lineMinY: 20, lineMaxY: 36, viewportHeight: 640),
+    "Sichtbare Linie: kein Jetzt-Knopf"
+)
+expect(
+    InteractionPolicies.shouldShowNowJumpButton(lineMinY: nil, lineMaxY: nil, viewportHeight: 640),
+    "Linie nicht mehr im Lazy-Bereich"
+)
+expect(
+    InteractionPolicies.nowJumpPointsDown(lineMidY: 900, viewportHeight: 640),
+    "Linie unterhalb: Pfeil nach unten"
+)
+expect(
+    !InteractionPolicies.nowJumpPointsDown(lineMidY: -20, viewportHeight: 640),
+    "Linie oberhalb: Pfeil nach oben"
+)
+
+expect(
+    InteractionPolicies.shouldResetFiltersWhenEnteringNotesOnly(previousMode: "standard", newMode: "notesOnly"),
+    "Wechsel zu Nur Notizen setzt Filter zurück"
+)
+expect(
+    !InteractionPolicies.shouldResetFiltersWhenEnteringNotesOnly(previousMode: "notesOnly", newMode: "notesOnly"),
+    "Erneutes Setzen desselben Modus löscht keine frischen Filter"
+)
+
 print("\(checks) Interaktions-/Sync-/Layout-Checks erfolgreich.")

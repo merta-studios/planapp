@@ -2,6 +2,20 @@ import SwiftUI
 import UIKit
 import PencilKit
 
+enum DrawingOverlaySpace {
+    static let name = "planapp.drawingOverlay"
+}
+
+struct TagButtonFramePreference: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next.width > 1, next.height > 1 {
+            value = next
+        }
+    }
+}
+
 private struct DrawingViewport {
     let size: CGSize
     let safeAreaInsets: EdgeInsets
@@ -104,6 +118,9 @@ public struct LessonDrawingOverlayView: View {
     @State private var historyRevision: Int = 0
     @State private var undoScrubSession: UndoScrubSession? = nil
     @State private var overlayWindowOrigin: CGPoint = .zero
+    @State private var overlaySize: CGSize = .zero
+    /// Rahmen der Tag-Pille im Overlay, damit die Auswahl nach unten ausweichen kann.
+    @State private var tagButtonFrame: CGRect = .zero
 
     // Live transform state. Updates come incrementally from the UIKit canvas so
     // there is no jump when the fingers are released.
@@ -205,6 +222,8 @@ public struct LessonDrawingOverlayView: View {
 
                 editorToolbar(viewport: viewport)
                     .opacity(showsEditor ? 1 : 0)
+                    // Hit-Testing nicht während des Scrubs abschalten: sonst bricht
+                    // UIKit den Kontakt ab, sobald der Finger die Taste verlässt.
                     .allowsHitTesting(showsEditor)
                     .zIndex(20)
 
@@ -213,6 +232,12 @@ public struct LessonDrawingOverlayView: View {
                 if let undoScrubSession {
                     UndoScrubOverlay(session: undoScrubSession, appliedOffset: undoScrubSession.currentOffset)
                         .zIndex(40)
+                        .transition(.opacity)
+                }
+
+                if isTagPickerPresented {
+                    tagPickerOverlay(containerSize: geometry.size)
+                        .zIndex(45)
                         .transition(.opacity)
                 }
 
@@ -250,8 +275,11 @@ public struct LessonDrawingOverlayView: View {
                         undoCount: editingHistory.undoCount,
                         redoCount: editingHistory.redoCount,
                         historyRevision: historyRevision,
-                        onUndoScrubBegan: { origin, windowOrigin in
-                            beginCircularUndoScrub(buttonWindowOrigin: windowOrigin)
+                        onUndoScrubBegan: { buttonCenter, circleCenter in
+                            beginCircularUndoScrub(
+                                buttonWindowOrigin: buttonCenter,
+                                circleCenterInGlobal: circleCenter
+                            )
                         },
                         onUndoScrubChanged: { _, windowLocation in
                             updateCircularUndoScrub(windowLocation: windowLocation)
@@ -261,6 +289,12 @@ public struct LessonDrawingOverlayView: View {
                     )
                     .zIndex(30)
                     .transition(.opacity)
+                }
+            }
+            .coordinateSpace(name: DrawingOverlaySpace.name)
+            .onPreferenceChange(TagButtonFramePreference.self) { frame in
+                if frame.width > 1, frame.height > 1 {
+                    tagButtonFrame = frame
                 }
             }
             .background {
@@ -321,10 +355,14 @@ public struct LessonDrawingOverlayView: View {
                     }
                 }
             }
-            .onChange(of: geometry.size) { _, _ in
+            .onChange(of: geometry.size) { _, newSize in
                 overlayWindowOrigin = geometry.frame(in: .global).origin
+                overlaySize = newSize
                 guard didInitialize else { return }
                 normalizeTransform(in: viewport)
+            }
+            .onAppear {
+                overlaySize = geometry.size
             }
             // Die Systemtastatur verändert weder Safe Area noch Größe der
             // Zeichenfläche (`ignoresSafeArea(.keyboard)`). Die Notiz behält
@@ -748,9 +786,14 @@ public struct LessonDrawingOverlayView: View {
                 undoCount: editingHistory.undoCount,
                 redoCount: editingHistory.redoCount,
                 historyRevision: historyRevision,
-                onUndoScrubBegan: { _, windowOrigin in
-                    beginLinearUndoScrub(buttonWindowOrigin: windowOrigin)
+                onUndoScrubBegan: { buttonCenter, _ in
+                    beginLinearUndoScrub(buttonWindowOrigin: buttonCenter)
                 },
+                hidesUndoGlyph: isUndoScrubbing && undoScrubSession?.style == .linear,
+                availableWidth: max(
+                    1,
+                    viewport.size.width - 2 * max(16, viewport.safeAreaInsets.leading + 12)
+                ),
                 onUndoScrubChanged: { translation, _ in
                     updateLinearUndoScrub(translationY: translation.height)
                 },
@@ -1529,17 +1572,57 @@ public struct LessonDrawingOverlayView: View {
             }
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $isTagPickerPresented, arrowEdge: .bottom) {
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(
+                        key: TagButtonFramePreference.self,
+                        value: proxy.frame(in: .named(DrawingOverlaySpace.name))
+                    )
+            }
+        )
+    }
+
+    private func tagPickerOverlay(containerSize: CGSize) -> some View {
+        let contentHeight = 120 + CGFloat(max(1, viewModel.tagSettings.tags.count)) * 62
+            + (noteTagID == nil ? 0 : 56)
+        let frame = InteractionPolicies.tagPickerFrame(
+            buttonMinX: tagButtonFrame.minX,
+            buttonMaxX: tagButtonFrame.maxX,
+            buttonMinY: tagButtonFrame.minY,
+            buttonMaxY: tagButtonFrame.maxY,
+            containerWidth: containerSize.width,
+            containerHeight: containerSize.height,
+            contentHeight: contentHeight
+        )
+        let panel = CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height)
+
+        return ZStack(alignment: .topLeading) {
+            Color.black.opacity(0.01)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    isTagPickerPresented = false
+                }
+
             NoteTagPickerView(
                 tags: viewModel.tagSettings.tags,
                 selectedTagID: noteTagID,
+                maxPanelHeight: panel.height,
                 onSelect: { newID in
                     noteTagID = newID
                     isTagPickerPresented = false
                 }
             )
-            .presentationCompactAdaptation(.popover)
+            .frame(width: panel.width, height: panel.height, alignment: .top)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.18), radius: 16, x: 0, y: 8)
+            .offset(x: panel.minX, y: panel.minY)
         }
+        .onPreferenceChange(TagButtonFramePreference.self) { tagButtonFrame = $0 }
     }
 
     // MARK: - Notiz kopieren & einfügen
@@ -1703,10 +1786,7 @@ public struct LessonDrawingOverlayView: View {
     // MARK: - Undo-Scrubber
 
     private func beginLinearUndoScrub(buttonWindowOrigin: CGPoint) {
-        let origin = CGPoint(
-            x: buttonWindowOrigin.x - overlayWindowOrigin.x,
-            y: buttonWindowOrigin.y - overlayWindowOrigin.y
-        )
+        let origin = overlayPoint(fromGlobal: buttonWindowOrigin)
         undoScrubSession = UndoScrubSession(
             origin: origin,
             style: .linear,
@@ -1715,14 +1795,14 @@ public struct LessonDrawingOverlayView: View {
             currentOffset: 0,
             circleStartAngle: 0,
             circleRadius: 0,
-            circleCenter: .zero
+            circleCenter: .zero,
+            containerHeight: max(overlaySize.height, 1)
         )
-        Haptics.select()
     }
 
     private func updateLinearUndoScrub(translationY: CGFloat) {
         guard var session = undoScrubSession, session.style == .linear else { return }
-        let available = max(0, UIScreen.main.bounds.height - session.origin.y - 28)
+        let available = max(0, session.containerHeight - session.origin.y - 28)
         let undoTicks = NoteUndoSessionPolicy.linearTickCount(
             undoCount: session.startUndoCount,
             availableHeight: available
@@ -1736,14 +1816,16 @@ public struct LessonDrawingOverlayView: View {
         applyScrubOffset(offset, to: &session)
     }
 
-    private func beginCircularUndoScrub(buttonWindowOrigin: CGPoint) {
-        let button = CGPoint(
-            x: buttonWindowOrigin.x - overlayWindowOrigin.x,
-            y: buttonWindowOrigin.y - overlayWindowOrigin.y
-        )
-        let center = squeezeAnchor.map {
-            CGPoint(x: $0.x - overlayWindowOrigin.x, y: $0.y - overlayWindowOrigin.y)
-        } ?? button
+    private func beginCircularUndoScrub(buttonWindowOrigin: CGPoint, circleCenterInGlobal: CGPoint) {
+        let button = overlayPoint(fromGlobal: buttonWindowOrigin)
+        let center: CGPoint
+        if circleCenterInGlobal != .zero {
+            center = overlayPoint(fromGlobal: circleCenterInGlobal)
+        } else if let squeezeAnchor {
+            center = overlayPoint(fromGlobal: squeezeAnchor)
+        } else {
+            center = button
+        }
         let radius = hypot(button.x - center.x, button.y - center.y)
         let startAngle = atan2(button.y - center.y, button.x - center.x)
         undoScrubSession = UndoScrubSession(
@@ -1753,10 +1835,17 @@ public struct LessonDrawingOverlayView: View {
             startRedoCount: editingHistory.redoCount,
             currentOffset: 0,
             circleStartAngle: startAngle,
-            circleRadius: max(44, radius),
-            circleCenter: center
+            circleRadius: radius,
+            circleCenter: center,
+            containerHeight: max(overlaySize.height, 1)
         )
-        Haptics.select()
+    }
+
+    private func overlayPoint(fromGlobal point: CGPoint) -> CGPoint {
+        CGPoint(
+            x: point.x - overlayWindowOrigin.x,
+            y: point.y - overlayWindowOrigin.y
+        )
     }
 
     private func updateCircularUndoScrub(windowLocation: CGPoint) {
@@ -1791,8 +1880,10 @@ public struct LessonDrawingOverlayView: View {
             for _ in 0..<(-delta) { _ = performSilentRedo() }
         }
         session.currentOffset = offset
-        undoScrubSession = session
-        Haptics.select()
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.74)) {
+            undoScrubSession = session
+        }
+        Haptics.pencilSnap(intensity: 0.9)
     }
 
     private func performSilentUndo() -> Bool {

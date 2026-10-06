@@ -47,6 +47,10 @@ public struct NotesOverviewListView: View {
     @State private var deleteTarget: Lesson? = nil
     /// Welche Karte der Apple Pencil gerade überfährt (für Squeeze).
     @State private var hoverTracker = NotesOverviewHoverTracker()
+    /// Rahmen der grünen Linie im Scroll-Viewport. `nil`, wenn sie nicht mehr
+    /// im aufgebauten Bereich liegt.
+    @State private var nowLineFrame: CGRect? = nil
+    @State private var nowJumpReady = false
 
     public init(noteNamespace: Namespace.ID) {
         self.noteNamespace = noteNamespace
@@ -101,7 +105,7 @@ public struct NotesOverviewListView: View {
         var id: String {
             switch self {
             case .nowLine:
-                return "planapp_now_line"
+                return NotesOverviewLayout.nowLineID
             case .dayHeader(let date):
                 return "header_\(date.yyyyMMddString)"
             case .cards(let entries):
@@ -119,31 +123,86 @@ public struct NotesOverviewListView: View {
             let rows = buildRows(from: filteredEntries, relativeTo: currentMinute, columnCount: columnCount)
             let relativeDay = Calendar.germanCalendar.startOfDay(for: currentMinute)
 
+            let showsNowJump = nowJumpReady && !filteredEntries.isEmpty && InteractionPolicies.shouldShowNowJumpButton(
+                lineMinY: nowLineFrame?.minY,
+                lineMaxY: nowLineFrame?.maxY,
+                viewportHeight: geometry.size.height
+            )
+            let jumpPointsDown = InteractionPolicies.nowJumpPointsDown(
+                lineMidY: nowLineFrame.map { $0.midY },
+                viewportHeight: geometry.size.height
+            )
+
             VStack(spacing: 0) {
-                ScrollView(.vertical, showsIndicators: true) {
-                    if rows.isEmpty {
-                        emptyState(isFiltered: !entrySnapshot.isEmpty)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 60)
-                    } else {
-                        LazyVStack(alignment: .leading, spacing: NotesOverviewLayout.rowSpacing) {
-                            ForEach(rows) { row in
-                                rowView(row, columnCount: columnCount, relativeDay: relativeDay)
+                ScrollViewReader { proxy in
+                    ZStack(alignment: .topTrailing) {
+                        ScrollView(.vertical, showsIndicators: true) {
+                            if rows.isEmpty {
+                                emptyState(isFiltered: !entrySnapshot.isEmpty)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.top, 60)
+                            } else {
+                                LazyVStack(alignment: .leading, spacing: NotesOverviewLayout.rowSpacing) {
+                                    ForEach(rows) { row in
+                                        rowView(row, columnCount: columnCount, relativeDay: relativeDay)
+                                            .id(row.id)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                                // Apple Pencil Pro: genau EINE Squeeze-Brücke für die
+                                // gesamte Liste. Welche Karte gemeint ist, weiß der
+                                // Hover-Tracker.
+                                .background(
+                                    PencilSqueezeActionAttachment {
+                                        guard let lesson = hoverTracker.hoveredLesson else { return }
+                                        Haptics.tap()
+                                        optionsTarget = lesson
+                                    }
+                                )
                             }
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        // Apple Pencil Pro: genau EINE Squeeze-Brücke für die
-                        // gesamte Liste. Welche Karte gemeint ist, weiß der
-                        // Hover-Tracker.
-                        .background(
-                            PencilSqueezeActionAttachment {
-                                guard let lesson = hoverTracker.hoveredLesson else { return }
-                                Haptics.tap()
-                                optionsTarget = lesson
+                        .coordinateSpace(name: NotesOverviewLayout.scrollSpace)
+
+                        if showsNowJump {
+                            jumpToNowButton(pointsDown: jumpPointsDown) {
+                                withAnimation(.easeInOut(duration: 0.35)) {
+                                    proxy.scrollTo(NotesOverviewLayout.nowLineID, anchor: .center)
+                                }
                             }
-                        )
+                            .padding(.top, 12)
+                            .padding(.trailing, 16)
+                            .transition(.scale(scale: 0.86).combined(with: .opacity))
+                        }
                     }
+                }
+            }
+            .animation(.spring(response: 0.35, dampingFraction: 0.82), value: showsNowJump)
+            .onPreferenceChange(NowLineFramePreference.self) { frame in
+                let height = geometry.size.height
+                let show = InteractionPolicies.shouldShowNowJumpButton(
+                    lineMinY: frame?.minY,
+                    lineMaxY: frame?.maxY,
+                    viewportHeight: height
+                )
+                let previousShow = InteractionPolicies.shouldShowNowJumpButton(
+                    lineMinY: nowLineFrame?.minY,
+                    lineMaxY: nowLineFrame?.maxY,
+                    viewportHeight: height
+                )
+                let down = InteractionPolicies.nowJumpPointsDown(lineMidY: frame?.midY, viewportHeight: height)
+                let previousDown = InteractionPolicies.nowJumpPointsDown(
+                    lineMidY: nowLineFrame?.midY,
+                    viewportHeight: height
+                )
+                guard show != previousShow || down != previousDown || (frame == nil) != (nowLineFrame == nil) else {
+                    return
+                }
+                nowLineFrame = frame
+            }
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    nowJumpReady = true
                 }
             }
         }
@@ -212,6 +271,17 @@ public struct NotesOverviewListView: View {
         case .nowLine:
             nowLine(relativeTo: currentMinute)
                 .padding(.vertical, 2)
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: NowLineFramePreference.self,
+                            value: proxy.frame(in: .named(NotesOverviewLayout.scrollSpace))
+                        )
+                    }
+                )
+                .onDisappear {
+                    nowLineFrame = nil
+                }
         case .dayHeader(let date):
             dayHeader(for: date)
                 .padding(.horizontal, NotesOverviewLayout.horizontalPadding)
@@ -432,6 +502,28 @@ public struct NotesOverviewListView: View {
         .accessibilityLabel("Aktueller Zeitpunkt: \(nowLabel(relativeTo: date))")
     }
 
+    private func jumpToNowButton(pointsDown: Bool, action: @escaping () -> Void) -> some View {
+        let green = Color(red: 0.10, green: 0.62, blue: 0.28)
+        return Button {
+            Haptics.tap()
+            action()
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: pointsDown ? "arrow.down" : "arrow.up")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("Jetzt")
+                    .font(.system(size: 16, weight: .semibold))
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
+        }
+        .buttonStyle(.plain)
+        .liquidGlassButton(cornerRadius: 16, tint: green, isFilled: true)
+        .foregroundColor(.white)
+        .fixedSize()
+        .accessibilityLabel("Zur aktuellen Zeit springen")
+    }
+
     private func nowLabel(relativeTo date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "de_DE")
@@ -461,6 +553,13 @@ public struct NotesOverviewListView: View {
 }
 
 // MARK: - Hover-Tracker & Rahmen-Sonde
+
+struct NowLineFramePreference: PreferenceKey {
+    static var defaultValue: CGRect? = nil
+    static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) {
+        value = nextValue() ?? value
+    }
+}
 
 /// Merkt sich (ohne SwiftUI-Invalidierung), welche Karte der Apple Pencil
 /// gerade überfährt und wo sie auf dem Bildschirm liegt.
