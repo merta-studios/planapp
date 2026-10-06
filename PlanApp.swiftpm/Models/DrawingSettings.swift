@@ -1,13 +1,14 @@
 import Foundation
 
-/// Einstellungen rund um die Zeichenfläche: Standard-Dicken pro Werkzeug,
-/// Standard-Größe der Fläche, anpassbare Farb-Slots für Stift und Textmarker
-/// sowie die automatische Bereinigung alter Notizen.
+/// Einstellungen rund um Zeichenfläche und Notizen: Standard-Dicken pro Werkzeug,
+/// Größe der Fläche und neuer Textfelder, anpassbare Farb-Slots für Stift und
+/// Textmarker sowie die automatische Bereinigung alter Notizen.
 public struct DrawingSettings: Codable, Equatable {
     public var penWidth: Double              // Standard-Dicke Stift
     public var markerWidth: Double           // Standard-Dicke Textmarker
     public var eraserWidth: Double           // Standard-Dicke Radierer
     public var defaultCanvasHeight: Double   // Standard-Höhe der Zeichenfläche beim Öffnen
+    public var defaultTextFontSize: Double   // Standard-Schriftgröße neuer Textfelder
     public var autoDeletePastNotes: Bool     // Notizen vergangener Stunden automatisch löschen
     public var defaultBackgroundStyle: NoteBackgroundStyle // Standard-Hintergrund neuer Notizen
     public var penColorSlots: [String]       // Farb-Slots für den Stift in der Werkzeugleiste
@@ -52,6 +53,7 @@ public struct DrawingSettings: Codable, Equatable {
         markerWidth: Double = 16,
         eraserWidth: Double = 24,
         defaultCanvasHeight: Double = 460,
+        defaultTextFontSize: Double = NoteTextBox.defaultFontSize,
         autoDeletePastNotes: Bool = false,
         defaultBackgroundStyle: NoteBackgroundStyle = .blank,
         penColorSlots: [String] = DrawingSettings.defaultPenColorSlots,
@@ -67,6 +69,7 @@ public struct DrawingSettings: Codable, Equatable {
         self.markerWidth = markerWidth
         self.eraserWidth = eraserWidth
         self.defaultCanvasHeight = defaultCanvasHeight
+        self.defaultTextFontSize = Self.clampedTextFontSize(defaultTextFontSize)
         self.autoDeletePastNotes = autoDeletePastNotes
         self.defaultBackgroundStyle = defaultBackgroundStyle
         self.penColorSlots = penColorSlots.isEmpty ? DrawingSettings.defaultPenColorSlots : penColorSlots
@@ -80,7 +83,7 @@ public struct DrawingSettings: Codable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case penWidth, markerWidth, eraserWidth, defaultCanvasHeight, autoDeletePastNotes
+        case penWidth, markerWidth, eraserWidth, defaultCanvasHeight, defaultTextFontSize, autoDeletePastNotes
         case defaultBackgroundStyle
         case penColorSlots, markerColorSlots
         case applePencilOnly, autoDeselectEraser
@@ -95,6 +98,9 @@ public struct DrawingSettings: Codable, Equatable {
         self.markerWidth = try container.decodeIfPresent(Double.self, forKey: .markerWidth) ?? 16
         self.eraserWidth = try container.decodeIfPresent(Double.self, forKey: .eraserWidth) ?? 24
         self.defaultCanvasHeight = try container.decodeIfPresent(Double.self, forKey: .defaultCanvasHeight) ?? 460
+        let decodedTextFontSize = try container.decodeIfPresent(Double.self, forKey: .defaultTextFontSize)
+            ?? NoteTextBox.defaultFontSize
+        self.defaultTextFontSize = Self.clampedTextFontSize(decodedTextFontSize)
         self.autoDeletePastNotes = try container.decodeIfPresent(Bool.self, forKey: .autoDeletePastNotes) ?? false
         self.defaultBackgroundStyle = try container.decodeIfPresent(NoteBackgroundStyle.self, forKey: .defaultBackgroundStyle) ?? .blank
 
@@ -136,6 +142,7 @@ public struct DrawingSettings: Codable, Equatable {
         try container.encode(markerWidth, forKey: .markerWidth)
         try container.encode(eraserWidth, forKey: .eraserWidth)
         try container.encode(defaultCanvasHeight, forKey: .defaultCanvasHeight)
+        try container.encode(defaultTextFontSize, forKey: .defaultTextFontSize)
         try container.encode(autoDeletePastNotes, forKey: .autoDeletePastNotes)
         try container.encode(defaultBackgroundStyle, forKey: .defaultBackgroundStyle)
         try container.encode(penColorSlots, forKey: .penColorSlots)
@@ -146,6 +153,14 @@ public struct DrawingSettings: Codable, Equatable {
         try container.encode(defaultBackgroundScale, forKey: .defaultBackgroundScale)
         try container.encode(squeezeAction, forKey: .squeezeAction)
         try container.encode(doubleTapAction, forKey: .doubleTapAction)
+    }
+
+    private static func clampedTextFontSize(_ value: Double) -> Double {
+        guard value.isFinite else { return NoteTextBox.defaultFontSize }
+        return min(
+            max(NoteTextBox.minimumFontSize, value),
+            NoteTextBox.maximumFontSize
+        )
     }
 
     public static var `default`: DrawingSettings {

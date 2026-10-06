@@ -53,8 +53,9 @@ struct NoteTextBoxesLayer: View {
     let areaSize: CGSize
     /// Undo-Registrierung: (Snapshot vorher, Snapshot nachher).
     let registerUndo: (_ before: [NoteTextBox], _ after: [NoteTextBox]) -> Void
-    /// Farbe neuer Textfelder (Standard: Schwarz).
+    /// Farbe und Schriftgröße neuer Textfelder.
     var newTextColorHex: String = NoteTextBox.defaultColorHex
+    var newTextFontSize: Double = NoteTextBox.defaultFontSize
 
     static let coordinateSpaceName = "noteTextBoxesLayer"
 
@@ -229,6 +230,7 @@ struct NoteTextBoxesLayer: View {
             x: Double(x),
             y: Double(y),
             width: Double(width),
+            fontSize: newTextFontSize,
             colorHex: newTextColorHex.isEmpty ? NoteTextBox.defaultColorHex : newTextColorHex
         )
         guard let box = rawBox.sanitized(in: size) else { return }

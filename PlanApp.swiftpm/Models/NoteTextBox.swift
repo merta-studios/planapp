@@ -7,6 +7,10 @@ public struct NoteTextBox: Identifiable, Codable, Equatable {
     /// Standard-Textfarbe: Die Zeichenfläche ist immer weiß, deshalb ein
     /// festes Dunkelgrau/Schwarz statt einer dynamischen Systemfarbe.
     public static let defaultColorHex = "#1E1E1E"
+    /// Standard-Schriftgröße und Grenzen für manuell erstellte Textfelder.
+    public static let defaultFontSize: Double = 17
+    public static let minimumFontSize: Double = 10
+    public static let maximumFontSize: Double = 48
 
     public var id: UUID
     public var text: String
@@ -24,7 +28,7 @@ public struct NoteTextBox: Identifiable, Codable, Equatable {
         x: Double,
         y: Double,
         width: Double = 240,
-        fontSize: Double = 17,
+        fontSize: Double = NoteTextBox.defaultFontSize,
         colorHex: String = NoteTextBox.defaultColorHex
     ) {
         self.id = id
@@ -50,7 +54,7 @@ public struct NoteTextBox: Identifiable, Codable, Equatable {
         x = try container.decodeIfPresent(Double.self, forKey: .x) ?? 6
         y = try container.decodeIfPresent(Double.self, forKey: .y) ?? 6
         width = try container.decodeIfPresent(Double.self, forKey: .width) ?? 240
-        fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? 17
+        fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? NoteTextBox.defaultFontSize
         colorHex = try container.decodeIfPresent(String.self, forKey: .colorHex)
             ?? NoteTextBox.defaultColorHex
     }
@@ -61,7 +65,7 @@ public struct NoteTextBox: Identifiable, Codable, Equatable {
     /// geklemmt.
     public func sanitized(in areaSize: CGSize? = nil) -> NoteTextBox? {
         let fallbackWidth: Double = 240
-        let fallbackFontSize: Double = 17
+        let fallbackFontSize = NoteTextBox.defaultFontSize
         let margin: Double = 6
 
         var sanitized = self
@@ -71,7 +75,10 @@ public struct NoteTextBox: Identifiable, Codable, Equatable {
         sanitized.fontSize = fontSize.isFinite ? fontSize : fallbackFontSize
 
         sanitized.width = min(max(90, sanitized.width), 640)
-        sanitized.fontSize = min(max(10, sanitized.fontSize), 48)
+        sanitized.fontSize = min(
+            max(NoteTextBox.minimumFontSize, sanitized.fontSize),
+            NoteTextBox.maximumFontSize
+        )
         if sanitized.colorHex.trimmingCharacters(in: .whitespaces).isEmpty {
             sanitized.colorHex = NoteTextBox.defaultColorHex
         }

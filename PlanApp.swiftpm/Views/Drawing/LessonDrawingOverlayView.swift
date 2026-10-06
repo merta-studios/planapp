@@ -574,7 +574,8 @@ public struct LessonDrawingOverlayView: View {
                         textUndo.push(before: before, after: after)
                         recordHistorySnapshot()
                     },
-                    newTextColorHex: preferredTextColorHex
+                    newTextColorHex: preferredTextColorHex,
+                    newTextFontSize: viewModel.drawingSettings.defaultTextFontSize
                 )
                 .frame(
                     width: paperWidth,
@@ -789,15 +790,15 @@ public struct LessonDrawingOverlayView: View {
                 onUndoScrubBegan: { buttonCenter, _ in
                     beginLinearUndoScrub(buttonWindowOrigin: buttonCenter)
                 },
+                onUndoScrubChanged: { translation, _ in
+                    updateLinearUndoScrub(translationY: translation.height)
+                },
+                onUndoScrubEnded: { endUndoScrub() },
                 hidesUndoGlyph: isUndoScrubbing && undoScrubSession?.style == .linear,
                 availableWidth: max(
                     1,
                     viewport.size.width - 2 * max(16, viewport.safeAreaInsets.leading + 12)
                 ),
-                onUndoScrubChanged: { translation, _ in
-                    updateLinearUndoScrub(translationY: translation.height)
-                },
-                onUndoScrubEnded: { endUndoScrub() },
                 onClear: { clearPage() },
                 canCopyNote: hasCopyableContent,
                 canPasteNote: viewModel.hasCopiedNote,
