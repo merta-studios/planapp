@@ -4,6 +4,8 @@ import Foundation
 /// Split View und auf dem iPhone. Fensterbreite statt Geräteausrichtung ist
 /// ausschlaggebend.
 enum NotesOverviewLayout {
+    static let nowLineID = "planapp_now_line"
+    static let scrollSpace = "notesOverviewScroll"
     static let horizontalPadding: CGFloat = 14
     static let columnSpacing: CGFloat = 12
     static let rowSpacing: CGFloat = 12

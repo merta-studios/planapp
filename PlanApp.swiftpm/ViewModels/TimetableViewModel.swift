@@ -618,6 +618,13 @@ public final class TimetableViewModel: ObservableObject {
     public func setViewMode(_ mode: TimetableViewMode) {
         guard viewMode != mode else { return }
 
+        if InteractionPolicies.shouldResetFiltersWhenEnteringNotesOnly(
+            previousMode: viewMode.rawValue,
+            newMode: mode.rawValue
+        ) {
+            activeTagFilter.removeAll()
+        }
+
         // Der Wechsel zu „Nur Notizen“ kann viele heruntergerechnete
         // Vorschauen einhängen. Eine implizite Animation hält gleichzeitig
         // noch das komplette Drei-Wochen-Raster im Compositor und lässt beide

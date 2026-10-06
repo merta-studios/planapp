@@ -23,6 +23,7 @@ public struct LessonBlockView: View {
     @State private var textContentHeight: CGFloat = 26
     @State private var showLessonActions = false
     @State private var showDeleteNoteConfirmation = false
+    @State private var showTagOptions = false
 
     public init(lesson: Lesson, blockHeight: CGFloat, noteNamespace: Namespace.ID, isCompact: Bool = false) {
         self.lesson = lesson
@@ -306,6 +307,38 @@ public struct LessonBlockView: View {
             Button("Abbrechen", role: .cancel) {}
         }
         .confirmationDialog(
+            "Tag",
+            isPresented: $showTagOptions,
+            titleVisibility: .visible
+        ) {
+            if viewModel.tagSettings.tags.isEmpty {
+                Button("Keine Tags angelegt") {}
+                    .disabled(true)
+            } else {
+                ForEach(viewModel.tagSettings.tags) { tag in
+                    Button {
+                        Haptics.select()
+                        viewModel.setTag(tag.id, for: lesson)
+                    } label: {
+                        if viewModel.tag(for: lesson)?.id == tag.id {
+                            Label(tag.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(tag.displayName)
+                        }
+                    }
+                }
+            }
+            if viewModel.tag(for: lesson) != nil {
+                Button("Tag entfernen", role: .destructive) {
+                    Haptics.tap()
+                    viewModel.setTag(nil, for: lesson)
+                }
+            }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text("Tag dieser Notiz ändern oder entfernen, ohne die Zeichenfläche zu öffnen.")
+        }
+        .confirmationDialog(
             "Notiz löschen?",
             isPresented: $showDeleteNoteConfirmation,
             titleVisibility: .visible
@@ -367,6 +400,17 @@ public struct LessonBlockView: View {
                 viewModel.copyNote(for: lesson)
             } label: {
                 Label("Kopieren", systemImage: "doc.on.doc")
+            }
+        }
+
+        if hasVisibleNote, viewModel.tagSettings.isEnabled {
+            Button {
+                Haptics.tap()
+                DispatchQueue.main.async {
+                    showTagOptions = true
+                }
+            } label: {
+                Label("Tag", systemImage: "tag")
             }
         }
 
