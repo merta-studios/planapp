@@ -27,10 +27,16 @@ extension Date {
     }
 
     /// Die Woche, die für die Navigation als "aktuell" gelten soll.
-    /// An Wochenenden (Samstag/Sonntag) gibt es keinen Schultag mehr in der
-    /// laufenden Woche, daher zeigt dies bereits auf die Montag-Woche danach.
+    ///
+    /// * An Wochenenden (Samstag/Sonntag) gibt es keinen Schultag mehr in der
+    ///   laufenden Woche – dann zeigt dies bereits auf die Montagswoche danach.
+    /// * Am **Freitag nach der letzten Stunde** ist die Schulwoche ebenfalls
+    ///   vorbei; auch dann ist die kommende Woche die relevante. Dafür wird
+    ///   `lastLessonEndMinutes` (Ende der letzten Stunde des Tages, Minuten seit
+    ///   Mitternacht) übergeben.
     public static func relevantCurrentWeekStart(
         from date: Date = Date(),
+        lastLessonEndMinutes: Int? = nil,
         calendar: Calendar = .germanCalendar
     ) -> Date {
         let monday = date.startOfWeek(using: calendar)
@@ -39,7 +45,34 @@ extension Date {
         if weekday == 1 || weekday == 7 {
             return calendar.date(byAdding: .day, value: 7, to: monday) ?? monday
         }
+        // Freitag: Nach dem Ende der letzten Stunde läuft die Woche aus.
+        if weekday == 6, let lastLessonEndMinutes {
+            let components = calendar.dateComponents([.hour, .minute], from: date)
+            let minutes = (components.hour ?? 0) * 60 + (components.minute ?? 0)
+            if minutes >= lastLessonEndMinutes {
+                return calendar.date(byAdding: .day, value: 7, to: monday) ?? monday
+            }
+        }
         return monday
+    }
+
+    /// Der Tag, der als "kommende Schulwoche" wie „heute“ hervorgehoben wird:
+    /// der Montag der nächsten Woche, wenn die laufende Schulwoche bereits
+    /// vorbei ist (Wochenende oder Freitag nach der letzten Stunde). Sonst
+    /// `nil`, dann wird der echte heutige Tag blau markiert.
+    public static func upcomingWeekHighlightDay(
+        from date: Date = Date(),
+        lastLessonEndMinutes: Int? = nil,
+        calendar: Calendar = .germanCalendar
+    ) -> Date? {
+        let relevant = relevantCurrentWeekStart(
+            from: date,
+            lastLessonEndMinutes: lastLessonEndMinutes,
+            calendar: calendar
+        )
+        let currentMonday = date.startOfWeek(using: calendar)
+        guard relevant > currentMonday else { return nil }
+        return relevant
     }
 
     /// Prüft, ob zwei Daten derselbe Kalendertag sind

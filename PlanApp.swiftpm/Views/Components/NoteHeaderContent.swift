@@ -138,13 +138,12 @@ public struct NoteHeaderContent<Accessory: View>: View {
     }
 
     /// Zusatz-Infos unter dem Fachnamen – exakt die Elemente, die auch im
-    /// Stundenplan-Block aktiviert sind (Lehrer, Raum, Klasse, Uhrzeiten).
+    /// Stundenplan-Block aktiviert sind (Lehrer, Raum, Klasse).
     private var hasHeaderDetails: Bool {
         let settings = displaySettings
         return (settings.showTeacher && !lesson.teacherRaw.isEmpty)
             || (settings.showRoom && !lesson.roomRaw.isEmpty)
             || (settings.showKlasse && !lesson.klasseRaw.isEmpty)
-            || settings.showTimes
     }
 
     private var headerDetails: some View {
@@ -188,16 +187,6 @@ public struct NoteHeaderContent<Accessory: View>: View {
                     Image(systemName: "person.3")
                         .font(.system(size: 10, weight: .regular, design: .default))
                     Text(lesson.klasseRaw)
-                        .strikethrough(lesson.isCancelled, color: .red)
-                }
-            }
-
-            if settings.showTimes,
-               let period = periods.first(where: { $0.periodNumber == lesson.periodNumber }) {
-                HStack(spacing: 3) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 10, weight: .regular, design: .default))
-                    Text("\(period.startTime) – \(period.endTime)")
                         .strikethrough(lesson.isCancelled, color: .red)
                 }
             }

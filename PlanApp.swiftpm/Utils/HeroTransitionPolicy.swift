@@ -52,7 +52,19 @@ public enum NoteUndoSessionPolicy {
     public static let maximumSessions = 3
     public static let maximumSteps = 40
     public static let linearTickSpacing: Double = 32
-    public static let circularMaxTicks = 24
+
+    /// Der runde Scrubber läuft nur einen **halben** Kreis. Ein voller Kreis
+    /// war mit dem Finger nicht mehr erreichbar und führte beim Ziehen über
+    /// die Kreismitte zu Sprüngen auf die Gegenseite.
+    public static let circularSweepAngle: Double = .pi
+    /// So viele Undo-Schritte passen auf den halben Kreis (15° je Schritt).
+    public static let circularMaxTicks = 12
+
+    /// Winkel eines einzelnen Schritts auf dem halben Kreis.
+    public static func circularStepAngle(maxTicks: Int = circularMaxTicks) -> Double {
+        let ticks = max(1, maxTicks)
+        return circularSweepAngle / Double(ticks)
+    }
 
     /// LRU: der neueste Schlüssel steht vorn, Duplikate entfallen, Maximum drei.
     public static func trimmedKeys(_ keys: [String], inserting newest: String) -> [String] {
@@ -74,12 +86,9 @@ public enum NoteUndoSessionPolicy {
         return min(undoCount, Int(availableHeight / tickSpacing))
     }
 
-    /// Höchstens ein voller Kreis.
+    /// Höchstens ein halber Kreis – der Scrubber macht ausschließlich
+    /// rückgängig.
     public static func circularTickCount(undoCount: Int, maxTicks: Int = circularMaxTicks) -> Int {
         min(max(0, undoCount), max(0, maxTicks))
-    }
-
-    public static func redoTickCount(redoCount: Int, maxTicks: Int) -> Int {
-        min(max(0, redoCount), max(0, maxTicks))
     }
 }

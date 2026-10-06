@@ -648,7 +648,10 @@ struct PencilSqueezePaletteView: View {
         let radialChange = (deltaX * axis.dx + deltaY * axis.dy) / max(paletteScale, 0.01)
 
         let range = widthRange
-        let pointsForFullRange: CGFloat = 140
+        // Doppelt so viel Weg pro Wertebereich wie früher: Jeder 0,5er-Schritt
+        // liegt damit ungefähr doppelt so weit auseinander und lässt sich
+        // deutlich genauer einstellen.
+        let pointsForFullRange: CGFloat = 280
         let widthChange = radialChange * (range.upperBound - range.lowerBound) / pointsForFullRange
         let previous = widthBinding.wrappedValue
         setWidth(widthDragStartValue + widthChange)

@@ -22,6 +22,9 @@ public struct LessonBlockView: View {
     /// Notiz-Vorschau darf sich bis knapp an diesen Text heran vergrößern.
     @State private var textContentHeight: CGFloat = 26
     @State private var showLessonActions = false
+    /// Kurzlebiger Merker: Nach einem langen Druck darf der beim Loslassen
+    /// zusätzlich erkannte Tipp nicht sofort die Notiz öffnen.
+    @State private var didPresentLessonOptions = false
     @State private var showDeleteNoteConfirmation = false
     @State private var showTagOptions = false
 
@@ -120,7 +123,7 @@ public struct LessonBlockView: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
 
-                        if let noteTag {
+                        if settings.showTags, let noteTag {
                             NoteTagPill(tag: noteTag, size: isCompact ? .mini : .small)
                         }
 
@@ -291,12 +294,25 @@ public struct LessonBlockView: View {
         .background(
             PencilSqueezeActionAttachment {
                 guard isHovered else { return }
-                Haptics.tap()
-                showLessonActions = true
+                presentLessonOptions()
             }
         )
-        .contextMenu {
-            lessonActionButtons
+        // Genau EIN Weg zu den Optionen: langer Druck mit Finger, Pencil oder
+        // Trackpad öffnet denselben Dialog wie der Squeeze des Apple Pencil Pro
+        // und der „Optionen“-Knopf unten.
+        //
+        // Vorher hing zusätzlich ein `.contextMenu` mit demselben Inhalt am
+        // Block. Das Systemmenü wurde beim Aktualisieren der Karte (Hover-
+        // Verlust, Hover-Effekt, Auto-Refresh der Notiz-Vorschauen) abgerissen
+        // und sofort neu aufgebaut – die Optionen erschienen, verschwanden und
+        // erschienen erneut. Ohne diesen zweiten Präsentationsweg bleibt die
+        // Auswahl stabil stehen.
+        .onLongPressGesture(minimumDuration: 0.35, maximumDistance: 44) {
+            presentLessonOptions()
+        }
+        // VoiceOver: dieselben Optionen ohne langen Druck erreichbar.
+        .accessibilityAction(named: "Optionen") {
+            presentLessonOptions()
         }
         .confirmationDialog(
             "Optionen",
@@ -368,7 +384,7 @@ public struct LessonBlockView: View {
         // Klick öffnet Notiz-Bereich (mit haptischem Feedback, auch beim
         // Antippen mit dem Apple Pencil)
         .onTapGesture {
-            openCurrentNote()
+            handleBlockTap()
         }
     }
 
@@ -444,6 +460,25 @@ public struct LessonBlockView: View {
 
     private func sourceFrameForAnimation() -> CGRect {
         frameHolder.plausibleWindowFrame
+    }
+
+    /// Öffnet die Options-Auswahl. Der Merker verhindert, dass ein nach dem
+    /// langen Druck ausgelöster Tipp zusätzlich die Notiz öffnet.
+    private func presentLessonOptions() {
+        guard !showLessonActions else { return }
+        Haptics.tap()
+        didPresentLessonOptions = true
+        showLessonActions = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            didPresentLessonOptions = false
+        }
+    }
+
+    /// Tipp auf den Block: öffnet die Notiz – außer unmittelbar nach einem
+    /// langen Druck (dann ist die Options-Auswahl gemeint).
+    private func handleBlockTap() {
+        guard !didPresentLessonOptions else { return }
+        openCurrentNote()
     }
 
     private func openCurrentNote() {

@@ -35,6 +35,12 @@ public struct DrawingToolbarView: View {
     public let onCopyTextToClipboard: () -> Void
     public let onUndo: () -> Void
     public let onRedo: () -> Void
+    /// Zweiter Tipp auf ein **bereits gewähltes** Werkzeug (Text, Radierer,
+    /// Lasso): schaltet es wieder aus und kehrt zum letzten Zeichenwerkzeug
+    /// zurück. Früher erschien an dieser Stelle nur ein Hinweis-Popover
+    /// („Passe die Textgröße …“ / „Hier gibt es keine weiteren Optionen!“) –
+    /// solche Sackgassen gibt es nicht mehr.
+    public var onDeselectSelectedTool: (() -> Void)? = nil
     public var undoCount: Int = 0
     public var redoCount: Int = 0
     public var historyRevision: Int = 0
@@ -95,6 +101,7 @@ public struct DrawingToolbarView: View {
         onCopyTextToClipboard: @escaping () -> Void = {},
         onUndo: @escaping () -> Void,
         onRedo: @escaping () -> Void,
+        onDeselectSelectedTool: (() -> Void)? = nil,
         undoCount: Int = 0,
         redoCount: Int = 0,
         historyRevision: Int = 0,
@@ -128,6 +135,7 @@ public struct DrawingToolbarView: View {
         self.onCopyTextToClipboard = onCopyTextToClipboard
         self.onUndo = onUndo
         self.onRedo = onRedo
+        self.onDeselectSelectedTool = onDeselectSelectedTool
         self.undoCount = undoCount
         self.redoCount = redoCount
         self.historyRevision = historyRevision
@@ -529,6 +537,11 @@ public struct DrawingToolbarView: View {
         }()
 
         return Button {
+            guard !isSelected else {
+                Haptics.tap()
+                onDeselectSelectedTool?()
+                return
+            }
             Haptics.select()
             toolSelection = .text
         } label: {
@@ -544,6 +557,7 @@ public struct DrawingToolbarView: View {
         .hoverEffect(.lift)
         .accessibilityLabel("Text-Werkzeug")
         .accessibilityValue(isSelected ? "Ausgewählt" : "")
+        .accessibilityHint(isSelected ? "Erneut tippen, um das Text-Werkzeug wieder auszuschalten" : "")
     }
 
     // MARK: - Strichstärke (pro Werkzeug getrennt)
@@ -660,6 +674,11 @@ public struct DrawingToolbarView: View {
         }()
 
         return Button {
+            guard !isSelected else {
+                Haptics.tap()
+                onDeselectSelectedTool?()
+                return
+            }
             Haptics.select()
             toolSelection = .eraser
         } label: {
@@ -674,6 +693,7 @@ public struct DrawingToolbarView: View {
         .hoverEffect(.lift)
         .accessibilityLabel("Radierer")
         .accessibilityValue(isSelected ? "Ausgewählt" : "")
+        .accessibilityHint(isSelected ? "Erneut tippen, um wieder zum Zeichenwerkzeug zu wechseln" : "")
     }
 
     private var lassoButton: some View {
@@ -683,6 +703,11 @@ public struct DrawingToolbarView: View {
         }()
 
         return Button {
+            guard !isSelected else {
+                Haptics.tap()
+                onDeselectSelectedTool?()
+                return
+            }
             Haptics.select()
             toolSelection = .lasso
         } label: {
@@ -697,6 +722,7 @@ public struct DrawingToolbarView: View {
         .hoverEffect(.lift)
         .accessibilityLabel("Lasso-Werkzeug")
         .accessibilityValue(isSelected ? "Ausgewählt" : "")
+        .accessibilityHint(isSelected ? "Erneut tippen, um das Lasso wieder auszuschalten" : "")
     }
 
     // MARK: - Verlauf & mehr Optionen

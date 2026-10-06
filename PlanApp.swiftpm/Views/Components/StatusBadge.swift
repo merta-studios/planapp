@@ -7,6 +7,8 @@ public struct StatusBadge: View {
         case substitution
         case hasNote
         case today
+        /// Kommende Schulwoche: derselbe Hinweis wie „Heute“, nur in Gelb.
+        case upcomingWeek
         case doublePeriod
     }
 
@@ -49,6 +51,8 @@ public struct StatusBadge: View {
             return "Notiz"
         case .today:
             return "Heute"
+        case .upcomingWeek:
+            return "Nächste Woche"
         case .doublePeriod:
             return "Doppelstunde"
         }
@@ -64,6 +68,8 @@ public struct StatusBadge: View {
             return "pencil.line"
         case .today:
             return "calendar"
+        case .upcomingWeek:
+            return "calendar.badge.clock"
         case .doublePeriod:
             return "clock.fill"
         }
@@ -79,13 +85,23 @@ public struct StatusBadge: View {
             return Color.black.opacity(0.65)
         case .today:
             return Color.blue
+        case .upcomingWeek:
+            // Helles Gelb: Die kommende Woche soll auffallen, aber nicht wie
+            // ein zweites „Heute“ in Blau wirken.
+            return Color(red: 1.0, green: 0.90, blue: 0.45)
         case .doublePeriod:
             return Color.white.opacity(0.25)
         }
     }
 
     private var foregroundColor: Color {
-        .white
+        switch type {
+        case .upcomingWeek:
+            // Auf hellem Gelb wäre weiße Schrift unlesbar.
+            return Color(red: 0.45, green: 0.35, blue: 0.02)
+        default:
+            return .white
+        }
     }
 
     private var shadowColor: Color {
@@ -94,6 +110,8 @@ public struct StatusBadge: View {
             return Color.red.opacity(0.3)
         case .substitution:
             return Color.orange.opacity(0.3)
+        case .upcomingWeek:
+            return Color(red: 0.85, green: 0.70, blue: 0.15).opacity(0.35)
         default:
             return Color.black.opacity(0.15)
         }

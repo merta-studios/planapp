@@ -43,6 +43,74 @@ public struct TimetableView: View {
         return viewModel.shouldShowUntisSetupGuide(for: viewModel.selectedWeekStart)
     }
 
+    /// Ob der große „Filter zurücksetzen“-Button unter der Kopfzeile steht.
+    private var showsNotesFilterReset: Bool {
+        viewModel.viewMode == .notesOnly && !viewModel.activeTagFilter.isEmpty
+    }
+
+    /// Namen der aktiven Filter-Tags für die Unterzeile des Buttons.
+    private var activeFilterSummary: String {
+        let names = viewModel.tagSettings.tags
+            .filter { viewModel.activeTagFilter.contains($0.id) }
+            .map(\.displayName)
+        guard !names.isEmpty else {
+            return viewModel.activeTagFilter.count == 1 ? "1 Tag aktiv" : "\(viewModel.activeTagFilter.count) Tags aktiv"
+        }
+        return names.joined(separator: ", ")
+    }
+
+    /// Großer Liquid-Glass-Button unterhalb der Kopfzeile: setzt im Modus
+    /// „Nur Notizen“ alle Tag-Filter mit einem Tipp zurück.
+    @ViewBuilder
+    private var notesFilterResetBanner: some View {
+        if showsNotesFilterReset {
+            Button {
+                Haptics.tap()
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                    viewModel.activeTagFilter.removeAll()
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(.blue)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Filter zurücksetzen")
+                            .font(.system(size: 17, weight: .semibold, design: .default))
+                            .foregroundColor(.primary)
+                        Text(activeFilterSummary)
+                            .font(.system(size: 12, weight: .medium, design: .default))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+            .liquidGlassButton(cornerRadius: 22, tint: .blue)
+            .hoverEffect(.lift)
+            .padding(.horizontal, 16)
+            .padding(.top, 6)
+            .padding(.bottom, 10)
+            .transition(
+                .move(edge: .top)
+                    .combined(with: .opacity)
+                    .combined(with: .scale(scale: 0.96, anchor: .top))
+            )
+            .accessibilityLabel("Filter zurücksetzen")
+            .accessibilityHint("Entfernt alle Tag-Filter und zeigt wieder alle Notizen")
+        }
+    }
+
     public var body: some View {
         GeometryReader { geometry in
             let availableWidth = geometry.size.width
@@ -66,6 +134,12 @@ public struct TimetableView: View {
                 VStack(spacing: 0) {
                     // 1. TOP HEADER (Navigation & Einstellungen)
                     TimetableHeaderView()
+
+                    // 1b. FILTER ZURÜCKSETZEN: Großer Liquid-Glass-Button
+                    // direkt unter der Bar – bewusst nicht in die (engen)
+                    // Kopfzeilen gequetscht. Erscheint nur im Modus
+                    // „Nur Notizen“, sobald Tag-Filter aktiv sind.
+                    notesFilterResetBanner
 
                     Divider()
                         .padding(.horizontal, 16)
@@ -94,6 +168,9 @@ public struct TimetableView: View {
                         )
                     }
                 }
+                // Ein- und Ausblenden des Filter-Buttons folgt der Zustands-
+                // änderung (Filter geleert bzw. gesetzt) ruhig und sichtbar.
+                .animation(.spring(response: 0.34, dampingFraction: 0.86), value: showsNotesFilterReset)
 
                 // 2b. LADE-ANZEIGE: Wird eine Woche zum ersten Mal von der API
                 // geladen, dreht sich in der Mitte des Bildschirms ein
