@@ -713,7 +713,6 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         private func playSnapFeedback(at point: CGPoint) {
             guard let canvasView else { return }
             Haptics.pencilFeedback(in: canvasView, at: point)
-            Haptics.attachFeedbackView(canvasView)
             let generator = UIImpactFeedbackGenerator(style: .rigid)
             generator.impactOccurred(intensity: 1.0)
         }
