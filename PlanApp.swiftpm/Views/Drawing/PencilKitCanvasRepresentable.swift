@@ -23,14 +23,17 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     /// Dynamische Stiftdicke (PencilKit-Stift mit Druck/Geschwindigkeit) oder
     /// Kugelschreiber (Monoline, immer gleich dick).
     public let dynamicPenWidth: Bool
-    public let onUndoAvailable: (Bool) -> Void
-    public let onRedoAvailable: (Bool) -> Void
+    /// Stift-Stabilisierung als Stärke 0…1 (0 = aus). Fertige Striche werden
+    /// damit geglättet (`PenStabilization`).
+    public let penStabilization: Double
     public let onCanvasCreated: (PKCanvasView) -> Void
     public let onFingerPan: (CGSize) -> Void
-    /// Wird bei jeder Änderung der Zeichnung aufgerufen (Strich gezeichnet,
-    /// radiert, Undo/Redo im Canvas) – dient zum Zeitstempel der letzten
-    /// Strich-Mutation für das kombinierte Undo (Zeichnung + Textfelder).
-    public let onStrokeMutation: () -> Void
+    /// Meldet einen **fertigen** Schritt der Zeichenfläche: den Zustand
+    /// **vor** und **nach** der Änderung. Beides kommt vom Canvas – so legt
+    /// die Notiz-Historie genau einen Schritt „von – nach“ ab und kann nie
+    /// aus einem veralteten Zwischenstand entstehen. Während einer laufenden
+    /// Zeichen-/Radier-Geste meldet der Canvas erst am Ende der Geste.
+    public let onDrawingChange: (PKDrawing, PKDrawing) -> Void
     /// Zentrale Undo-Anfrage (Doppeltippen des Apple Pencil). Läuft
     /// über dasselbe kombinierte Undo wie der Toolbar-Button.
     public let onRequestUndo: () -> Void
@@ -73,11 +76,10 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         colorScheme: ColorScheme = .light,
         pencilOnlyDrawing: Bool = true,
         dynamicPenWidth: Bool = true,
-        onUndoAvailable: @escaping (Bool) -> Void = { _ in },
-        onRedoAvailable: @escaping (Bool) -> Void = { _ in },
+        penStabilizationPercent: Double = PenStabilization.defaultPercent,
         onCanvasCreated: @escaping (PKCanvasView) -> Void = { _ in },
         onFingerPan: @escaping (CGSize) -> Void = { _ in },
-        onStrokeMutation: @escaping () -> Void = {},
+        onDrawingChange: @escaping (PKDrawing, PKDrawing) -> Void = { _, _ in },
         onRequestUndo: @escaping () -> Void = {},
         onPencilInputDetected: @escaping () -> Void = {},
         onPencilSqueeze: @escaping (CGPoint?, CGVector) -> Void = { _, _ in },
@@ -96,12 +98,11 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         self.colorScheme = colorScheme
         self.pencilOnlyDrawing = pencilOnlyDrawing
         self.dynamicPenWidth = dynamicPenWidth
+        self.penStabilization = PenStabilization.strength(percent: penStabilizationPercent)
         self.onStraightLineSnap = onStraightLineSnap
-        self.onUndoAvailable = onUndoAvailable
-        self.onRedoAvailable = onRedoAvailable
         self.onCanvasCreated = onCanvasCreated
         self.onFingerPan = onFingerPan
-        self.onStrokeMutation = onStrokeMutation
+        self.onDrawingChange = onDrawingChange
         self.onRequestUndo = onRequestUndo
         self.onPencilInputDetected = onPencilInputDetected
         self.onPencilSqueeze = onPencilSqueeze
@@ -205,6 +206,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         canvasView.addInteraction(pencilInteraction)
 
         context.coordinator.canvasView = canvasView
+        context.coordinator.adoptInitialDrawing(drawing)
         applyTool(to: canvasView)
 
         DispatchQueue.main.async {
@@ -228,9 +230,17 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         // dadurch Undo-Einträge doppelt oder fehlerhaft legt.
         let isInking = uiView.drawingGestureRecognizer.state == .began
             || uiView.drawingGestureRecognizer.state == .changed
+        // Nur schreiben, wenn das Binding einen **wirklich neuen** Stand von
+        // außen bringt (Undo/Redo, „Seite leeren“, Einfügen, Laden):
+        // `lastSyncedDrawing` ist der Wert, der zuletzt auf die Fläche kam.
+        // Während einer laufenden Geste oder eines noch offenen Canvas-Stands
+        // ist das Binding absichtlich älter – ein Zurückschreiben würde dort
+        // den gerade gezeichneten Strich löschen.
         if !isInking,
            !context.coordinator.preservesCanvasDrawing,
-           uiView.drawing != drawing {
+           !context.coordinator.hasPendingDrawingChange,
+           uiView.drawing != drawing,
+           drawing != context.coordinator.lastSyncedDrawing {
             context.coordinator.applyExternalDrawing(drawing)
         }
         applyTool(to: uiView)
@@ -378,25 +388,54 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// Zeichenfläche nicht überschreiben.
         var preservesCanvasDrawing: Bool { straightSession != nil }
 
-        /// Zuletzt **von außen** gesetzte Zeichnung (Undo/Redo/Reset/gerade
-        /// Linie). Callbacks, die genau diesen Stand melden, sind kein neuer
-        /// Strich und dürfen weder zurückgeschrieben noch als Schritt
-        /// verzeichnet werden. Anders als ein einmaliges Flag kann dieser
-        /// Vergleich nicht „hängen bleiben“ und den nächsten echten Strich
-        /// verschlucken.
-        private var lastExternalDrawing: PKDrawing?
+        /// Der Stand, den die App für die Zeichenfläche führt. Binding,
+        /// Historie und dieser Stand sind **ein** Zustand: Jede Meldung von
+        /// PencilKit wird dagegen abgeglichen, sodass ein veralteter
+        /// Rückläufer weder Striche zurückholen noch die Historie verfälschen
+        /// kann.
+        private var authoritativeDrawing: PKDrawing?
+        /// Der Wert des Bindings, der zuletzt auf die Fläche geschrieben
+        /// wurde. Weicht das Binding davon ab, hat das Overlay einen wirklich
+        /// neuen Stand (Undo/Redo, „Seite leeren“, Einfügen, Laden) – nur dann
+        /// schreibt `updateUIView` die Fläche.
+        var lastSyncedDrawing: PKDrawing?
         /// Striche, die ein externer Stand (Undo/Redo/„Seite leeren“/Text-
-        /// Umwandlung) gerade **entfernt** hat. PencilKit liefert den alten
-        /// Stand gelegentlich asynchron nach; dann tauchten rückgängig
-        /// gemachte Striche beim nächsten Zeichnen wieder auf. Solche
-        /// Rückläufer werden am Canvas verworfen (siehe
-        /// `sanitizedAgainstResurrectedStrokes`).
+        /// Umwandlung) gerade **entfernt** hat. PencilKit liefert ältere
+        /// Stände gelegentlich asynchron nach; solche Geisterstriche kommen
+        /// nicht auf die Fläche zurück.
         private var removedByExternalApply: [PKStroke] = []
-        /// Anzahl der Striche auf der Zeichenfläche beim Beginn eines Stift-/
-        /// Marker-Strichs. Damit lässt sich prüfen, ob PencilKit den neuen
-        /// Strich auf einen veralteten Stand (mit rückgängig gemachten
-        /// Strichen) gesetzt hat.
-        private var pendingInkBeginCount: Int?
+        /// Ein Canvas-Stand, der noch nicht veröffentlicht ist: Er entsteht
+        /// während einer laufenden Zeichen-/Radier-Geste und wird erst danach
+        /// übernommen. Dadurch bekommt die Historie **einen** Schritt je
+        /// Geste statt vieler Zwischenstände.
+        var hasPendingDrawingChange = false
+        private var settleWorkItem: DispatchWorkItem?
+        /// Ob die **laufende** Geste radieren oder auswählen darf. Nur dann
+        /// dürfen Striche durch eine Canvas-Meldung verschwinden.
+        private var gestureAllowsRemovals = false
+        /// Ob die letzte Geste mit Stift oder Textmarker gezeichnet hat – nur
+        /// dann greift die Stift-Stabilisierung.
+        private var lastGestureWasInking = false
+        /// Nach einem externen Stand (Undo/Redo) ist der nächste Rückläufer
+        /// kein Radieren: Erst wenn PencilKit den Stand bestätigt hat oder der
+        /// Nutzer wieder selbst zeichnet, gelten Löschungen als Aktion.
+        private var awaitingExternalAcknowledgement = false
+        /// Kurzer Nachlauf nach dem Ende einer Geste: PencilKit meldet den
+        /// letzten Stand eines Strichs oft erst danach.
+        private static let drawingSettleDelay: TimeInterval = 0.12
+
+        /// Läuft gerade eine Zeichen-, Radier- oder Auswahl-Geste?
+        private var isCanvasGestureActive: Bool {
+            if strokeToolActive { return true }
+            guard let recognizer = canvasView?.drawingGestureRecognizer else { return false }
+            return recognizer.state == .began || recognizer.state == .changed
+        }
+
+        /// Übernimmt die Zeichnung, mit der die Fläche erzeugt wurde.
+        func adoptInitialDrawing(_ drawing: PKDrawing) {
+            authoritativeDrawing = drawing
+            lastSyncedDrawing = drawing
+        }
 
         /// Setzt eine Zeichnung von außen – ohne Write-back in die Historie.
         ///
@@ -408,18 +447,18 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// gerade nichts entfernt.
         func applyExternalDrawing(_ newDrawing: PKDrawing) {
             // Ein neuer, externer Stand entscheidet selbst über den Inhalt:
-            // eine eventuell noch offene Strich-Reparatur ist damit erledigt.
-            pendingInkBeginCount = nil
+            // ein noch offener Canvas-Stand ist damit erledigt.
+            discardPendingDrawingChange()
+            awaitingExternalAcknowledgement = true
             guard let canvasView else {
-                lastExternalDrawing = newDrawing
+                authoritativeDrawing = newDrawing
+                lastSyncedDrawing = newDrawing
                 return
             }
             let previous = canvasView.drawing
-            guard previous != newDrawing else {
-                lastExternalDrawing = newDrawing
-                return
-            }
-            lastExternalDrawing = newDrawing
+            authoritativeDrawing = newDrawing
+            lastSyncedDrawing = newDrawing
+            guard previous != newDrawing else { return }
             // Liste der entfernten Striche fortschreiben: neu entfernte kommen
             // hinzu, **bewusst wiederhergestellte** (Redo) fallen heraus. Ohne
             // diese Pflege würde ein per Redo zurückgeholter Strich bei der
@@ -442,11 +481,14 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             }
         }
 
-        /// Schreibt eine Zeichnung in die Fläche, ohne die Undo-Buchhaltung
-        /// (entfernte Striche, Sitzungs-Basis) anzufassen. Nur für den
-        /// eigenen Neuaufbau der geraden Linie.
-        private func writeCanvasDrawingWithoutBookkeeping(_ newDrawing: PKDrawing) {
-            lastExternalDrawing = newDrawing
+        /// Schreibt einen Stand in die Fläche, ohne die Undo-Buchhaltung
+        /// (entfernte Striche, Sitzungs-Basis) anzufassen und **ohne** das
+        /// Binding zu übernehmen. Nur für den eigenen Neuaufbau der geraden
+        /// Linie und für das Zurücksetzen eines veralteten Rückläufers:
+        /// `lastSyncedDrawing` bleibt dabei der Wert des Bindings, damit
+        /// `updateUIView` die Fläche nicht wieder überschreibt.
+        private func writeCanvasWithoutBookkeeping(_ newDrawing: PKDrawing) {
+            authoritativeDrawing = newDrawing
             guard let canvasView else { return }
             if canvasView.drawing != newDrawing {
                 canvasView.drawing = newDrawing
@@ -514,20 +556,56 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             rebuildStraightLine(force: true)
         }
 
-        /// Verwirft Striche, die ein externer Stand entfernt hat, aus einem
-        /// Canvas-Rückläufer. Alles, was darüber hinaus neu ist (z. B. der
-        /// gerade gezeichnete Strich), bleibt erhalten.
-        private func sanitizedAgainstResurrectedStrokes(_ drawing: PKDrawing) -> PKDrawing? {
-            guard !removedByExternalApply.isEmpty else { return nil }
-            let resurrected = drawing.strokes.filter { candidate in
-                removedByExternalApply.contains { Self.sameStroke($0, candidate) }
+        /// Bringt einen von PencilKit gemeldeten Stand mit dem Stand der App in
+        /// Einklang:
+        ///
+        /// * Bekannte Striche bleiben – in der gemeldeten Reihenfolge.
+        /// * Wirklich neue Striche kommen dazu, auch der laufende Strich, den
+        ///   PencilKit nach und nach in längeren Fassungen liefert.
+        /// * Der zuletzt gemeldete Strich darf sich **ersetzen**: Wenn er in
+        ///   der Meldung durch seine längere Fassung fehlt, wird die vorherige
+        ///   ersetzt statt verdoppelt (nur beim Zeichnen, nicht beim Radieren).
+        /// * Geisterstriche (von außen entfernt, z. B. per Rückgängig) kommen
+        ///   nicht zurück.
+        /// * Striche verschwinden nur, wenn gerade radiert/ausgewählt wird –
+        ///   sonst würde ein veralteter Rückläufer Striche löschen.
+        private func reconciledDrawing(
+            _ reported: PKDrawing,
+            base: PKDrawing,
+            allowsRemovals: Bool,
+            allowsStrokeReplacement: Bool
+        ) -> PKDrawing {
+            var baseStrokes = base.strokes
+            if allowsStrokeReplacement,
+               let last = baseStrokes.last,
+               reported.strokes.count >= baseStrokes.count,
+               !reported.strokes.contains(where: { Self.sameStroke($0, last) }) {
+                baseStrokes.removeLast()
             }
-            guard !resurrected.isEmpty else { return nil }
-            let kept = drawing.strokes.filter { candidate in
-                !removedByExternalApply.contains { Self.sameStroke($0, candidate) }
+
+            var strokes: [PKStroke] = []
+            strokes.reserveCapacity(max(reported.strokes.count, baseStrokes.count))
+            var usedBase = [Bool](repeating: false, count: baseStrokes.count)
+            for candidate in reported.strokes {
+                if let index = baseStrokes.indices.first(where: {
+                    !usedBase[$0] && Self.sameStroke(baseStrokes[$0], candidate)
+                }) {
+                    usedBase[index] = true
+                    strokes.append(candidate)
+                    continue
+                }
+                if removedByExternalApply.contains(where: { Self.sameStroke($0, candidate) }) {
+                    continue
+                }
+                strokes.append(candidate)
             }
-            guard kept.count != drawing.strokes.count else { return nil }
-            return PKDrawing(strokes: kept)
+
+            guard !allowsRemovals else { return PKDrawing(strokes: strokes) }
+
+            for (index, stroke) in baseStrokes.enumerated() where !usedBase[index] {
+                strokes.insert(stroke, at: min(index, strokes.count))
+            }
+            return PKDrawing(strokes: strokes)
         }
 
         init(_ parent: PencilKitCanvasRepresentable) {
@@ -536,6 +614,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
         deinit {
             holdWorkItem?.cancel()
+            settleWorkItem?.cancel()
             stillnessSampler?.invalidate()
         }
 
@@ -803,7 +882,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             straightSession?.straight = straight
             straightSession?.lastStraightBuild = now
             guard let straight else { return }
-            writeCanvasDrawingWithoutBookkeeping(
+            writeCanvasWithoutBookkeeping(
                 PKDrawing(strokes: session.base.strokes + [straight])
             )
         }
@@ -1021,11 +1100,6 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
         public func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             parent.onCanvasActivity()
-            if let external = lastExternalDrawing, canvasView.drawing == external {
-                // Externe Änderung (Undo/Redo/Reset/gerade Linie): Binding
-                // und Historie sind bereits aktuell – kein Write-back.
-                return
-            }
             if straightSession != nil {
                 // Während der geraden Linie entscheidet allein die Sitzung.
                 // PencilKit hat den abgebrochenen Strich eventuell doch
@@ -1034,46 +1108,159 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 adoptCommittedStroke(from: canvasView)
                 return
             }
-            // Rückläufer eines älteren Stands (PencilKit liefert den vor dem
-            // Undo begonnenen Strich nachträglich über die ganze alte
-            // Zeichnung): Die eben rückgängig gemachten Striche werden
-            // verworfen, alles wirklich Neue bleibt. Ohne diese Prüfung
-            // wanderten sie über das Binding zurück in die Zeichenfläche und
-            // tauchten beim nächsten Zeichnen wieder auf.
-            if let sanitized = sanitizedAgainstResurrectedStrokes(canvasView.drawing) {
-                applyExternalDrawing(sanitized)
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    self.parent.drawing = sanitized
-                    self.parent.onStrokeMutation()
-                }
+
+            let base = authoritativeDrawing ?? parent.drawing
+            let reported = canvasView.drawing
+            if reported == base {
+                // Meldung des eigenen, gerade gesetzten Stands (Undo/Redo,
+                // gerade Linie): nichts zu tun – und der externe Stand ist
+                // damit bestätigt.
+                awaitingExternalAcknowledgement = false
                 return
             }
-            lastExternalDrawing = nil
 
-            // Hat PencilKit den neuen Strich auf einen veralteten Stand
-            // gesetzt (mit bereits rückgängig gemachten Strichen), wird er
-            // hier auf den echten Stand (Binding) umgesetzt. Sonst tauchten
-            // rückgängig gemachte Striche beim nächsten Zeichnen wieder auf.
-            if let begin = pendingInkBeginCount {
-                let current = canvasView.drawing
-                let added = current.strokes.count - begin
-                if added > 0 {
-                    pendingInkBeginCount = nil
-                    let base = parent.drawing
-                    if current.strokes.count != base.strokes.count + added {
-                        let repaired = PKDrawing(strokes: base.strokes + current.strokes.suffix(added))
-                        applyExternalDrawing(repaired)
-                    }
-                }
+            let committed = reconciledDrawing(
+                reported,
+                base: base,
+                allowsRemovals: gestureAllowsRemovals && !awaitingExternalAcknowledgement,
+                allowsStrokeReplacement: hasPendingDrawingChange && lastGestureWasInking
+            )
+            if committed == base {
+                // Nur der Rückläufer eines veralteten Stands: Die Fläche
+                // bekommt den echten Stand zurück – ohne Binding-Änderung und
+                // ohne Historieneintrag.
+                awaitingExternalAcknowledgement = false
+                writeCanvasWithoutBookkeeping(base)
+                return
             }
 
-            DispatchQueue.main.async {
-                self.parent.drawing = canvasView.drawing
-                self.parent.onStrokeMutation()
-                self.parent.onUndoAvailable(false)
-                self.parent.onRedoAvailable(false)
+            authoritativeDrawing = committed
+            if isCanvasGestureActive {
+                // Mitten in der Geste: Nur den Stand übernehmen, nichts
+                // veröffentlichen. Der Schritt kommt gesammelt am Ende – sonst
+                // entstünden Zwischenschritte, die sich einzeln rückgängig
+                // machen ließen (genau das war das unzuverlässige Verhalten).
+                hasPendingDrawingChange = true
+                scheduleDrawingSettle()
+                return
             }
+            commitCanvasDrawing(committed, stabilize: lastGestureWasInking)
+        }
+
+        /// Veröffentlicht einen fertigen Canvas-Stand: Er wird – je nach
+        /// Einstellung geglättet (Stift-Stabilisierung) – zum aktuellen Stand
+        /// der App und dem Overlay **zusammen mit dem Zustand davor** gemeldet.
+        /// Die Historie verzeichnet damit genau einen Schritt „von – nach“.
+        private func commitCanvasDrawing(_ drawing: PKDrawing, stabilize: Bool) {
+            hasPendingDrawingChange = false
+            settleWorkItem?.cancel()
+            settleWorkItem = nil
+
+            let previous = parent.drawing
+            var final = drawing
+            if stabilize {
+                final = Self.stabilizedDrawing(
+                    drawing,
+                    comparedTo: previous,
+                    strength: parent.penStabilization
+                )
+            }
+            authoritativeDrawing = final
+            lastSyncedDrawing = final
+            if canvasView?.drawing != final {
+                canvasView?.drawing = final
+            }
+            guard final != previous else { return }
+            parent.drawing = final
+            parent.onDrawingChange(previous, final)
+        }
+
+        /// Wartet den letzten Stand eines Strichs ab und veröffentlicht ihn
+        /// dann. Solange der Stift noch aufliegt, passiert nichts.
+        private func scheduleDrawingSettle() {
+            settleWorkItem?.cancel()
+            let item = DispatchWorkItem { [weak self] in self?.settleDrawingChange() }
+            settleWorkItem = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.drawingSettleDelay, execute: item)
+        }
+
+        private func settleDrawingChange() {
+            settleWorkItem = nil
+            guard hasPendingDrawingChange else { return }
+            if isCanvasGestureActive {
+                scheduleDrawingSettle()
+                return
+            }
+            flushPendingDrawingChange()
+        }
+
+        /// Veröffentlicht den offenen Canvas-Stand sofort. Das Overlay ruft das
+        /// vor jedem Undo/Redo und vor dem Speichern auf, damit ein gerade
+        /// gezeichneter Strich erst zu einem Schritt wird und nicht
+        /// verschwindet.
+        func flushPendingDrawingChange() {
+            guard hasPendingDrawingChange, let committed = authoritativeDrawing else { return }
+            commitCanvasDrawing(committed, stabilize: lastGestureWasInking)
+        }
+
+        /// Verwirft einen offenen Canvas-Stand: Ein neuer, externer Stand
+        /// ersetzt ihn (die Schritte liefert dann die Historie des Overlays).
+        private func discardPendingDrawingChange() {
+            hasPendingDrawingChange = false
+            settleWorkItem?.cancel()
+            settleWorkItem = nil
+        }
+
+        /// Glättet die **neu hinzugekommenen** Striche eines Stands
+        /// (Stift-Stabilisierung). Bereits vorhandene Striche werden nie ein
+        /// zweites Mal geglättet – sonst würde die Schrift mit jedem weiteren
+        /// Strich weicher.
+        private static func stabilizedDrawing(
+            _ drawing: PKDrawing,
+            comparedTo previous: PKDrawing,
+            strength: Double
+        ) -> PKDrawing {
+            guard PenStabilization.strength(fromClamped: strength) > 0 else { return drawing }
+            var strokes = drawing.strokes
+            var changed = false
+            for (index, stroke) in strokes.enumerated() {
+                if previous.strokes.contains(where: { sameStroke($0, stroke) }) { continue }
+                guard let smoothed = stabilizedStroke(stroke, strength: strength) else { continue }
+                strokes[index] = smoothed
+                changed = true
+            }
+            guard changed else { return drawing }
+            return PKDrawing(strokes: strokes)
+        }
+
+        /// Ein Strich mit geglätteten **Positionen**. Punktdicke, Druck,
+        /// Neigung, Deckkraft und Zeitstempel bleiben unverändert – nur die
+        /// Punkte wandern auf die ruhigere Linie.
+        private static func stabilizedStroke(_ stroke: PKStroke, strength: Double) -> PKStroke? {
+            let points = points(of: stroke)
+            guard points.count > 2 else { return nil }
+            let locations = points.map(\.location)
+            let smoothed = PenStabilization.smoothedLocations(locations, strength: strength)
+            guard smoothed != locations else { return nil }
+            var strokePoints: [PKStrokePoint] = []
+            strokePoints.reserveCapacity(points.count)
+            for (index, point) in points.enumerated() {
+                strokePoints.append(
+                    PKStrokePoint(
+                        location: smoothed[index],
+                        timeOffset: point.timeOffset,
+                        size: point.size,
+                        opacity: point.opacity,
+                        force: point.force,
+                        azimuth: point.azimuth,
+                        altitude: point.altitude
+                    )
+                )
+            }
+            return PKStroke(
+                ink: stroke.ink,
+                path: PKStrokePath(controlPoints: strokePoints, creationDate: Date())
+            )
         }
 
         /// Übernimmt den von PencilKit abgelegten (schrägen) Strich als echte
@@ -1098,9 +1285,13 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             if straightSession != nil { return }
             strokeToolActive = true
             lastSignificantMovement = Date()
-            // Falls die Fläche (noch) nicht dem echten Stand entspricht, merkt
-            // sich die Reparatur oben die Ausgangslage dieses Strichs.
-            pendingInkBeginCount = isInkingToolActive ? canvasView.drawing.strokes.count : nil
+            // Nur Radierer und Lasso dürfen Striche entfernen; und nur ein
+            // Zeichen-Werkzeug darf die Stift-Stabilisierung auslösen.
+            gestureAllowsRemovals = !isInkingToolActive
+            lastGestureWasInking = isInkingToolActive
+            // Jetzt zeichnet der Nutzer selbst: gemeldete Änderungen sind
+            // wieder echte Aktionen, keine Rückläufer.
+            awaitingExternalAcknowledgement = false
             liveStrokeStart = canvasView.drawingGestureRecognizer.location(in: canvasView)
             liveStrokeEnd = liveStrokeStart
             if isInkingToolActive {
@@ -1132,6 +1323,11 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             holdWorkItem = nil
             liveStrokeStart = nil
             liveStrokeEnd = nil
+            // Den letzten Stand des Strichs abwarten (PencilKit meldet ihn oft
+            // erst kurz nach dem Abheben) und dann **einen** Schritt ablegen.
+            if hasPendingDrawingChange {
+                scheduleDrawingSettle()
+            }
             DispatchQueue.main.async { [weak self] in
                 self?.parent.onCanvasGestureEnded()
             }

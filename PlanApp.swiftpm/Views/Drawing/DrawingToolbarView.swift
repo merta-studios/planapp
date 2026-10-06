@@ -35,9 +35,6 @@ public struct DrawingToolbarView: View {
     public let onCopyTextToClipboard: () -> Void
     public let onUndo: () -> Void
     public let onRedo: () -> Void
-    public var undoCount: Int = 0
-    public var redoCount: Int = 0
-    public var historyRevision: Int = 0
     public var onUndoScrubBegan: (CGPoint, CGPoint, CGFloat?) -> Void = { _, _, _ in }
     public var onUndoScrubChanged: (CGSize, CGPoint) -> Void = { _, _ in }
     public var onUndoScrubEnded: () -> Void = {}
@@ -167,9 +164,6 @@ public struct DrawingToolbarView: View {
         onCopyTextToClipboard: @escaping () -> Void = {},
         onUndo: @escaping () -> Void,
         onRedo: @escaping () -> Void,
-        undoCount: Int = 0,
-        redoCount: Int = 0,
-        historyRevision: Int = 0,
         onUndoScrubBegan: @escaping (CGPoint, CGPoint, CGFloat?) -> Void = { _, _, _ in },
         onUndoScrubChanged: @escaping (CGSize, CGPoint) -> Void = { _, _ in },
         onUndoScrubEnded: @escaping () -> Void = {},
@@ -200,9 +194,6 @@ public struct DrawingToolbarView: View {
         self.onCopyTextToClipboard = onCopyTextToClipboard
         self.onUndo = onUndo
         self.onRedo = onRedo
-        self.undoCount = undoCount
-        self.redoCount = redoCount
-        self.historyRevision = historyRevision
         self.onUndoScrubBegan = onUndoScrubBegan
         self.onUndoScrubChanged = onUndoScrubChanged
         self.onUndoScrubEnded = onUndoScrubEnded

@@ -47,34 +47,27 @@ public enum NoteContentPolicy {
     }
 }
 
-/// Reine Regeln für die letzten drei Undo-Sitzungen und die Scrubber-Ticks.
+/// Reine Regeln für die letzten drei Undo-Sitzungen und die Scrubber-Anzeige.
+///
+/// Wichtig für die Ruhe der Anzeige: Die **Vorräte** einer Scrubber-Sitzung
+/// stehen beim Halten fest. Während des Ziehens wächst nichts nach – der Balken
+/// und der Ring zeigen also immer dieselbe Länge, egal wie weit man zieht.
 public enum NoteUndoSessionPolicy {
     public static let maximumSessions = 3
     public static let maximumSteps = 40
     public static let linearTickSpacing: Double = 32
 
     /// Ein voller Kreis entspricht einer Umdrehung. Jeder Schritt hat einen
-    /// **festen** Winkel: Gibt es weniger Schritte, ist der neue Kreisrand
-    /// einfach kürzer (Teilbogen) statt auf 360° gestreckt. Gibt es mehr
-    /// Schritte, läuft der Scrubber einfach **mehrere Umdrehungen** weiter –
-    /// bis zum letzten gespeicherten Schritt.
+    /// **festen** Winkel: Gibt es weniger Schritte, ist der Ring ein kürzerer
+    /// Teilbogen statt auf 360° gestreckt. Gibt es mehr Schritte als Stufen,
+    /// dreht man einfach weiter – bis zum letzten gespeicherten Schritt.
     public static let circularSweepAngle: Double = 2 * .pi
-    /// So viele Undo-Stufen passen auf eine Umdrehung (18° je Stufe).
+    /// So viele Rückgängig-Stufen passen auf eine Umdrehung (18° je Stufe).
     public static let circularMaxTicks = 20
 
     /// Fester Winkel eines Schritts (unabhängig von der Anzahl).
-    public static func circularStepAngle(undoCount: Int = 0) -> Double {
+    public static func circularStepAngle() -> Double {
         circularSweepAngle / Double(circularMaxTicks)
-    }
-
-    /// LRU: der neueste Schlüssel steht vorn, Duplikate entfallen, Maximum drei.
-    public static func trimmedKeys(_ keys: [String], inserting newest: String) -> [String] {
-        var result = [newest]
-        for key in keys where key != newest {
-            result.append(key)
-            if result.count == maximumSessions { break }
-        }
-        return result
     }
 
     /// So viele Undo-Ticks passen in die verfügbare Höhe (oder alle, wenn weniger).
@@ -92,14 +85,33 @@ public enum NoteUndoSessionPolicy {
         min(max(0, undoCount), max(0, maxTicks))
     }
 
-    /// Freie Stufen auf dem Ring, wenn bereits `undoTickCount` Undo-Stufen
-    /// sichtbar sind. So viel Platz bleibt für Wiederhol-Stufen – der Rest der
-    /// Umdrehung läuft über die dünnen Innenringe.
-    public static func circularRedoRoom(
-        undoTickCount: Int,
+    /// Die hervorgehobene Stufe des Rings nach `applied` rückgängig gemachten
+    /// Schritten. `0` heißt: noch nichts angewandt, der Knopf steht auf der
+    /// Startposition. Nach einer **vollen Umdrehung** gehört die Hervorhebung
+    /// auf die letzte Stufe – sonst sähe es aus, als wäre nichts passiert.
+    public static func circularHighlightedTick(
+        applied: Int,
         maxTicks: Int = circularMaxTicks
     ) -> Int {
-        max(0, max(0, maxTicks) - max(0, undoTickCount))
+        guard applied > 0, maxTicks > 0 else { return 0 }
+        let inRevolution = applied % maxTicks
+        return inRevolution == 0 ? maxTicks : inRevolution
+    }
+
+    /// Sichtbare Stufen des linearen Balkens: die grauen Rückgängig-Stufen
+    /// unter dem Knopf und die blauen Wiederhol-Stufen darüber. Beide Vorräte
+    /// stehen beim Halten fest; lediglich die Wiederhol-Stufen, die man sich
+    /// durch das Rückgängigmachen selbst verdient hat, kommen hinzu.
+    public static func linearScrubTicks(
+        undoCapacity: Int,
+        redoCapacity: Int,
+        appliedOffset: Int,
+        availableHeight: Double,
+        originY: Double
+    ) -> (undo: Int, redo: Int) {
+        let undo = linearTickCount(undoCount: undoCapacity, availableHeight: availableHeight)
+        let redoReach = max(0, redoCapacity) + max(0, appliedOffset)
+        return (undo, min(redoReach, linearRedoLimit(originY: originY)))
     }
 
     /// Wie viele Wiederhol-Stufen über den Knopf des linearen Balkens passen.
@@ -111,45 +123,5 @@ public enum NoteUndoSessionPolicy {
     ) -> Int {
         guard originY.isFinite, spacing > 0 else { return 0 }
         return max(0, Int(max(0, originY - 40) / spacing))
-    }
-
-    /// Sichtbare Stufen: die in dieser Sitzung bereits angewandten Schritte
-    /// **plus** die jetzt noch möglichen. Wird bei jeder Bewegung neu
-    /// berechnet, damit die Anzeige nie einen veralteten Stand zeigt.
-    public static func scrubTickCount(applied: Int, available: Int, limit: Int? = nil) -> Int {
-        let total = max(0, applied) + max(0, available)
-        guard let limit else { return total }
-        return min(total, max(0, limit))
-    }
-
-    /// Wie viele Umdrehungen der Kreis-Scrubber für so viele Schritte braucht
-    /// (0 ohne Schritte).
-    public static func circularRevolutionCount(
-        undoCount: Int,
-        maxTicks: Int = circularMaxTicks
-    ) -> Int {
-        guard undoCount > 0, maxTicks > 0 else { return 0 }
-        return (undoCount + maxTicks - 1) / maxTicks
-    }
-
-    /// Füllstände der zusätzlichen Umdrehungen (jeder Wert in Stufen, höchstens
-    /// `circularMaxTicks`). Die **laufende** Umdrehung steht nicht in dieser
-    /// Liste – für sie gibt es die Ticks auf dem Ring selbst. So bleibt
-    /// sichtbar, dass nach dem vollen Kreis noch weitere Schritte möglich
-    /// sind (mehrere Umdrehungen bis zum letzten gespeicherten Schritt).
-    public static func circularOverflowTicks(
-        applied: Int,
-        available: Int,
-        maxTicks: Int = circularMaxTicks
-    ) -> [Int] {
-        guard maxTicks > 0 else { return [] }
-        let openInCurrentRevolution = max(0, maxTicks - max(0, applied))
-        var remaining = max(0, available) - openInCurrentRevolution
-        var result: [Int] = []
-        while remaining > 0 {
-            result.append(min(maxTicks, remaining))
-            remaining -= maxTicks
-        }
-        return result
     }
 }

@@ -18,7 +18,14 @@ die vorhandenen Tastatur-Layout-Tests, dann:
 - drei Notizenspalten auf normalen iPad-Breiten, zwei/eine in schmalen Fenstern;
 - Größe und Abstände aller acht Palettenbuttons sowie den dickeren, näheren
   Squeeze-Hintergrundbogen, Randbegrenzung/Skalierung einschließlich des
-  Farbbogens für verschiedene Stiftrichtungen und Fenster.
+  Farbbogens für verschiedene Stiftrichtungen und Fenster;
+- die Scrubber-Mathematik: feste Stufen beim Halten, fester Winkel je Schritt
+  (18°), kürzerer Teilbogen bei wenigen Schritten, mehrere Umdrehungen bis zum
+  letzten gespeicherten Schritt und die Wiederhol-Stufen des Balkens;
+- die Stift-Stabilisierung: Prozent-/Stärke-Umrechnung, Begrenzung auf 0…100 %,
+  Monotonie und Obergrenze des Glättungsfensters, unveränderte Endpunkte,
+  gerade Linien bleiben gerade, Zittern wird um mehr als die Hälfte reduziert,
+  kurze Striche und ungültige Koordinaten bleiben unangetastet.
 
 Die Tests ersetzen keinen iOS-Build und keine Hardware-Tests. Insbesondere
 Touch-Typen, UIKit-Hit-Testing, Gesture-Cancellation und Liquid Glass müssen im
@@ -63,6 +70,33 @@ App-Package auf dem Gerät geprüft werden.
    Status kann weiterhin einen neuen Versuch starten, sobald keiner läuft.
 6. Ohne konfigurierte Zugangsdaten keine Request-Schleife; ohne bisherigen
    Erfolgszeitpunkt keine erfundene „Gerade eben“-Anzeige.
+
+### Rückgängig, „Seite leeren“ & Stift-Stabilisierung
+
+1. Zehn Striche schreiben, dann **fünfmal** Rückgängig tippen und sofort einen
+   neuen Strich zeichnen: Die fünf sichtbaren Striche bleiben stehen, der neue
+   kommt dazu – nichts verschwindet, und die Striche tauchen nicht wieder auf.
+2. Nach dem Rückgängigmachen **Wiederholen** tippen: exakt die zuletzt
+   rückgängig gemachten Striche kommen zurück, nicht mehr und nicht weniger.
+   Mehrfach hin und her wechseln – die Anzeige darf nie Schritte zeigen, die es
+   nicht gibt.
+3. Rückgängig in der Werkzeugleiste **einen Schritt** tippen und danach erneut
+   Rückgängig halten: Die Historie hat genau die Schritte, die man selbst
+   gemacht hat. Zweimal Rückgängig hintereinander macht also zwei *eigene*
+   Schritte rückgängig – niemals die Undo-Aktion selbst.
+4. Im „…“-Menü **„Seite leeren“** wählen: Der Zettel ist leer, und **Rückgängig
+   bringt nichts zurück** – auch nicht nach dem Schließen und erneuten Öffnen
+   der Notiz.
+5. *Zeichnen & Apple Pencil → Stift-Stabilisierung* auf **0 %** stellen und eine
+   zittrige Linie schreiben: Die Linie bleibt exakt so. Dann **100 %** wählen und
+   erneut schreiben: Die Linie ist ruhig und gerade, Anfang und Ende liegen aber
+   weiterhin genau dort, wo der Stift aufgesetzt und abgehoben hat. Ein kleines
+   „e“ muss auch bei 100 % noch als „e“ erkennbar bleiben.
+6. Eine gerade Linie (Stillhalten) und eine Radier-Geste mit eingeschalteter
+   Stabilisierung prüfen: Die gerade Linie bleibt gerade, radierte Striche
+   verschwinden ohne Reste und ohne Wiederauftauchen.
+7. Rückgängig per **Doppeltipp** des Apple Pencil und per **Squeeze-Palette**
+   testen: Beide nutzen dieselbe Historie wie der Toolbar-Knopf.
 
 ### Nur Notizen
 

@@ -200,25 +200,13 @@ public struct LessonDrawingOverlayView: View {
     /// Seiten-Griffe ausgeblendet.
     @State private var editingTextBoxID: UUID? = nil
 
-    // Undo/Redo für Textfelder (kombiniert mit dem Canvas-Undo der Zeichnung).
-    @StateObject private var textUndo = TextFieldUndoController()
-    /// Zeitstempel der letzten Strich-Mutation im Canvas – entscheidet bei
-    /// kombiniertem Undo, welcher der beiden Stacks zuerst dran ist.
-    @State private var lastStrokeMutation: Date = .distantPast
-    /// Eigene History, damit Undo/Redo die Auto-Schließung überlebt und der
-    /// Scrubber die Schrittzahl kennt.
+    /// Die **einzige** Rückgängig-Historie der Notiz: Zeichnung und
+    /// Textfelder liegen als gemeinsame Zustände darin. Sie überlebt das
+    /// automatische Schließen (siehe `persistEditingHistory`), damit
+    /// Rückgängig auch nach dem erneuten Öffnen weitergeht.
     @State private var editingHistory = NoteEditingHistory(
         current: NoteHistorySnapshot(drawingData: Data(), textBoxes: [])
     )
-    @State private var isApplyingHistory = false
-    /// Löscht das `isApplyingHistory`-Fenster. Bewusst länger als ein
-    /// Runloop: Der Canvas-Delegate-Callback auf ein von außen gesetztes
-    /// `canvasView.drawing` kann asynchron ankommen und würde andernfalls
-    /// den wiederhergestellten Zustand als „neuen Strich“ in die Historie
-    /// legen – das leerte unter anderem den Redo-Stack und machte
-    /// „Wiederholen“ (auch im Scrubber) unmöglich.
-    @State private var historyApplyWindowWorkItem: DispatchWorkItem?
-    @State private var historyRevision: Int = 0
     @State private var undoScrubSession: UndoScrubSession? = nil
     /// Mitaddierte Drehung des runden Scrubbers. Bewusst als Referenz (kein
     /// Neuzeichnen bei jeder Bewegung) und außerhalb der Session, damit der
@@ -401,9 +389,6 @@ public struct LessonDrawingOverlayView: View {
                             applyColorToSelectedTextBox(hex)
                         },
                         onUndo: { performUndo() },
-                        undoCount: editingHistory.undoCount,
-                        redoCount: editingHistory.redoCount,
-                        historyRevision: historyRevision,
                         onUndoScrubBegan: { buttonCenter, circleCenter, intendedRadius in
                             beginCircularUndoScrub(
                                 buttonWindowOrigin: buttonCenter,
@@ -449,7 +434,6 @@ public struct LessonDrawingOverlayView: View {
                 .allowsHitTesting(false)
             }
             .onAppear {
-                configureTextUndo()
                 applyDrawingDefaults()
                 loadExistingNote()
                 overlayWindowOrigin = geometry.frame(in: .global).origin
@@ -656,15 +640,17 @@ public struct LessonDrawingOverlayView: View {
                     // Pencil-Beschränkung ist dort nie aktiv.
                     pencilOnlyDrawing: isPhoneLayout ? false : viewModel.drawingSettings.applePencilOnly,
                     dynamicPenWidth: viewModel.drawingSettings.dynamicPenWidth,
+                    // Stift-Stabilisierung (0–100 %): Fertige Striche werden
+                    // geglättet, sobald der Stift abgehoben ist.
+                    penStabilizationPercent: viewModel.drawingSettings.penStabilization,
                     onCanvasCreated: { createdCanvas in
                         canvasView = createdCanvas
                     },
                     onFingerPan: { delta in
                         applyFingerPan(delta, in: viewport)
                     },
-                    onStrokeMutation: {
-                        lastStrokeMutation = Date()
-                        recordHistorySnapshot()
+                    onDrawingChange: { previous, current in
+                        recordDrawingChange(from: previous, to: current)
                     },
                     onRequestUndo: {
                         performPencilGesture(viewModel.drawingSettings.doubleTapAction)
@@ -720,8 +706,7 @@ public struct LessonDrawingOverlayView: View {
                         height: max(180, canvasHeight - headerHeight)
                     ),
                     registerUndo: { before, after in
-                        textUndo.push(before: before, after: after)
-                        recordHistorySnapshot()
+                        recordTextChange(from: before, to: after)
                     },
                     newTextColorHex: preferredTextColorHex,
                     newTextFontSize: viewModel.drawingSettings.defaultTextFontSize,
@@ -934,9 +919,6 @@ public struct LessonDrawingOverlayView: View {
                 onCopyTextToClipboard: { copyNoteTextToClipboard() },
                 onUndo: { performUndo() },
                 onRedo: { performRedo() },
-                undoCount: editingHistory.undoCount,
-                redoCount: editingHistory.redoCount,
-                historyRevision: historyRevision,
                 onUndoScrubBegan: { buttonCenter, _, _ in
                     beginLinearUndoScrub(buttonWindowOrigin: buttonCenter)
                 },
@@ -1079,79 +1061,86 @@ public struct LessonDrawingOverlayView: View {
         offset = clampedOffset(candidate, scale: scale, height: canvasHeight, in: viewport)
     }
 
-    // MARK: - Kombiniertes Undo/Redo (Zeichnung + Textfelder)
+    // MARK: - Rückgängig / Wiederholen (Zeichnung + Textfelder)
 
-    private func configureTextUndo() {
-        textUndo.getter = { textBoxes }
-        textUndo.drawingSetter = { data in
-            let restoredDrawing = (try? PKDrawing(data: data)) ?? PKDrawing()
-            // Nur den SwiftUI-Zustand setzen: Die Zeichenfläche übernimmt
-            // den Wert über `updateUIView` (einseitiger Schreibweg).
-            drawing = restoredDrawing
-            lastStrokeMutation = .distantPast
-        }
-        textUndo.setter = { restored in
-            textBoxes = restored
-            if let sel = selectedTextBoxID, !restored.contains(where: { $0.id == sel }) {
-                selectedTextBoxID = nil
-            }
-            if let edit = editingTextBoxID, !restored.contains(where: { $0.id == edit }) {
-                editingTextBoxID = nil
-            }
-        }
+    /// Übernimmt einen **fertigen** Zeichen-Schritt vom Canvas. Zustand vorher
+    /// und nachher kommen beide von dort – so kann weder ein veralteter
+    /// Zwischenstand noch das Rückgängigmachen selbst als Schritt in der
+    /// Historie landen.
+    private func recordDrawingChange(from previous: PKDrawing, to current: PKDrawing) {
+        drawing = current
+        let before = NoteHistorySnapshot(
+            drawingData: previous.dataRepresentation(),
+            textBoxes: textBoxes
+        )
+        let after = NoteHistorySnapshot(
+            drawingData: current.dataRepresentation(),
+            textBoxes: textBoxes
+        )
+        guard before != after else { return }
+        editingHistory.record(before: before, after: after)
+    }
+
+    /// Übernimmt einen fertigen Textfeld-Schritt. Zustand vorher und nachher
+    /// kommen direkt vom Textfeld-Layer; die Zeichnung bleibt unverändert.
+    private func recordTextChange(from before: [NoteTextBox], to after: [NoteTextBox]) {
+        guard showsEditor else { return }
+        let drawingData = drawing.dataRepresentation()
+        editingHistory.record(
+            before: NoteHistorySnapshot(drawingData: drawingData, textBoxes: before),
+            after: NoteHistorySnapshot(drawingData: drawingData, textBoxes: after)
+        )
+    }
+
+    /// Verzeichnet den aktuellen Zustand (Zeichnung + Textfelder) als Schritt
+    /// relativ zum zuletzt verzeichneten Zustand.
+    private func recordHistorySnapshot() {
+        guard showsEditor else { return }
+        editingHistory.record(
+            NoteHistorySnapshot(
+                drawingData: drawing.dataRepresentation(),
+                textBoxes: textBoxes
+            )
+        )
+    }
+
+    /// Holt den letzten, noch nicht veröffentlichten Canvas-Stand nach. Ein
+    /// gerade gezeichneter Strich wird damit erst zu einem Rückgängig-Schritt,
+    /// **bevor** Undo/Redo oder das Speichern darauf zugreifen.
+    private func flushPendingCanvasChange() {
+        (canvasView?.delegate as? PencilKitCanvasRepresentable.Coordinator)?
+            .flushPendingDrawingChange()
     }
 
     private func performUndo() {
+        flushPendingCanvasChange()
         guard let snapshot = editingHistory.undo() else { return }
         Haptics.tap()
         applyHistorySnapshot(snapshot)
-        historyRevision += 1
     }
 
     private func performRedo() {
+        flushPendingCanvasChange()
         guard let snapshot = editingHistory.redo() else { return }
         Haptics.tap()
         applyHistorySnapshot(snapshot)
-        historyRevision += 1
     }
 
     private func currentHistorySnapshot() -> NoteHistorySnapshot {
-        // Bewusst das SwiftUI-`drawing`-Binding statt `canvasView.drawing`:
-        // Bei Strichen pflegt der Delegate-Callback das Binding IMMER zuerst
-        // und ruft `onStrokeMutation` erst danach auf – das Binding ist hier
-        // also immer aktuell. Die Canvas-View dagegen kann asynchron einen
-        // Zwischenzustand liefern; ein solcher Wert hätte veraltete
-        // Undo-Schritte in die Historie geschrieben (und den Redo-Stack
-        // geleert).
         NoteHistorySnapshot(
             drawingData: drawing.dataRepresentation(),
             textBoxes: textBoxes
         )
     }
 
-    private func recordHistorySnapshot() {
-        guard !isApplyingHistory, showsEditor else { return }
-        editingHistory.record(currentHistorySnapshot())
-        historyRevision += 1
-    }
-
+    /// Setzt einen Zustand aus der Historie auf Zeichenfläche und Textfelder.
+    /// Die Zeichenfläche bekommt ihn als **externen** Stand; PencilKits
+    /// Rückmeldungen dazu sind danach keine neuen Schritte.
     private func applyHistorySnapshot(_ snapshot: NoteHistorySnapshot) {
-        isApplyingHistory = true
-        historyApplyWindowWorkItem?.cancel()
-        // `self` ist ein Struct: normaler Capture, @State-Writer bleibt gültig.
-        let window = DispatchWorkItem { [self] in
-            isApplyingHistory = false
+        if let restoredDrawing = snapshot.drawing() {
+            drawing = restoredDrawing
+            setCanvasDrawing(restoredDrawing)
         }
-        historyApplyWindowWorkItem = window
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: window)
-
-        let restoredDrawing = (try? PKDrawing(data: snapshot.drawingData)) ?? PKDrawing()
-        drawing = restoredDrawing
-        setCanvasDrawing(restoredDrawing)
-        // Der Canvas-eigene Undo-Stack ist deaktiviert (siehe
-        // `PencilKitCanvasRepresentable`); diese Aufrufe bleiben als
-        // Sicherheitsnetz für ältere PencilKit-Versionen.
-        canvasView?.undoManager?.removeAllActions()
         textBoxes = snapshot.textBoxes
         if let sel = selectedTextBoxID, !snapshot.textBoxes.contains(where: { $0.id == sel }) {
             selectedTextBoxID = nil
@@ -1159,7 +1148,6 @@ public struct LessonDrawingOverlayView: View {
         if let edit = editingTextBoxID, !snapshot.textBoxes.contains(where: { $0.id == edit }) {
             editingTextBoxID = nil
         }
-        lastStrokeMutation = Date()
     }
 
     /// Schreibt eine Zeichnung von außen auf die Zeichenfläche. Über den
@@ -1174,28 +1162,32 @@ public struct LessonDrawingOverlayView: View {
     }
 
     /// Verzeichnet jeden Zustand als eigenen Rückgängig-Schritt (gerade
-    /// Linie: 1. komplette schräge Linie, 2. Geradeziehen).
+    /// Linie: 1. komplette schräge Linie, 2. Geradeziehen). Die Zustände
+    /// kommen fertig aus der Zeichenfläche.
     private func commitDrawingSteps(_ steps: [PKDrawing]) {
-        guard !steps.isEmpty else { return }
+        guard !steps.isEmpty, showsEditor else { return }
         for step in steps {
             drawing = step
-            if !isApplyingHistory, showsEditor {
-                editingHistory.record(
-                    NoteHistorySnapshot(drawingData: step.dataRepresentation(), textBoxes: textBoxes)
-                )
-            }
+            editingHistory.record(
+                NoteHistorySnapshot(drawingData: step.dataRepresentation(), textBoxes: textBoxes)
+            )
         }
-        lastStrokeMutation = Date()
-        historyRevision += 1
     }
 
     private func persistEditingHistory() {
         viewModel.saveUndoSession(editingHistory.persistedSession(for: lesson.noteKey))
     }
 
+    /// Leert die Seite vollständig.
+    ///
+    /// Der Undo-Speicher dieser Seite wird dabei **mit zurückgesetzt**: Nach
+    /// dem Leeren gibt es keinen Zustand mehr, zu dem ein Rückgängig führen
+    /// dürfte – auch nicht nach dem automatischen Schließen und erneuten
+    /// Öffnen der Notiz.
     private func clearPage() {
-        let beforeBoxes = textBoxes
-        let beforeDrawing = (canvasView?.drawing ?? drawing).dataRepresentation()
+        // Einen noch offenen Strich zuerst veröffentlichen, damit er nicht
+        // später gegen den geleerten Zettel läuft.
+        flushPendingCanvasChange()
 
         selectedTextBoxID = nil
         editingTextBoxID = nil
@@ -1205,16 +1197,11 @@ public struct LessonDrawingOverlayView: View {
         drawing = emptyDrawing
         setCanvasDrawing(emptyDrawing)
         canvasView?.undoManager?.removeAllActions()
-        lastStrokeMutation = .distantPast
 
-        // Ein einziger Undo-Schritt holt Textfelder UND Striche zurück.
-        textUndo.push(
-            before: NoteUndoSnapshot(textBoxes: beforeBoxes, drawingData: beforeDrawing),
-            after: NoteUndoSnapshot(textBoxes: [], drawingData: emptyDrawing.dataRepresentation())
-        )
-        // Explizit in die Historie – nicht vom asynchronen Delegate-Event
-        // abhängen (der doppelte Record wird per Äquivalenz geprüft verworfen).
-        recordHistorySnapshot()
+        // Historie und gespeicherte Sitzung dieser Notiz auf den leeren
+        // Zustand zurücksetzen.
+        editingHistory.bootstrap(currentHistorySnapshot())
+        viewModel.discardUndoSession(for: lesson.noteKey)
     }
 
     // MARK: - Textfarbe des ausgewählten Feldes
@@ -1241,10 +1228,12 @@ public struct LessonDrawingOverlayView: View {
             return
         }
 
-        let before = textBoxes
         textBoxes[index].colorHex = normalized
         Haptics.select()
-        textUndo.push(before: before, after: textBoxes)
+        // Zuerst einen noch offenen Strich in die Historie holen: Sonst
+        // stünde der Farb-Schritt vor einem Zustand, der den Strich noch
+        // nicht kennt, und ein Rückgängig würde ihn verlieren.
+        flushPendingCanvasChange()
         recordHistorySnapshot()
     }
 
@@ -1440,6 +1429,9 @@ public struct LessonDrawingOverlayView: View {
 
     private func convertHandwritingToEditableText() {
         guard !isConvertingHandwriting else { return }
+        // Ein noch offener Strich gehört zuerst in die Historie: Er ist der
+        // Zustand, zu dem die Umwandlung zurückführt.
+        flushPendingCanvasChange()
 
         let currentDrawing = canvasView?.drawing ?? drawing
         guard !currentDrawing.strokes.isEmpty else {
@@ -1495,9 +1487,6 @@ public struct LessonDrawingOverlayView: View {
         selectedTextBoxID = nil
         editingTextBoxID = nil
 
-        let beforeBoxes = textBoxes
-        let beforeDrawing = (canvasView?.drawing ?? drawing).dataRepresentation()
-
         textBoxes.append(contentsOf: recognizedBoxes)
 
         let emptyDrawing = PKDrawing()
@@ -1507,21 +1496,15 @@ public struct LessonDrawingOverlayView: View {
         // sondern ersetzt. Der alte Stack würde sonst gegen den kombinierten
         // Schritt unten arbeiten.
         canvasView?.undoManager?.removeAllActions()
-        lastStrokeMutation = .distantPast
 
         // Ein einziger Rückgängig-Schritt macht die komplette Umwandlung
         // rückgängig: Die erzeugten Textfelder verschwinden und die
         // ursprüngliche Handschrift kommt zurück.
-        textUndo.push(
-            before: NoteUndoSnapshot(textBoxes: beforeBoxes, drawingData: beforeDrawing),
-            after: NoteUndoSnapshot(textBoxes: textBoxes, drawingData: emptyDrawing.dataRepresentation())
-        )
+        recordHistorySnapshot()
 
         toolSelection = .text
         Haptics.success()
         showToast("Handschrift umgewandelt: \(recognizedBoxes.count) Textfeld(er).")
-        // Explizit in die Historie (wie bei „Seite leeren“).
-        recordHistorySnapshot()
     }
 
     /// Größe der Zeichenfläche in Punkten – Basis für die Rückrechnung der
@@ -1681,12 +1664,14 @@ public struct LessonDrawingOverlayView: View {
         } else {
             editingHistory.bootstrap(current)
         }
-        historyRevision += 1
     }
 
     private func saveAndDismiss() {
         guard viewModel.isDrawingOverlayPresented, isExpanded else { return }
         dismissSqueezePalette()
+        // Ein noch offener Strich gehört in die Historie und in die
+        // gespeicherte Sitzung, bevor die Notiz geschlossen wird.
+        flushPendingCanvasChange()
 
         // Erst die Bearbeitung beenden: Dadurch gibt das UIKit-Textfeld den
         // First Responder ab und verwirft eine evtl. offene Fokus-Anfrage,
@@ -1964,11 +1949,12 @@ public struct LessonDrawingOverlayView: View {
             return
         }
 
+        // Erst den offenen Strich veröffentlichen, dann ersetzen: Der
+        // Rückgängig-Schritt vor dem Einfügen ist damit vollständig.
+        flushPendingCanvasChange()
+
         selectedTextBoxID = nil
         editingTextBoxID = nil
-
-        let beforeBoxes = textBoxes
-        let beforeDrawing = (canvasView?.drawing ?? drawing).dataRepresentation()
 
         canvasHeight = max(
             minimumCanvasHeight,
@@ -1994,15 +1980,11 @@ public struct LessonDrawingOverlayView: View {
         drawing = pastedDrawing
         setCanvasDrawing(pastedDrawing)
         canvasView?.undoManager?.removeAllActions()
-        lastStrokeMutation = .distantPast
-
-        textUndo.push(
-            before: NoteUndoSnapshot(textBoxes: beforeBoxes, drawingData: beforeDrawing),
-            after: NoteUndoSnapshot(textBoxes: textBoxes, drawingData: pastedDrawing.dataRepresentation())
-        )
 
         Haptics.success()
         showToast("Notiz eingefügt.")
+        // Ein einziger Schritt: Die eingefügte Notiz wird als Ganzes
+        // verzeichnet (der Zustand davor ist der zuletzt verzeichnete).
         recordHistorySnapshot()
     }
 
@@ -2062,28 +2044,24 @@ public struct LessonDrawingOverlayView: View {
 
     // MARK: - Undo-Scrubber
 
+    /// Beim Halten des Rückgängig-Knopfs stehen die **Vorräte fest**: So viele
+    /// Schritte die Historie in diesem Moment hergibt, so viele Stufen zeigt
+    /// der Balken/der Ring. Während des Ziehens wächst nichts nach – die
+    /// Anzeige bleibt ruhig, und es erscheinen keine Stufen, die es beim
+    /// Halten noch nicht gab.
     private func beginLinearUndoScrub(buttonWindowOrigin: CGPoint) {
         // Ein noch laufender Takt einer früheren Sitzung darf die neue nicht
         // mehr verändern.
         scrubStepWorkItem?.cancel()
         scrubStepWorkItem = nil
+        // Ein noch offener Strich gehört zuerst in die Historie.
+        flushPendingCanvasChange()
         let origin = overlayPoint(fromGlobal: buttonWindowOrigin)
-        // Wiederholbare Schritte nach OBEN (über den Knopf) begrenzen: Der
-        // verfügbare Platz bis zur Oberkante bestimmt, wie weit der Scrubber
-        // in die Redo-Richtung laufen darf.
-        let redoTicks = min(
-            editingHistory.redoCount,
-            NoteUndoSessionPolicy.linearRedoLimit(originY: Double(origin.y))
-        )
-        // Die möglichen Schritte werden **beim Halten** frisch gezählt – nicht
-        // beim Einblenden irgendeiner Bar und nicht aus einem alten Stand.
         undoScrubSession = UndoScrubSession(
             origin: origin,
             style: .linear,
             undoCapacity: editingHistory.undoCount,
-            redoCapacity: redoTicks,
-            availableUndoCount: editingHistory.undoCount,
-            availableRedoCount: editingHistory.redoCount,
+            redoCapacity: editingHistory.redoCount,
             currentOffset: 0,
             targetOffset: 0,
             circleStartAngle: 0,
@@ -2094,51 +2072,20 @@ public struct LessonDrawingOverlayView: View {
     }
 
     private func updateLinearUndoScrub(translationY: CGFloat) {
-        guard var session = undoScrubSession, session.style == .linear else { return }
-        refreshScrubAvailability(&session)
-        let available = max(0, session.containerHeight - session.origin.y - 28)
-        let undoTicks = NoteUndoSessionPolicy.linearTickCount(
-            undoCount: NoteUndoSessionPolicy.scrubTickCount(
-                applied: session.currentOffset,
-                available: session.availableUndoCount
-            ),
-            availableHeight: available
-        )
-        // Die Grenze bleibt der Vorrat der Sitzung: Er wächst mit jedem
-        // rückgängig gemachten Schritt mit, sodass man genau dorthin zurück
-        // kann, wo die Sitzung begann – begrenzt durch den Platz über dem
-        // Knopf, damit der Balken im Bild bleibt.
-        let redoTicks = min(
-            max(0, session.availableRedoCount),
-            NoteUndoSessionPolicy.linearRedoLimit(originY: Double(session.origin.y))
+        guard let session = undoScrubSession, session.style == .linear else { return }
+        let ticks = NoteUndoSessionPolicy.linearScrubTicks(
+            undoCapacity: session.undoCapacity,
+            redoCapacity: session.redoCapacity,
+            appliedOffset: session.currentOffset,
+            availableHeight: max(0, session.containerHeight - session.origin.y - 28),
+            originY: Double(session.origin.y)
         )
         let offset = UndoScrubMath.linearOffset(
             translationY: translationY,
-            undoTicks: undoTicks,
-            redoTicks: redoTicks
+            undoTicks: ticks.undo,
+            redoTicks: ticks.redo
         )
-        applyScrubOffset(offset, to: &session)
-    }
-
-    /// Liest die möglichen Schritte immer **wieder neu** aus der echten
-    /// Historie. Das ist der Unterschied zwischen „beim Halten aktuell“ und
-    /// „beim Einblenden eingefroren“: Nach dem Loslassen und erneutem Halten
-    /// (und während des Haltens) zeigt die Bar damit nie zu viele oder zu
-    /// wenige Stufen – auch keine blauen Redo-Stufen dort, wo nichts mehr
-    /// geht.
-    private func refreshScrubAvailability(_ session: inout UndoScrubSession) {
-        // Rückgängig: so viele Schritte, wie die Historie hergibt – begrenzt
-        // auf das, was die Sitzung selbst rückgängig machen kann (der Stand
-        // beim Halten; Wiederholtes zählt wieder dazu).
-        session.availableUndoCount = min(
-            max(0, editingHistory.undoCount),
-            session.maximumUndoOffset
-        )
-        // Wiederholen: der echte, **jetzt** vorhandene Vorrat. Wie viel davon
-        // in die Anzeige passt, entscheiden Balken und Ring (Platz bzw.
-        // freie Stufen) – dort wird dieselbe Zahl begrenzt, damit Knopf und
-        // Anzeige immer übereinstimmen.
-        session.availableRedoCount = max(0, editingHistory.redoCount)
+        applyScrubOffset(offset, to: session)
     }
 
     private func beginCircularUndoScrub(
@@ -2169,24 +2116,12 @@ public struct LessonDrawingOverlayView: View {
         // mehr verändern.
         scrubStepWorkItem?.cancel()
         scrubStepWorkItem = nil
-        // Die möglichen Schritte werden **beim Halten** frisch gezählt (nicht
-        // beim Einblenden der Kreis-Bar): Nach einem vorherigen Scrub stimmen
-        // Undo- und Redo-Vorrat damit wieder exakt.
+        flushPendingCanvasChange()
         undoScrubSession = UndoScrubSession(
             origin: button,
             style: .circular,
             undoCapacity: editingHistory.undoCount,
-            // Undo- und Redo-Bereich teilen sich höchstens einen vollen Kreis.
-            redoCapacity: min(
-                editingHistory.redoCount,
-                NoteUndoSessionPolicy.circularRedoRoom(
-                    undoTickCount: NoteUndoSessionPolicy.circularTickCount(
-                        undoCount: editingHistory.undoCount
-                    )
-                )
-            ),
-            availableUndoCount: editingHistory.undoCount,
-            availableRedoCount: editingHistory.redoCount,
+            redoCapacity: editingHistory.redoCount,
             currentOffset: 0,
             targetOffset: 0,
             circleStartAngle: startAngle,
@@ -2204,7 +2139,7 @@ public struct LessonDrawingOverlayView: View {
     }
 
     private func updateCircularUndoScrub(windowLocation: CGPoint) {
-        guard var session = undoScrubSession, session.style == .circular else { return }
+        guard let session = undoScrubSession, session.style == .circular else { return }
         let local = CGPoint(
             x: windowLocation.x - overlayWindowOrigin.x,
             y: windowLocation.y - overlayWindowOrigin.y
@@ -2236,60 +2171,37 @@ public struct LessonDrawingOverlayView: View {
         }
         undoScrubRotation.lastAngle = current
 
-        // Vor jeder Auswertung den echten Stand der Historie übernehmen: Die
-        // Anzeige folgt damit den tatsächlich möglichen Schritten, nicht einem
-        // Stand vom Einblenden der Bar.
-        refreshScrubAvailability(&session)
-
-        // `undoTicks` ist bewusst die **Gesamtzahl** der Schritte, nicht nur
-        // eine Umdrehung: Nach einem vollen Kreis läuft der Scrubber weiter
-        // (mehrere Umdrehungen) – bis zum letzten gespeicherten Schritt.
-        let undoTicks = max(0, session.undoCapacity)
-        // Der Redo-Bereich reicht genau so weit, wie die Bar ihn zeichnet:
-        // der **jetzt** mögliche Vorrat, begrenzt auf die freien Stufen des
-        // Rings. So gibt es keine blauen Stufen, die der Knopf nicht erreicht.
-        let maxTicks = max(1, NoteUndoSessionPolicy.circularMaxTicks)
-        let ticksInRevolution = NoteUndoSessionPolicy.scrubTickCount(
-            applied: session.stepsInCurrentRevolution,
-            available: session.availableUndoCount,
-            limit: maxTicks
-        )
-        let redoTicks = min(
-            max(0, session.availableRedoCount),
-            NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: ticksInRevolution)
-        )
-        let stepAngle = CGFloat(NoteUndoSessionPolicy.circularStepAngle(undoCount: 0))
+        let stepAngle = CGFloat(NoteUndoSessionPolicy.circularStepAngle())
         let offset = UndoScrubMath.circularOffset(
             accumulatedAngle: undoScrubRotation.accumulatedAngle,
-            undoTicks: undoTicks,
+            undoTicks: max(0, session.undoCapacity),
             stepAngle: stepAngle,
-            redoTicks: redoTicks
+            redoTicks: session.maximumRedoSteps(limit: nil)
         )
-        applyScrubOffset(offset, to: &session)
+        applyScrubOffset(offset, to: session)
     }
 
-    private func applyScrubOffset(_ offset: Int, to session: inout UndoScrubSession) {
-        // Vorwärts (0 … Undo-Schritte): Rückgängig – bis zum letzten
-        // gespeicherten Schritt, notfalls über mehrere Umdrehungen. Rückwärts
-        // (-Redo-Schritte … -1): Wiederholen, so weit der **jetzt** mögliche
-        // Vorrat reicht – dieselbe Zahl, die die Bar als blaue Stufen zeigt.
+    /// Übernimmt das Ziel des Fingers. Der Knopf **gleitet** dorthin; die
+    /// Schritte wandern einzeln hinterher (siehe `driveScrubSteps`).
+    private func applyScrubOffset(_ offset: Int, to session: UndoScrubSession) {
+        // Grenzen: höchstens so viele Schritte rückgängig, wie es beim Halten
+        // gab – und höchstens so weit wiederholen, wie die Anzeige Stufen
+        // zeigt (beim Balken begrenzt der Platz über dem Knopf).
+        let redoLimit: Int? = session.style == .linear
+            ? NoteUndoSessionPolicy.linearRedoLimit(originY: Double(session.origin.y))
+            : nil
         let clamped = min(
-            max(offset, -max(0, session.availableRedoCount)),
-            session.undoCapacity
+            max(offset, -session.maximumRedoSteps(limit: redoLimit)),
+            max(0, session.undoCapacity)
         )
         guard clamped != session.targetOffset else { return }
 
-        // Der Finger bestimmt das **Ziel**, nicht den sofort angewandten
-        // Schritt: Der Knopf gleitet animiert dorthin, die Schritte wandern
-        // einzeln hinterher (siehe `driveScrubSteps`). So springt die Anzeige
-        // nicht mehr mit einem Ruck mehrere Schritte auf einmal zurück.
-        session.targetOffset = clamped
-        // Die möglichen Schritte werden bei **jeder** Bewegung neu gezählt.
-        refreshScrubAvailability(&session)
+        var updated = session
+        updated.targetOffset = clamped
         withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
-            undoScrubSession = session
+            undoScrubSession = updated
         }
-        driveScrubSteps(towards: session)
+        driveScrubSteps(towards: updated)
     }
 
     /// Wendet die Scrub-Schritte einzeln und im festen Takt an – immer genau
@@ -2305,8 +2217,7 @@ public struct LessonDrawingOverlayView: View {
 
     private func stepScrub(towards session: UndoScrubSession) {
         // Die Sitzungs-Kennung verhindert, dass ein noch laufender Takt einer
-        // alten Sitzung Sprünge in einer neuen verursacht (seltene, aber
-        // sichtbare Fehlanzeige der Kreis-Bar).
+        // alten Sitzung Sprünge in einer neuen verursacht.
         guard let live = undoScrubSession,
               live.id == session.id,
               live.style == session.style else { return }
@@ -2317,18 +2228,14 @@ public struct LessonDrawingOverlayView: View {
         guard applied else {
             // Kein Schritt mehr verfügbar (z. B. Historie erschöpft): Ziel
             // korrigieren, damit die Anzeige nicht über den Vorrat hinausläuft.
-            guard var corrected = undoScrubSession, corrected.id == session.id else { return }
+            var corrected = live
             corrected.targetOffset = live.currentOffset
-            refreshScrubAvailability(&corrected)
             undoScrubSession = corrected
             return
         }
 
         var updated = live
         updated.currentOffset += delta > 0 ? 1 : -1
-        // Die hervorgehobene Stufe wandert kurz hinterher – der Knopf selbst
-        // gleitet bereits zum Finger.
-        refreshScrubAvailability(&updated)
         withAnimation(.easeOut(duration: 0.12)) {
             undoScrubSession = updated
         }
@@ -2346,16 +2253,16 @@ public struct LessonDrawingOverlayView: View {
     }
 
     private func performSilentUndo() -> Bool {
+        flushPendingCanvasChange()
         guard let snapshot = editingHistory.undo() else { return false }
         applyHistorySnapshot(snapshot)
-        historyRevision += 1
         return true
     }
 
     private func performSilentRedo() -> Bool {
+        flushPendingCanvasChange()
         guard let snapshot = editingHistory.redo() else { return false }
         applyHistorySnapshot(snapshot)
-        historyRevision += 1
         return true
     }
 

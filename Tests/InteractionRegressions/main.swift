@@ -205,14 +205,6 @@ expect(PencilGestureAction.toolbar.rawValue == "toolbar", "Squeeze-Standard ist 
 expect(PencilGestureAction.toggleEraser.rawValue == "toggleEraser", "Doppeltipp-Standard ist serialisierbar")
 expect(PencilGestureAction.allCases.count == 4, "Vier Pencil-Aktionen")
 
-expect(
-    NoteUndoSessionPolicy.trimmedKeys(["a", "b", "c"], inserting: "d") == ["d", "a", "b"],
-    "Nur die letzten drei Undo-Sitzungen"
-)
-expect(
-    NoteUndoSessionPolicy.trimmedKeys(["a", "b"], inserting: "b") == ["b", "a"],
-    "Erneutes Öffnen hebt die Sitzung nach vorn"
-)
 expect(NoteUndoSessionPolicy.linearTickCount(undoCount: 10, availableHeight: 96) == 3, "Balken stoppt am Bildschirmrand")
 expect(NoteUndoSessionPolicy.linearTickCount(undoCount: 2, availableHeight: 400) == 2, "Weniger Schritte als Höhe")
 expect(NoteUndoSessionPolicy.circularTickCount(undoCount: 80) == NoteUndoSessionPolicy.circularMaxTicks, "Maximal zwanzig Stufen auf dem vollen Kreis")
@@ -226,14 +218,14 @@ expect(
 )
 expect(
     abs(
-        NoteUndoSessionPolicy.circularStepAngle(undoCount: 20) * 20
+        NoteUndoSessionPolicy.circularStepAngle() * 20
             - NoteUndoSessionPolicy.circularSweepAngle
     ) < 0.000_1,
     "Zwanzig Schritte decken genau den vollen Kreis ab"
 )
 expect(
     abs(
-        NoteUndoSessionPolicy.circularStepAngle(undoCount: 4) * 4
+        NoteUndoSessionPolicy.circularStepAngle() * 4
             - NoteUndoSessionPolicy.circularSweepAngle * 4 / 20
     ) < 0.000_1,
     "Vier Schritte ergeben nur einen kurzen Teilbogen"
@@ -257,7 +249,7 @@ expect(abs(wrappedDelta - 0.2) < 0.001, "Sprung über die 180°-Grenze zählt al
 let backwardsDelta = UndoScrubMath.normalizedAngleDelta(from: CGFloat(-.pi + 0.1), to: CGFloat(.pi - 0.1))
 expect(abs(backwardsDelta + 0.2) < 0.001, "… und in die Gegenrichtung bleibt negativ")
 
-let scrubStepAngle = Double(NoteUndoSessionPolicy.circularStepAngle(undoCount: 8))
+let scrubStepAngle = Double(NoteUndoSessionPolicy.circularStepAngle())
 /// Kontinuierlich mitaddierter Winkel nach `steps` Schritten;
 /// `undoDirection: true` = in Bogenrichtung (undoSweepSign = −1 → negativer Winkel).
 func accumulatedAngle(steps: Int, undoDirection: Bool) -> CGFloat {
@@ -337,73 +329,76 @@ expect(
     "Der Scrubber endet erst am letzten gespeicherten Schritt"
 )
 
+// Die hervorgehobene Ring-Stufe: Sie wandert mit den angewandten Schritten und
+// liegt nach einer **vollen** Umdrehung auf der letzten Stufe – sonst sähe es
+// aus, als wäre nichts passiert.
 expect(
-    NoteUndoSessionPolicy.circularRevolutionCount(undoCount: 0) == 0,
-    "Ohne Schritte keine Umdrehung"
+    NoteUndoSessionPolicy.circularHighlightedTick(applied: 0) == 0,
+    "Ohne angewandten Schritt ist keine Stufe hervorgehoben"
 )
 expect(
-    NoteUndoSessionPolicy.circularRevolutionCount(undoCount: 20) == 1,
-    "Zwanzig Schritte sind eine Umdrehung"
+    NoteUndoSessionPolicy.circularHighlightedTick(applied: 5) == 5,
+    "Fünf Schritte: die fünfte Stufe ist hervorgehoben"
 )
 expect(
-    NoteUndoSessionPolicy.circularRevolutionCount(undoCount: 21) == 2,
-    "Ein Schritt darüber beginnt die zweite Umdrehung"
+    NoteUndoSessionPolicy.circularHighlightedTick(applied: 20) == 20,
+    "Ein voller Umlauf endet auf der letzten Stufe des Rings"
 )
 expect(
-    NoteUndoSessionPolicy.circularRevolutionCount(undoCount: 45) == 3,
-    "Fünfundvierzig Schritte brauchen drei Umdrehungen"
-)
-
-// Platz für Wiederhol-Stufen: nur die freien Stufen der Umdrehung. So zeigt
-// weder der Ring noch der Balken blaue Stufen, die der Knopf nicht erreicht.
-expect(
-    NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: 0) == 20,
-    "Ohne Undo-Stufen bleibt der ganze Ring für Wiederholungen"
+    NoteUndoSessionPolicy.circularHighlightedTick(applied: 25) == 5,
+    "Die zweite Umdrehung beginnt wieder bei der ersten Stufe"
 )
 expect(
-    NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: 8) == 12,
-    "Acht Undo-Stufen lassen zwölf Wiederhol-Stufen zu"
-)
-expect(
-    NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: 20) == 0,
-    "Ein voller Ring lässt keine Wiederhol-Stufe zu"
-)
-expect(
-    NoteUndoSessionPolicy.circularRedoRoom(undoTickCount: 30) == 0,
-    "Über den Ring hinaus bleibt kein Platz"
+    NoteUndoSessionPolicy.circularHighlightedTick(applied: -3) == 0,
+    "Wiederholen erzeugt keine Hervorhebung"
 )
 
-// Füllstände der zusätzlichen Umdrehungen (laufende Umdrehung = Ring-Ticks).
+// Die sichtbaren Stufen eines Haltens stehen beim Halten fest: Der Balken
+// wächst nicht nach, während man zieht. Nur die Wiederhol-Stufen, die man sich
+// durch das Rückgängigmachen selbst verdient, kommen hinzu – begrenzt durch
+// den Platz über dem Knopf.
+do {
+    let ticks = NoteUndoSessionPolicy.linearScrubTicks(
+        undoCapacity: 10, redoCapacity: 0, appliedOffset: 0,
+        availableHeight: 400, originY: 200
+    )
+    expect(ticks.undo == 10 && ticks.redo == 0, "Zehn Rückgängig-Stufen, keine Wiederhol-Stufen")
+}
+do {
+    let ticks = NoteUndoSessionPolicy.linearScrubTicks(
+        undoCapacity: 10, redoCapacity: 2, appliedOffset: 0,
+        availableHeight: 400, originY: 200
+    )
+    expect(ticks.undo == 10 && ticks.redo == 2, "Der Wiederhol-Vorrat beim Halten ist sichtbar")
+}
+do {
+    let ticks = NoteUndoSessionPolicy.linearScrubTicks(
+        undoCapacity: 4, redoCapacity: 2, appliedOffset: 4,
+        availableHeight: 400, originY: 200
+    )
+    expect(ticks.undo == 4 && ticks.redo == 5, "Jeder rückgängig gemachte Schritt ist wiederholbar")
+}
+do {
+    let ticks = NoteUndoSessionPolicy.linearScrubTicks(
+        undoCapacity: 4, redoCapacity: 0, appliedOffset: 4,
+        availableHeight: 400, originY: 30
+    )
+    expect(ticks.undo == 4 && ticks.redo == 0, "Ohne Platz über dem Knopf gibt es keinen Wiederhol-Bereich")
+}
 expect(
-    NoteUndoSessionPolicy.circularOverflowTicks(applied: 0, available: 20).isEmpty,
-    "Eine volle Umdrehung braucht keinen Innenring"
+    NoteUndoSessionPolicy.linearScrubTicks(
+        undoCapacity: 10, redoCapacity: 0, appliedOffset: 0,
+        availableHeight: 96, originY: 200
+    ).undo == 3,
+    "Der Balken stoppt am Bildschirmrand"
 )
 expect(
-    NoteUndoSessionPolicy.circularOverflowTicks(applied: 0, available: 25) == [5],
-    "Fünf Schritte über den Kreis hinaus: ein angebrochener Innenring"
+    NoteUndoSessionPolicy.circularTickCount(undoCount: 0) == 0,
+    "Ohne Schritte kein Ring"
 )
 expect(
-    NoteUndoSessionPolicy.circularOverflowTicks(applied: 18, available: 25) == [20, 3],
-    "Innenringe folgen dem echten Vorrat, nicht der Umdrehungszahl"
-)
-expect(
-    NoteUndoSessionPolicy.circularOverflowTicks(applied: 4, available: 2).isEmpty,
-    "Weniger als eine Umdrehung: kein Innenring"
-)
-
-// Live gezählte Stufen: angewandte + jetzt mögliche Schritte. Wird bei jeder
-// Bewegung neu gelesen – nicht beim Einblenden der Bar.
-expect(
-    NoteUndoSessionPolicy.scrubTickCount(applied: 3, available: 5) == 8,
-    "Angewandte und mögliche Schritte ergeben die sichtbaren Stufen"
-)
-expect(
-    NoteUndoSessionPolicy.scrubTickCount(applied: 5, available: 40, limit: 20) == 20,
-    "Auf dem Ring sind höchstens eine Umdrehung Stufen zu sehen"
-)
-expect(
-    NoteUndoSessionPolicy.scrubTickCount(applied: -2, available: 4) == 4,
-    "Negative (Redo-)Werte erzeugen keine Stufen"
+    NoteUndoSessionPolicy.circularHighlightedTick(applied: 3, maxTicks: 0) == 0,
+    "Ungültige Ringgröße ergibt keine Hervorhebung"
 )
 
 // MARK: - Stiftdicke: gemessenes Verhältnis (gerade Linien & Vorschauen)
@@ -563,5 +558,109 @@ expect(
     !InteractionPolicies.shouldResetFiltersWhenEnteringNotesOnly(previousMode: "notesOnly", newMode: "notesOnly"),
     "Erneutes Setzen desselben Modus löscht keine frischen Filter"
 )
+
+// MARK: - Stift-Stabilisierung (0–100 %)
+
+expect(
+    PenStabilization.defaultPercent == 0,
+    "Standard ist 0 % – ohne Einstellung bleibt die Schrift unverändert"
+)
+expect(
+    PenStabilization.clampedPercent(-20) == 0 && PenStabilization.clampedPercent(180) == 100,
+    "Der Prozentwert wird auf 0…100 begrenzt"
+)
+expect(
+    PenStabilization.clampedPercent(.nan) == PenStabilization.defaultPercent,
+    "Ungültige Werte fallen auf den Standard zurück"
+)
+expect(
+    PenStabilization.strength(percent: 0) == 0 && PenStabilization.strength(percent: 100) == 1,
+    "Prozent werden auf die Stärke 0…1 abgebildet"
+)
+expect(
+    abs(PenStabilization.strength(percent: 50) - 0.5) < 0.000_1,
+    "50 % ist die halbe Stärke"
+)
+expect(
+    PenStabilization.smoothingRadius(strength: 0) == 0,
+    "Ohne Stärke gibt es kein Glättungsfenster"
+)
+expect(
+    PenStabilization.smoothingRadius(strength: 1) > PenStabilization.smoothingRadius(strength: 0.2),
+    "Mehr Stärke bedeutet ein größeres Fenster"
+)
+expect(
+    PenStabilization.smoothingRadius(strength: 1) == PenStabilization.maximumRadius,
+    "Bei 100 % ist das Fenster maximal groß"
+)
+
+let zitterPoints: [CGPoint] = (0...40).map { index in
+    let x = CGFloat(index)
+    let jitter: CGFloat = index % 2 == 0 ? 0.9 : -0.9
+    return CGPoint(x: x, y: 10 + jitter)
+}
+expect(
+    PenStabilization.smoothedLocations(zitterPoints, strength: 0) == zitterPoints,
+    "Bei 0 % bleiben alle Punkte exakt stehen"
+)
+expect(
+    PenStabilization.smoothedLocations(zitterPoints, strength: 0)[0] == zitterPoints[0],
+    "Der erste Punkt bleibt unangetastet"
+)
+
+let smoothedZitter = PenStabilization.smoothedLocations(zitterPoints, strength: 1)
+expect(smoothedZitter.count == zitterPoints.count, "Die Glättung verschiebt nur Punkte")
+expect(smoothedZitter.first == zitterPoints.first, "Der Strich beginnt, wo der Stift aufgesetzt hat")
+expect(smoothedZitter.last == zitterPoints.last, "Der Strich endet, wo der Stift abgehoben hat")
+let wobbleBefore = zitterPoints.reduce(CGFloat(0)) { $0 + abs($1.y - 10) }
+let wobbleAfter = smoothedZitter.reduce(CGFloat(0)) { $0 + abs($1.y - 10) }
+expect(wobbleAfter < wobbleBefore * 0.5, "Das Zittern wird deutlich reduziert")
+
+// Eine gerade Linie darf die Glättung nicht verbiegen: Punkte auf der Geraden
+// bleiben (bis auf die festen Endpunkte) auf der Geraden.
+let linePoints: [CGPoint] = (0...20).map { CGPoint(x: CGFloat($0) * 3, y: CGFloat($0) * 6) }
+let smoothedLine = PenStabilization.smoothedLocations(linePoints, strength: 1)
+expect(
+    smoothedLine.allSatisfy { abs($0.y - ($0.x * 2)) < 0.000_1 },
+    "Eine gerade Linie bleibt gerade"
+)
+do {
+    let invalid = [CGPoint(x: .nan, y: 0), CGPoint(x: 1, y: 1), CGPoint(x: 2, y: 2)]
+    let untouched = PenStabilization.smoothedLocations(invalid, strength: 1)
+    expect(
+        untouched.count == invalid.count && untouched[0].x.isNaN && untouched[1] == invalid[1],
+        "Ungültige Koordinaten werden nicht angefasst"
+    )
+}
+expect(
+    PenStabilization.smoothedLocations([CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 1)], strength: 1).count == 2,
+    "Zu kurze Striche (Punkt/Tipp) bleiben unverändert"
+)
+
+expect(
+    PenStabilization.pathLength(of: [CGPoint(x: 0, y: 0), CGPoint(x: 3, y: 4)]) == 5,
+    "Die Weglänge summiert die Abstände der Punkte"
+)
+expect(
+    PenStabilization.smoothingRadius(strength: 1, pathLength: 22)
+        < PenStabilization.smoothingRadius(strength: 1),
+    "Kurze Striche werden nur mit einem kleinen Fenster geglättet"
+)
+do {
+    // Ein kleines „e“: Bei 100 % darf es seine Form behalten, nur das Zittern
+    // geht weg – sonst würde die Stabilisierung kurze Buchstaben zerdrücken.
+    let smallLoop: [CGPoint] = [
+        CGPoint(x: 0, y: 0), CGPoint(x: 2, y: 1), CGPoint(x: 4, y: 3),
+        CGPoint(x: 5, y: 6), CGPoint(x: 4, y: 8), CGPoint(x: 2, y: 9),
+        CGPoint(x: 1, y: 7), CGPoint(x: 1, y: 4), CGPoint(x: 0, y: 0)
+    ]
+    let smoothedLoop = PenStabilization.smoothedLocations(smallLoop, strength: 1)
+    var largestShift: CGFloat = 0
+    for (index, point) in smoothedLoop.enumerated() {
+        let shift = hypot(point.x - smallLoop[index].x, point.y - smallLoop[index].y)
+        largestShift = max(largestShift, shift)
+    }
+    expect(largestShift < 1.5, "Kleine Buchstaben behalten bei 100 % ihre Form")
+}
 
 print("\(checks) Interaktions-/Sync-/Layout-Checks erfolgreich.")

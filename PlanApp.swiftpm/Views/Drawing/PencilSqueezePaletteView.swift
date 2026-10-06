@@ -29,9 +29,6 @@ struct PencilSqueezePaletteView: View {
     let onApplyColorToSelectedText: (String) -> Void
 
     let onUndo: () -> Void
-    var undoCount: Int = 0
-    var redoCount: Int = 0
-    var historyRevision: Int = 0
     var onUndoScrubBegan: (CGPoint, CGPoint, CGFloat?) -> Void = { _, _, _ in }
     var onUndoScrubChanged: (CGSize, CGPoint) -> Void = { _, _ in }
     var onUndoScrubEnded: () -> Void = {}

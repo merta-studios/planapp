@@ -1,4 +1,5 @@
 import Foundation
+import PencilKit
 
 /// Ein Zustand der Zeichenfläche, der sich rückgängig machen bzw. wiederholen lässt.
 public struct NoteHistorySnapshot: Codable, Equatable {
@@ -8,6 +9,19 @@ public struct NoteHistorySnapshot: Codable, Equatable {
     public init(drawingData: Data, textBoxes: [NoteTextBox]) {
         self.drawingData = drawingData
         self.textBoxes = textBoxes
+    }
+
+    /// Die gespeicherte Zeichnung – `nil`, wenn kein gültiger Stand vorliegt.
+    ///
+    /// Leere Daten sind **kein** leerer Zettel, sondern ein fehlender Stand
+    /// (z. B. der Startwert, bevor eine Notiz geladen wurde). Ein solcher Wert
+    /// darf die Zeichenfläche niemals leeren – ein leerer Zettel wird dagegen
+    /// als gültige, wenn auch winzige Zeichnung gespeichert.
+    public func drawing() -> PKDrawing? {
+        guard !drawingData.isEmpty, let drawing = try? PKDrawing(data: drawingData) else {
+            return nil
+        }
+        return drawing
     }
 }
 
@@ -75,13 +89,22 @@ public final class NoteEditingHistory {
     }
 
     public func record(_ snapshot: NoteHistorySnapshot) {
-        guard snapshot != current else { return }
-        undoStack.append(current)
+        record(before: current, after: snapshot)
+    }
+
+    /// Verzeichnet einen Schritt **von** einem bekannten Zustand **nach** dem
+    /// neuen Zustand. Beides kommt vom Aufrufer (Zeichenfläche bzw.
+    /// Textfelder) – dadurch entsteht ein Schritt nie aus einem veralteten
+    /// Zwischenstand, und das Rückgängigmachen selbst kann nicht als eigener
+    /// Schritt in der Historie landen.
+    public func record(before: NoteHistorySnapshot, after: NoteHistorySnapshot) {
+        guard before != after else { return }
+        undoStack.append(before)
         if undoStack.count > NoteUndoSessionPolicy.maximumSteps {
             undoStack.removeFirst(undoStack.count - NoteUndoSessionPolicy.maximumSteps)
         }
         redoStack.removeAll()
-        current = snapshot
+        current = after
     }
 
     @discardableResult
