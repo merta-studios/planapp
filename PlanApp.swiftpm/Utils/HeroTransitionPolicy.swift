@@ -53,23 +53,16 @@ public enum NoteUndoSessionPolicy {
     public static let maximumSteps = 40
     public static let linearTickSpacing: Double = 32
 
-    /// Der runde Scrubber läuft einen **vollen** Kreis. Die Stufen verteilen
-    /// sich über die kompletten 360°, und das Zurückdrehen an der Startposition
-    /// ist erlaubt: Damit lassen sich genau die Schritte wiederherstellen, die
-    /// in derselben Scrub-Sitzung rückgängig gemacht wurden (Redo). Sprünge
-    /// über die Kreismitte gibt es nicht, weil der Winkel kontinuierlich
-    /// mitaddiert wird und nicht pro Position neu berechnet wird.
+    /// Der runde Scrubber kann höchstens einen vollen Kreis laufen. Jeder
+    /// Schritt hat einen **festen** Winkel: Gibt es weniger Schritte, ist der
+    /// neue Kreisrand einfach kürzer (Teilbogen) statt auf 360° gestreckt.
     public static let circularSweepAngle: Double = 2 * .pi
-    /// So viele Undo-Stufen passen auf den vollen Kreis (30° je Stufe bei
-    /// 12 Schritten).
-    public static let circularMaxTicks = 12
+    /// So viele Undo-Stufen passen auf den vollen Kreis (18° je Stufe).
+    public static let circularMaxTicks = 20
 
-    /// Winkel eines einzelnen Schritts auf dem vollen Kreis. Die Stufen
-    /// füllen den Kreis immer vollständig: Weniger Undo-Schritte bedeuten
-    /// größere Abstände (z. B. 4 Schritte à 90°), mehr sind auf 12 begrenzt.
-    public static func circularStepAngle(undoCount: Int) -> Double {
-        let ticks = max(1, circularTickCount(undoCount: undoCount))
-        return circularSweepAngle / Double(ticks)
+    /// Fester Winkel eines Schritts (unabhängig von der Anzahl).
+    public static func circularStepAngle(undoCount: Int = 0) -> Double {
+        circularSweepAngle / Double(circularMaxTicks)
     }
 
     /// LRU: der neueste Schlüssel steht vorn, Duplikate entfallen, Maximum drei.

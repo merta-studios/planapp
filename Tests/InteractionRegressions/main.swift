@@ -215,7 +215,7 @@ expect(
 )
 expect(NoteUndoSessionPolicy.linearTickCount(undoCount: 10, availableHeight: 96) == 3, "Balken stoppt am Bildschirmrand")
 expect(NoteUndoSessionPolicy.linearTickCount(undoCount: 2, availableHeight: 400) == 2, "Weniger Schritte als Höhe")
-expect(NoteUndoSessionPolicy.circularTickCount(undoCount: 80) == NoteUndoSessionPolicy.circularMaxTicks, "Maximal zwölf Stufen auf dem vollen Kreis")
+expect(NoteUndoSessionPolicy.circularTickCount(undoCount: 80) == NoteUndoSessionPolicy.circularMaxTicks, "Maximal zwanzig Stufen auf dem vollen Kreis")
 expect(NoteUndoSessionPolicy.circularTickCount(undoCount: 4) == 4, "Weniger Schritte als Stufen")
 
 // MARK: - Scrubber: voller Kreis, kontinuierliche Drehung, Redo der Sitzung
@@ -226,17 +226,17 @@ expect(
 )
 expect(
     abs(
-        NoteUndoSessionPolicy.circularStepAngle(undoCount: 12) * 12
+        NoteUndoSessionPolicy.circularStepAngle(undoCount: 20) * 20
             - NoteUndoSessionPolicy.circularSweepAngle
     ) < 0.000_1,
-    "Zwölf Schritte decken genau den vollen Kreis ab"
+    "Zwanzig Schritte decken genau den vollen Kreis ab"
 )
 expect(
     abs(
         NoteUndoSessionPolicy.circularStepAngle(undoCount: 4) * 4
-            - NoteUndoSessionPolicy.circularSweepAngle
+            - NoteUndoSessionPolicy.circularSweepAngle * 4 / 20
     ) < 0.000_1,
-    "Vier Schritte strecken sich auf den vollen Kreis"
+    "Vier Schritte ergeben nur einen kurzen Teilbogen"
 )
 
 expect(UndoScrubMath.linearOffset(translationY: 96, undoTicks: 10) == 3, "Lineare Schritte folgen dem Finger")

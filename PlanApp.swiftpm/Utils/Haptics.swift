@@ -54,25 +54,61 @@ public enum Haptics {
         selectionGenerator.selectionChanged()
     }
 
-    /// Einrasten (Undo-Scrub, gerade Linie). Mit gesetzter Feedback-Ansicht
-    /// vibriert der Apple Pencil, sonst das Gerät.
+    /// Letzte bekannte Stift-/Fingerposition in Fenster-Koordinaten. Der
+    /// Apple Pencil Pro vibriert nur, wenn die Haptik an einer Position im
+    /// Fenster ausgelöst wird (`UICanvasFeedbackGenerator`).
+    public static var lastPencilWindowLocation: CGPoint?
+    /// Generator pro Fenster – `UICanvasFeedbackGenerator` (iOS 17.5+) ist die
+    /// einzige API, deren Feedback iPadOS an den Apple Pencil Pro weiterleitet.
+    /// `UIImpactFeedbackGenerator` vibriert nur das (iPad-)Gerät selbst, und
+    /// iPads haben keinen Taptic-Motor – deshalb kam bisher nie etwas an.
+    private static var canvasGenerators = NSMapTable<UIView, AnyObject>.weakToStrongObjects()
+
+    /// Löst Apple-Pencil-Pro-Haptik an einer Fensterposition aus.
+    /// - Parameters:
+    ///   - view: beliebige View im Zielfenster
+    ///   - location: Position in Koordinaten von `view`
+    ///   - completed: `true` = „Pfad abgeschlossen“ (z. B. gerade Linie),
+    ///     sonst „Ausrichtung“ (Einrasten eines Schritts).
+    public static func pencilFeedback(in view: UIView?, at location: CGPoint? = nil, completed: Bool = false) {
+        guard let view else { return }
+        if #available(iOS 17.5, *) {
+            let host: UIView = view.window ?? view
+            let generator: UICanvasFeedbackGenerator
+            if let existing = canvasGenerators.object(forKey: host) as? UICanvasFeedbackGenerator {
+                generator = existing
+            } else {
+                generator = UICanvasFeedbackGenerator(view: host)
+                canvasGenerators.setObject(generator, forKey: host)
+            }
+            let point: CGPoint
+            if let location {
+                point = view.convert(location, to: host)
+            } else if let last = lastPencilWindowLocation, host is UIWindow {
+                point = last
+            } else {
+                point = view.convert(CGPoint(x: view.bounds.midX, y: view.bounds.midY), to: host)
+            }
+            if completed {
+                generator.pathCompleted(at: point)
+            } else {
+                generator.alignmentOccurred(at: point)
+            }
+            generator.prepare()
+        }
+    }
+
+    /// Einrasten (Undo-Scrub, gerade Linie). Vibriert den Apple Pencil Pro
+    /// über `UICanvasFeedbackGenerator` und zusätzlich (falls vorhanden) das Gerät.
     public static func pencilSnap(intensity: CGFloat = 1.0) {
         let clamped = min(1, max(0.4, intensity))
-        if let view = feedbackView, view.window != nil {
-            // Frisch an der echten Ansicht erzeugen, falls der gespeicherte
-            // Generator zu einer inzwischen entfernten View gehört.
-            if preparedPencilSnap == nil || preparedPencilView !== view {
-                attachFeedbackView(view)
-            }
-        }
+        pencilFeedback(in: feedbackView)
         if preparedPencilSnap == nil {
             let generator = UIImpactFeedbackGenerator(style: .rigid)
             generator.prepare()
             preparedPencilSnap = generator
         }
         preparedPencilSnap?.impactOccurred(intensity: clamped)
-        // Direkt wieder scharf stellen: Der nächste Einrast-Schritt kommt
-        // während des Ziehens oft schon wenige Millisekunden später.
         preparedPencilSnap?.prepare()
     }
 
