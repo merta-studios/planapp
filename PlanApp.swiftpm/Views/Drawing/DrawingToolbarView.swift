@@ -316,7 +316,9 @@ public struct DrawingToolbarView: View {
                         editingMarkerSlotIndex = nil
                         editingPenSlotIndex = index
                     } else {
-                        Haptics.select()
+                        // Werkzeugwahl: Rückmeldung auch am Apple Pencil Pro – die
+                        // Klick-Haptik allein erreicht den Stift nicht.
+                        Haptics.toolSelect()
                         toolSelection = .pen(color: slotColor)
                     }
                 } label: {
@@ -489,7 +491,8 @@ public struct DrawingToolbarView: View {
                         editingPenSlotIndex = nil
                         editingMarkerSlotIndex = index
                     } else {
-                        Haptics.select()
+                        // Werkzeugwahl: Rückmeldung auch am Apple Pencil Pro.
+                        Haptics.toolSelect()
                         toolSelection = .marker(color: slotColor)
                     }
                 } label: {
@@ -606,7 +609,7 @@ public struct DrawingToolbarView: View {
                 toggleToolHint(.text)
                 return
             }
-            Haptics.select()
+            Haptics.toolSelect()
             activeToolHint = nil
             toolSelection = .text
         } label: {
@@ -748,7 +751,7 @@ public struct DrawingToolbarView: View {
                 toggleToolHint(.eraser)
                 return
             }
-            Haptics.select()
+            Haptics.toolSelect()
             activeToolHint = nil
             toolSelection = .eraser
         } label: {
@@ -782,7 +785,7 @@ public struct DrawingToolbarView: View {
                 toggleToolHint(.lasso)
                 return
             }
-            Haptics.select()
+            Haptics.toolSelect()
             activeToolHint = nil
             toolSelection = .lasso
         } label: {

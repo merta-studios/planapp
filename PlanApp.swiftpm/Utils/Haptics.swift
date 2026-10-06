@@ -64,16 +64,51 @@ public enum Haptics {
     /// iPads haben keinen Taptic-Motor – deshalb kam bisher nie etwas an.
     private static var canvasGenerators = NSMapTable<UIView, AnyObject>.weakToStrongObjects()
 
-    /// Löst Apple-Pencil-Pro-Haptik an einer Fensterposition aus.
+    /// Werkzeugauswahl (Werkzeugleiste und Kreis-Bar): feines Auswahl-Feedback
+    /// plus Rückmeldung am Apple Pencil Pro.
+    ///
+    /// Ein `UISelectionFeedbackGenerator` erreicht den Stift nicht – deshalb
+    /// läuft die Stift-Haptik über `UICanvasFeedbackGenerator` an der zuletzt
+    /// gemessenen Stiftposition (siehe `PencilHoverLocationObserver`). Ohne
+    /// Pencil-Hover bleibt es beim normalen Auswahl-Feedback.
+    public static func toolSelect() {
+        select()
+        pencilFeedback(completed: true)
+    }
+
+    /// Apple-Pencil-Pro-Haptik an der letzten Stiftposition – oder, wenn keine
+    /// bekannt ist, in der Mitte der zuletzt angebundenen Haptik-View.
+    /// - Parameter completed: `true` = „Pfad abgeschlossen“ (z. B. gerade
+    ///   Linie oder Werkzeugwahl), sonst „Ausrichtung“ (Einrasten eines Schritts).
+    public static func pencilFeedback(completed: Bool = false) {
+        guard let host = feedbackHost() else { return }
+        emitPencilFeedback(at: hapticPoint(on: host), on: host, completed: completed)
+    }
+
+    /// Löst Apple-Pencil-Pro-Haptik aus.
     /// - Parameters:
     ///   - view: beliebige View im Zielfenster
-    ///   - location: Position in Koordinaten von `view`
+    ///   - location: Position in Koordinaten von `view`; ohne Angabe wird die
+    ///     letzte Stiftposition verwendet.
     ///   - completed: `true` = „Pfad abgeschlossen“ (z. B. gerade Linie),
     ///     sonst „Ausrichtung“ (Einrasten eines Schritts).
     public static func pencilFeedback(in view: UIView?, at location: CGPoint? = nil, completed: Bool = false) {
         guard let view else { return }
+        let host: UIView = view.window ?? view
+        let point: CGPoint
+        if let location {
+            point = view.convert(location, to: host)
+        } else {
+            point = hapticPoint(on: host)
+        }
+        emitPencilFeedback(at: point, on: host, completed: completed)
+    }
+
+    /// Gemeinsamer Kern: Ein `UICanvasFeedbackGenerator` je Fenster leitet die
+    /// Haptik an den Apple Pencil Pro weiter.
+    private static func emitPencilFeedback(at windowPoint: CGPoint, on host: UIView, completed: Bool) {
+        guard windowPoint.x.isFinite, windowPoint.y.isFinite else { return }
         if #available(iOS 17.5, *) {
-            let host: UIView = view.window ?? view
             let generator: UICanvasFeedbackGenerator
             if let existing = canvasGenerators.object(forKey: host) as? UICanvasFeedbackGenerator {
                 generator = existing
@@ -81,28 +116,42 @@ public enum Haptics {
                 generator = UICanvasFeedbackGenerator(view: host)
                 canvasGenerators.setObject(generator, forKey: host)
             }
-            let point: CGPoint
-            if let location {
-                point = view.convert(location, to: host)
-            } else if let last = lastPencilWindowLocation, host is UIWindow {
-                point = last
-            } else {
-                point = view.convert(CGPoint(x: view.bounds.midX, y: view.bounds.midY), to: host)
-            }
             if completed {
-                generator.pathCompleted(at: point)
+                generator.pathCompleted(at: windowPoint)
             } else {
-                generator.alignmentOccurred(at: point)
+                generator.alignmentOccurred(at: windowPoint)
             }
             generator.prepare()
         }
+    }
+
+    /// Fenster, an dem die Stift-Haptik hängt: bevorzugt das Fenster der
+    /// angebundenen Haptik-View, sonst das Schlüsselfenster.
+    private static func feedbackHost() -> UIView? {
+        if let window = feedbackView?.window { return window }
+        return UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }
+    }
+
+    /// Position der Haptik in Fensterkoordinaten: die letzte gemessene
+    /// Stiftposition, sonst die Mitte der angebundenen Haptik-View.
+    private static func hapticPoint(on host: UIView) -> CGPoint {
+        if let last = lastPencilWindowLocation {
+            return last
+        }
+        if let view = feedbackView, view.window === host {
+            return view.convert(CGPoint(x: view.bounds.midX, y: view.bounds.midY), to: host)
+        }
+        return CGPoint(x: host.bounds.midX, y: host.bounds.midY)
     }
 
     /// Einrasten (Undo-Scrub, gerade Linie). Vibriert den Apple Pencil Pro
     /// über `UICanvasFeedbackGenerator` und zusätzlich (falls vorhanden) das Gerät.
     public static func pencilSnap(intensity: CGFloat = 1.0) {
         let clamped = min(1, max(0.4, intensity))
-        pencilFeedback(in: feedbackView)
+        pencilFeedback()
         if preparedPencilSnap == nil {
             let generator = UIImpactFeedbackGenerator(style: .rigid)
             generator.prepare()

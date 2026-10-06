@@ -80,7 +80,7 @@ public struct TimetableView: View {
                             .foregroundColor(.blue)
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Filter zurücksetzen")
+                            Text("Aktive Filter:")
                                 .font(.system(size: 17, weight: .semibold, design: .default))
                                 .foregroundColor(.primary)
                             Text(activeFilterSummary)

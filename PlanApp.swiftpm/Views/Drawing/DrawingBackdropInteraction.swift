@@ -164,6 +164,65 @@ final class IntentionalFingerTapRecognizer: UIGestureRecognizer {
     override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
 }
 
+/// Beobachtet die Hover-Position des Apple Pencil im **ganzen Fenster** und
+/// legt sie in `Haptics.lastPencilWindowLocation` ab. Werkzeugleiste und
+/// Kreis-Bar können damit beim Antippen eines Werkzeugs genau an der
+/// Stiftspitze vibrieren – der PencilKit-Canvas sieht den Stift über den
+/// Bedienelementen nicht.
+struct PencilHoverLocationObserver: UIViewRepresentable {
+    let isEnabled: Bool
+
+    func makeUIView(context: Context) -> ObserverView { ObserverView() }
+
+    func updateUIView(_ view: ObserverView, context: Context) {
+        view.observesHover = isEnabled
+    }
+
+    static func dismantleUIView(_ view: ObserverView, coordinator: ()) {
+        view.observesHover = false
+        view.detach()
+    }
+
+    final class ObserverView: UIView {
+        var observesHover = false
+        private weak var observedWindow: UIWindow?
+        private lazy var hover: UIHoverGestureRecognizer = {
+            let recognizer = UIHoverGestureRecognizer(target: self, action: #selector(handleHover(_:)))
+            // Nur der Stift: Finger-/Pointer-Hover braucht keine eigene Haptik.
+            recognizer.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+            return recognizer
+        }()
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            detach()
+            guard let window else { return }
+            window.addGestureRecognizer(hover)
+            observedWindow = window
+        }
+
+        func detach() {
+            observedWindow?.removeGestureRecognizer(hover)
+            observedWindow = nil
+        }
+
+        @objc private func handleHover(_ recognizer: UIHoverGestureRecognizer) {
+            guard observesHover else { return }
+            switch recognizer.state {
+            case .began, .changed:
+                // `nil` = Fensterkoordinaten, genau die Einheit, die der
+                // UICanvasFeedbackGenerator für die Stift-Haptik erwartet.
+                let point = recognizer.location(in: nil)
+                if point.x.isFinite, point.y.isFinite {
+                    Haptics.lastPencilWindowLocation = point
+                }
+            default:
+                break
+            }
+        }
+    }
+}
+
 /// Beobachtet Fingertipps auf Papier, Kopfzeile, Werkzeugen und Tastatur, ohne
 /// eine transparente Vollbild-Hit-Fläche über PencilKit/Buttons zu legen.
 struct DrawingFingerTapObserver: UIViewRepresentable {
