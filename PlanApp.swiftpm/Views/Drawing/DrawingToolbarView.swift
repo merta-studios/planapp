@@ -41,6 +41,12 @@ public struct DrawingToolbarView: View {
     /// Während des linearen Scrubs verschwindet das feststehende Symbol,
     /// damit der Knopf sichtbar zum Strich rutscht statt zu teleportieren.
     public var hidesUndoGlyph: Bool = false
+    /// Ob es etwas rückgängig zu machen gibt. Ohne Schritt ist der Knopf sehr
+    /// transparent und nimmt keine Berührung an.
+    public let canUndo: Bool
+    /// Ob es etwas zu wiederholen gibt (gleiches Verhalten für den
+    /// Vorwärts-Knopf).
+    public let canRedo: Bool
     /// Verfügbare Breite über der Zeichenfläche. Ist die Leiste breiter,
     /// wird sie dünner und lässt sich seitlich scrollen.
     public var availableWidth: CGFloat = 2_000
@@ -164,6 +170,8 @@ public struct DrawingToolbarView: View {
         onCopyTextToClipboard: @escaping () -> Void = {},
         onUndo: @escaping () -> Void,
         onRedo: @escaping () -> Void,
+        canUndo: Bool = true,
+        canRedo: Bool = true,
         onUndoScrubBegan: @escaping (CGPoint, CGPoint, CGFloat?) -> Void = { _, _, _ in },
         onUndoScrubChanged: @escaping (CGSize, CGPoint) -> Void = { _, _ in },
         onUndoScrubEnded: @escaping () -> Void = {},
@@ -194,6 +202,8 @@ public struct DrawingToolbarView: View {
         self.onCopyTextToClipboard = onCopyTextToClipboard
         self.onUndo = onUndo
         self.onRedo = onRedo
+        self.canUndo = canUndo
+        self.canRedo = canRedo
         self.onUndoScrubBegan = onUndoScrubBegan
         self.onUndoScrubChanged = onUndoScrubChanged
         self.onUndoScrubEnded = onUndoScrubEnded
@@ -806,6 +816,7 @@ public struct DrawingToolbarView: View {
             squareButton(
                 systemName: "arrow.uturn.forward",
                 accessibilityLabel: "Wiederholen",
+                isEnabled: canRedo,
                 action: onRedo
             )
         }
@@ -813,18 +824,25 @@ public struct DrawingToolbarView: View {
 
     /// Rückgängig: kurzer Tipp macht einen Schritt. Eine Sekunde halten öffnet
     /// den vertikalen Scrubber (auch mit dem Finger).
+    ///
+    /// Ohne Rückgängig-Schritt ist der Knopf nur noch sehr blass und nimmt
+    /// keine Berührung an (der Scrubber gehört zum Knopf). Er bleibt bedienbar,
+    /// solange sich Schritte **wiederholen** lassen: Nach oben gezogen holt der
+    /// Scrubber sie zurück.
     private var undoScrubButton: some View {
-        ZStack {
+        let isInteractive = canUndo || canRedo
+        return ZStack {
             Image(systemName: "arrow.uturn.backward")
                 .font(.system(size: isCompactToolbar ? 13 : 15, weight: .medium))
                 .frame(width: buttonSize, height: buttonSize)
                 .background(Color(UIColor.tertiarySystemBackground).opacity(0.72))
                 .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
-                .opacity(hidesUndoGlyph ? 0 : 1)
+                .opacity(hidesUndoGlyph ? 0 : (canUndo ? 1 : 0.28))
 
             UndoScrubHandle(
                 allowsFinger: true,
                 style: .linear,
+                isEnabled: isInteractive,
                 onTap: {
                     Haptics.tap()
                     onUndo()
@@ -968,6 +986,7 @@ public struct DrawingToolbarView: View {
     private func squareButton(
         systemName: String,
         accessibilityLabel: String,
+        isEnabled: Bool = true,
         action: @escaping () -> Void
     ) -> some View {
         Button {
@@ -982,6 +1001,10 @@ public struct DrawingToolbarView: View {
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
+        .disabled(!isEnabled)
+        // Sehr transparent statt ausgegraut: Der Knopf bleibt sichtbar, ist
+        // aber klar nicht verfügbar und nimmt keinen Tipp an.
+        .opacity(isEnabled ? 1 : 0.28)
         .accessibilityLabel(accessibilityLabel)
     }
 }

@@ -29,6 +29,13 @@ struct PencilSqueezePaletteView: View {
     let onApplyColorToSelectedText: (String) -> Void
 
     let onUndo: () -> Void
+    /// Ob es etwas rückgängig zu machen gibt. Ohne Schritt ist der
+    /// Rückgängig-Knopf der Kreis-Bar nur noch sehr blass und nimmt keine
+    /// Berührung an.
+    var canUndo: Bool = true
+    /// Ob es etwas zu wiederholen gibt (der Kreis-Scrubber holt die Schritte
+    /// durch Drehen in die Gegenrichtung zurück).
+    var canRedo: Bool = true
     var onUndoScrubBegan: (CGPoint, CGPoint, CGFloat?) -> Void = { _, _, _ in }
     var onUndoScrubChanged: (CGSize, CGPoint) -> Void = { _, _ in }
     var onUndoScrubEnded: () -> Void = {}
@@ -262,16 +269,21 @@ struct PencilSqueezePaletteView: View {
     }
 
     private var undoButton: some View {
-        ZStack {
+        // Während eines laufenden Scrubber-Vorgangs bleibt der Knopf bedienbar
+        // (er gehört zur laufenden Sitzung); ebenso, solange Schritte
+        // wiederholt werden können – der Kreis holt sie zurück.
+        let isInteractive = canUndo || canRedo || hidesNonUndoElements
+        return ZStack {
             Image(systemName: "arrow.uturn.backward")
                 .font(.system(size: 18, weight: .semibold))
                 .frame(width: buttonSize, height: buttonSize)
                 .foregroundColor(.primary)
-                .opacity(hidesNonUndoElements ? 0 : 1)
+                .opacity(hidesNonUndoElements ? 0 : (canUndo ? 1 : 0.28))
 
             UndoScrubHandle(
                 allowsFinger: false,
                 style: .circular,
+                isEnabled: isInteractive,
                 circleCenterInGlobal: visualCircleCenter,
                 // Echter on-screen-Radius des Bogens: So wird der Undo-Kreis
                 // immer exakt so groß wie die Kreis-Bar selbst – er kann nicht

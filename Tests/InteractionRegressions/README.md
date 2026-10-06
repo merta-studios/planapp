@@ -21,18 +21,14 @@ die vorhandenen Tastatur-Layout-Tests, dann:
   Farbbogens für verschiedene Stiftrichtungen und Fenster;
 - die Scrubber-Mathematik: feste Stufen beim Halten, fester Winkel je Schritt
   (18°), kürzerer Teilbogen bei wenigen Schritten, mehrere Umdrehungen bis zum
-  letzten gespeicherten Schritt und die Wiederhol-Stufen des Balkens;
-- die Stift-Stabilisierung: Prozent-/Stärke-Umrechnung, Begrenzung auf 0…100 %,
-  Monotonie und Obergrenze des Glättungsfensters, unveränderte Endpunkte,
-  gerade Linien bleiben gerade, Zittern wird um mehr als die Hälfte reduziert,
-  kurze Striche und ungültige Koordinaten bleiben unangetastet.
+  letzten gespeicherten Schritt und die Wiederhol-Stufen des Balkens.
 
 Mit `TYPE_CHECK_ONLY=1 ./Tests/run-regressions.sh` werden dieselben Dateien nur
 übersetzt, ohne die Tests auszuführen – gedacht für einen Build-Check in CI
 (`.github/workflows/build-check.yml`, Swift auf Linux). Damit fallen
-Compilerfehler in diesen App-Dateien – etwa „`Cannot call value of non-function
-type 'Double'`“ in `PenStabilization` – schon im Pull Request auf und nicht erst
-beim Start der App.
+Compilerfehler in diesen App-Dateien – etwa ein falscher Argumentname in
+`InteractionPolicies` – schon im Pull Request auf und nicht erst beim Start der
+App.
 
 Die Tests ersetzen keinen iOS-Build und keine Hardware-Tests. Insbesondere
 Touch-Typen, UIKit-Hit-Testing, Gesture-Cancellation und Liquid Glass müssen im
@@ -78,7 +74,7 @@ App-Package auf dem Gerät geprüft werden.
 6. Ohne konfigurierte Zugangsdaten keine Request-Schleife; ohne bisherigen
    Erfolgszeitpunkt keine erfundene „Gerade eben“-Anzeige.
 
-### Rückgängig, „Seite leeren“ & Stift-Stabilisierung
+### Rückgängig, „Seite leeren“ & Lasso
 
 1. Zehn Striche schreiben, dann **fünfmal** Rückgängig tippen und sofort einen
    neuen Strich zeichnen: Die fünf sichtbaren Striche bleiben stehen, der neue
@@ -94,15 +90,26 @@ App-Package auf dem Gerät geprüft werden.
 4. Im „…“-Menü **„Seite leeren“** wählen: Der Zettel ist leer, und **Rückgängig
    bringt nichts zurück** – auch nicht nach dem Schließen und erneuten Öffnen
    der Notiz.
-5. *Zeichnen & Apple Pencil → Stift-Stabilisierung* auf **0 %** stellen und eine
-   zittrige Linie schreiben: Die Linie bleibt exakt so. Dann **100 %** wählen und
-   erneut schreiben: Die Linie ist ruhig und gerade, Anfang und Ende liegen aber
-   weiterhin genau dort, wo der Stift aufgesetzt und abgehoben hat. Ein kleines
-   „e“ muss auch bei 100 % noch als „e“ erkennbar bleiben.
-6. Eine gerade Linie (Stillhalten) und eine Radier-Geste mit eingeschalteter
-   Stabilisierung prüfen: Die gerade Linie bleibt gerade, radierte Striche
-   verschwinden ohne Reste und ohne Wiederauftauchen.
-7. Rückgängig per **Doppeltipp** des Apple Pencil und per **Squeeze-Palette**
+5. Frisch geöffnete (oder komplett leer geräumte) Notiz: **Rückgängig** und
+   **Wiederholen** in der Werkzeugleiste sind **sehr transparent und ohne
+   Wirkung** – ein Tippen und ein Halten (Scrubber) dürfen nichts auslösen.
+   Nach dem ersten Strich bzw. nach einmal Rückgängig werden sie wieder normal
+   und bedienbar. Dasselbe für den Rückgängig-Knopf der **Squeeze-Palette**
+   (Kreis) prüfen.
+6. **Gerade Linie**: Einen schrägen Strich zeichnen und am Ende still halten,
+   bis er einrastet. Danach **einmal** Rückgängig: Die **schräge** Linie steht
+   wieder da (nicht die gerade). Ein **zweites** Rückgängig entfernt den Strich
+   vollständig; **zweimal Wiederholen** baut beide Schritte wieder auf. Auch
+   über den gehaltenen Rückgängig-Knopf (Balken) und den Kreis-Scrubber
+   prüfen – keine Geisterstriche, keine geraden Linien an der Stelle der
+   schrägen.
+7. **Lasso**: Mehrere Striche schreiben, Lasso wählen und einen oder mehrere
+   Striche verschieben (auch schnell, mehrfach hin und her, mit Pausen). Der
+   Inhalt darf **nie verschwinden** – weder während des Ziehens noch danach.
+   **Einmal Rückgängig**: Die Striche liegen wieder an der alten Stelle. Eine
+   weitere Verschiebung ist ein eigener Schritt (Werkzeugwechsel oder
+   Schließen/Öffnen dazwischen ändert daran nichts).
+8. Rückgängig per **Doppeltipp** des Apple Pencil und per **Squeeze-Palette**
    testen: Beide nutzen dieselbe Historie wie der Toolbar-Knopf.
 
 ### Nur Notizen

@@ -216,6 +216,11 @@ public struct LessonDrawingOverlayView: View {
     /// Taktgeber für die einzeln angewandten Scrub-Schritte. Während der Knopf
     /// zum Finger gleitet, wandert die Anwendung Schritt für Schritt hinterher.
     @State private var scrubStepWorkItem: DispatchWorkItem? = nil
+    /// Ob die Zeichenfläche einen fertigen Stand hat, der noch nicht als
+    /// Rückgängig-Schritt veröffentlicht ist (z. B. eine Lasso-Verschiebung
+    /// während/nach der Auswahl). Solche Stände zählen als verfügbarer
+    /// Rückgängig-Schritt: Ein Antippen veröffentlicht sie zuerst.
+    @State private var hasPendingCanvasChange = false
     @State private var overlayWindowOrigin: CGPoint = .zero
     @State private var overlaySize: CGSize = .zero
 
@@ -270,6 +275,16 @@ public struct LessonDrawingOverlayView: View {
     }
 
     private var isUndoScrubbing: Bool { undoScrubSession != nil }
+
+    /// Ob es etwas rückgängig zu machen gibt. Ein noch offener Canvas-Stand
+    /// (Lasso-Verschiebung) zählt mit – er wird beim Antippen zuerst zu einem
+    /// eigenen Schritt und dann rückgängig gemacht.
+    private var canUndoChanges: Bool {
+        editingHistory.canUndo || hasPendingCanvasChange
+    }
+
+    /// Ob es etwas zu wiederholen gibt.
+    private var canRedoChanges: Bool { editingHistory.canRedo }
 
     public var body: some View {
         let display = viewModel.resolveSubjectDisplay(for: lesson)
@@ -389,6 +404,8 @@ public struct LessonDrawingOverlayView: View {
                             applyColorToSelectedTextBox(hex)
                         },
                         onUndo: { performUndo() },
+                        canUndo: canUndoChanges,
+                        canRedo: canRedoChanges,
                         onUndoScrubBegan: { buttonCenter, circleCenter, intendedRadius in
                             beginCircularUndoScrub(
                                 buttonWindowOrigin: buttonCenter,
@@ -640,9 +657,6 @@ public struct LessonDrawingOverlayView: View {
                     // Pencil-Beschränkung ist dort nie aktiv.
                     pencilOnlyDrawing: isPhoneLayout ? false : viewModel.drawingSettings.applePencilOnly,
                     dynamicPenWidth: viewModel.drawingSettings.dynamicPenWidth,
-                    // Stift-Stabilisierung (0–100 %): Fertige Striche werden
-                    // geglättet, sobald der Stift abgehoben ist.
-                    penStabilizationPercent: viewModel.drawingSettings.penStabilization,
                     onCanvasCreated: { createdCanvas in
                         canvasView = createdCanvas
                     },
@@ -685,6 +699,9 @@ public struct LessonDrawingOverlayView: View {
                     },
                     onCommitDrawingSteps: { steps in
                         commitDrawingSteps(steps)
+                    },
+                    onPendingDrawingChange: { pending in
+                        hasPendingCanvasChange = pending
                     }
                 )
                 .frame(
@@ -919,6 +936,8 @@ public struct LessonDrawingOverlayView: View {
                 onCopyTextToClipboard: { copyNoteTextToClipboard() },
                 onUndo: { performUndo() },
                 onRedo: { performRedo() },
+                canUndo: canUndoChanges,
+                canRedo: canRedoChanges,
                 onUndoScrubBegan: { buttonCenter, _, _ in
                     beginLinearUndoScrub(buttonWindowOrigin: buttonCenter)
                 },
