@@ -27,6 +27,13 @@ die vorhandenen Tastatur-Layout-Tests, dann:
   gerade Linien bleiben gerade, Zittern wird um mehr als die Hälfte reduziert,
   kurze Striche und ungültige Koordinaten bleiben unangetastet.
 
+Mit `TYPE_CHECK_ONLY=1 ./Tests/run-regressions.sh` werden dieselben Dateien nur
+übersetzt, ohne die Tests auszuführen – gedacht für einen Build-Check in CI
+(`.github/workflows/build-check.yml`, Swift auf Linux). Damit fallen
+Compilerfehler in diesen App-Dateien – etwa „`Cannot call value of non-function
+type 'Double'`“ in `PenStabilization` – schon im Pull Request auf und nicht erst
+beim Start der App.
+
 Die Tests ersetzen keinen iOS-Build und keine Hardware-Tests. Insbesondere
 Touch-Typen, UIKit-Hit-Testing, Gesture-Cancellation und Liquid Glass müssen im
 App-Package auf dem Gerät geprüft werden.
