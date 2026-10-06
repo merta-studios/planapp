@@ -21,6 +21,93 @@ struct TagPillAnchorPreference: PreferenceKey {
     }
 }
 
+/// Sprechblasen-Kontur für die Mini-Tag-Auswahl: abgerundetes Rechteck mit
+/// einer kleinen „Zunge“, die auf die Tag-Pille zeigt. Die Zunge sitzt auf
+/// der Kante, die zur Pille hin zeigt, und ist dort horizontal zentriert, wo
+/// die Pille steht (`tailCenterX`). Die Zunge wird aus dem **vollen** Rahmen
+/// gemalt; der eigentliche Inhalt bekommt die Zungenhöhe als Einzug
+/// (`bodyRect`), damit Liste und Titel nicht unter der Zunge laufen.
+struct TagPickerBubbleShape: Shape {
+    var cornerRadius: CGFloat = 18
+    var tailWidth: CGFloat = 22
+    var tailHeight: CGFloat = 13
+    /// Mittelpunkt der Zunge relativ zur Kantenbreite (0…1).
+    var tailCenterX: CGFloat = 0.5
+    /// `true`: Zunge an der **oberen** Kante (Panel liegt unter der Pille).
+    var tailOnTop: Bool = false
+
+    /// Innenfläche ohne Zunge – dort gehört der Content hingepasst.
+    func bodyRect(in rect: CGRect) -> CGRect {
+        if tailOnTop {
+            return CGRect(x: rect.minX, y: rect.minY + tailHeight, width: rect.width, height: max(0, rect.height - tailHeight))
+        }
+        return CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: max(0, rect.height - tailHeight))
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let body = bodyRect(in: rect)
+        let tailX = rect.minX + rect.width * min(max(tailCenterX, 0.08), 0.92)
+        let halfTail = tailWidth / 2
+        var path = Path()
+
+        if tailOnTop {
+            // Obere Kante mit eingebettetem Dreieck, das nach oben zeigt.
+            path.move(to: CGPoint(x: body.minX + cornerRadius, y: body.minY))
+            path.addLine(to: CGPoint(x: tailX - halfTail, y: body.minY))
+            path.addLine(to: CGPoint(x: tailX, y: rect.minY))
+            path.addLine(to: CGPoint(x: tailX + halfTail, y: body.minY))
+            path.addLine(to: CGPoint(x: body.maxX - cornerRadius, y: body.minY))
+            path.addQuadCurve(
+                to: CGPoint(x: body.maxX, y: body.minY + cornerRadius),
+                control: CGPoint(x: body.maxX, y: body.minY)
+            )
+            path.addLine(to: CGPoint(x: body.maxX, y: body.maxY - cornerRadius))
+            path.addQuadCurve(
+                to: CGPoint(x: body.maxX - cornerRadius, y: body.maxY),
+                control: CGPoint(x: body.maxX, y: body.maxY)
+            )
+            path.addLine(to: CGPoint(x: body.minX + cornerRadius, y: body.maxY))
+            path.addQuadCurve(
+                to: CGPoint(x: body.minX, y: body.maxY - cornerRadius),
+                control: CGPoint(x: body.minX, y: body.maxY)
+            )
+            path.addLine(to: CGPoint(x: body.minX, y: body.minY + cornerRadius))
+            path.addQuadCurve(
+                to: CGPoint(x: body.minX + cornerRadius, y: body.minY),
+                control: CGPoint(x: body.minX, y: body.minY)
+            )
+        } else {
+            // Untere Kante mit Dreieck, das nach unten zeigt.
+            path.move(to: CGPoint(x: body.minX + cornerRadius, y: body.minY))
+            path.addLine(to: CGPoint(x: body.maxX - cornerRadius, y: body.minY))
+            path.addQuadCurve(
+                to: CGPoint(x: body.maxX, y: body.minY + cornerRadius),
+                control: CGPoint(x: body.maxX, y: body.minY)
+            )
+            path.addLine(to: CGPoint(x: body.maxX, y: body.maxY - cornerRadius))
+            path.addQuadCurve(
+                to: CGPoint(x: body.maxX - cornerRadius, y: body.maxY),
+                control: CGPoint(x: body.maxX, y: body.maxY)
+            )
+            path.addLine(to: CGPoint(x: tailX + halfTail, y: body.maxY))
+            path.addLine(to: CGPoint(x: tailX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: tailX - halfTail, y: body.maxY))
+            path.addLine(to: CGPoint(x: body.minX + cornerRadius, y: body.maxY))
+            path.addQuadCurve(
+                to: CGPoint(x: body.minX, y: body.maxY - cornerRadius),
+                control: CGPoint(x: body.minX, y: body.maxY)
+            )
+            path.addLine(to: CGPoint(x: body.minX, y: body.minY + cornerRadius))
+            path.addQuadCurve(
+                to: CGPoint(x: body.minX + cornerRadius, y: body.minY),
+                control: CGPoint(x: body.minX, y: body.minY)
+            )
+        }
+        path.closeSubpath()
+        return path
+    }
+}
+
 private struct DrawingViewport {
     let size: CGSize
     let safeAreaInsets: EdgeInsets
@@ -120,6 +207,13 @@ public struct LessonDrawingOverlayView: View {
         current: NoteHistorySnapshot(drawingData: Data(), textBoxes: [])
     )
     @State private var isApplyingHistory = false
+    /// Löscht das `isApplyingHistory`-Fenster. Bewusst länger als ein
+    /// Runloop: Der Canvas-Delegate-Callback auf ein von außen gesetztes
+    /// `canvasView.drawing` kann asynchron ankommen und würde andernfalls
+    /// den wiederhergestellten Zustand als „neuen Strich“ in die Historie
+    /// legen – das leerte unter anderem den Redo-Stack und machte
+    /// „Wiederholen“ (auch im Scrubber) unmöglich.
+    @State private var historyApplyWindowWorkItem: DispatchWorkItem?
     @State private var historyRevision: Int = 0
     @State private var undoScrubSession: UndoScrubSession? = nil
     /// Taktgeber für die einzeln angewandten Scrub-Schritte. Während der Knopf
@@ -296,10 +390,11 @@ public struct LessonDrawingOverlayView: View {
                         undoCount: editingHistory.undoCount,
                         redoCount: editingHistory.redoCount,
                         historyRevision: historyRevision,
-                        onUndoScrubBegan: { buttonCenter, circleCenter in
+                        onUndoScrubBegan: { buttonCenter, circleCenter, intendedRadius in
                             beginCircularUndoScrub(
                                 buttonWindowOrigin: buttonCenter,
-                                circleCenterInGlobal: circleCenter
+                                circleCenterInGlobal: circleCenter,
+                                intendedRadius: intendedRadius
                             )
                         },
                         onUndoScrubChanged: { _, windowLocation in
@@ -816,11 +911,10 @@ public struct LessonDrawingOverlayView: View {
                 onCopyTextToClipboard: { copyNoteTextToClipboard() },
                 onUndo: { performUndo() },
                 onRedo: { performRedo() },
-                onDeselectSelectedTool: { deselectSelectedTool() },
                 undoCount: editingHistory.undoCount,
                 redoCount: editingHistory.redoCount,
                 historyRevision: historyRevision,
-                onUndoScrubBegan: { buttonCenter, _ in
+                onUndoScrubBegan: { buttonCenter, _, _ in
                     beginLinearUndoScrub(buttonWindowOrigin: buttonCenter)
                 },
                 onUndoScrubChanged: { translation, _ in
@@ -968,11 +1062,9 @@ public struct LessonDrawingOverlayView: View {
         textUndo.getter = { textBoxes }
         textUndo.drawingSetter = { data in
             let restoredDrawing = (try? PKDrawing(data: data)) ?? PKDrawing()
+            // Nur den SwiftUI-Zustand setzen: Die Zeichenfläche übernimmt
+            // den Wert über `updateUIView` (einseitiger Schreibweg).
             drawing = restoredDrawing
-            canvasView?.drawing = restoredDrawing
-            // Der Canvas-eigene Undo-Stack passt nach einem von außen
-            // gesetzten Zeichnungs-Zustand nicht mehr zur Realität.
-            canvasView?.undoManager?.removeAllActions()
             lastStrokeMutation = .distantPast
         }
         textUndo.setter = { restored in
@@ -1001,8 +1093,15 @@ public struct LessonDrawingOverlayView: View {
     }
 
     private func currentHistorySnapshot() -> NoteHistorySnapshot {
+        // Bewusst das SwiftUI-`drawing`-Binding statt `canvasView.drawing`:
+        // Bei Strichen pflegt der Delegate-Callback das Binding IMMER zuerst
+        // und ruft `onStrokeMutation` erst danach auf – das Binding ist hier
+        // also immer aktuell. Die Canvas-View dagegen kann asynchron einen
+        // Zwischenzustand liefern; ein solcher Wert hätte veraltete
+        // Undo-Schritte in die Historie geschrieben (und den Redo-Stack
+        // geleert).
         NoteHistorySnapshot(
-            drawingData: (canvasView?.drawing ?? drawing).dataRepresentation(),
+            drawingData: drawing.dataRepresentation(),
             textBoxes: textBoxes
         )
     }
@@ -1015,9 +1114,20 @@ public struct LessonDrawingOverlayView: View {
 
     private func applyHistorySnapshot(_ snapshot: NoteHistorySnapshot) {
         isApplyingHistory = true
+        historyApplyWindowWorkItem?.cancel()
+        // `self` ist ein Struct: normaler Capture, @State-Writer bleibt gültig.
+        let window = DispatchWorkItem { [self] in
+            isApplyingHistory = false
+        }
+        historyApplyWindowWorkItem = window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: window)
+
         let restoredDrawing = (try? PKDrawing(data: snapshot.drawingData)) ?? PKDrawing()
         drawing = restoredDrawing
         canvasView?.drawing = restoredDrawing
+        // Der Canvas-eigene Undo-Stack ist deaktiviert (siehe
+        // `PencilKitCanvasRepresentable`); diese Aufrufe bleiben als
+        // Sicherheitsnetz für ältere PencilKit-Versionen.
         canvasView?.undoManager?.removeAllActions()
         textBoxes = snapshot.textBoxes
         if let sel = selectedTextBoxID, !snapshot.textBoxes.contains(where: { $0.id == sel }) {
@@ -1027,11 +1137,6 @@ public struct LessonDrawingOverlayView: View {
             editingTextBoxID = nil
         }
         lastStrokeMutation = Date()
-        // `canvasViewDrawingDidChange` kommt asynchron. Erst danach wieder
-        // Snapshots aufnehmen, sonst würde Undo als neuer Strich gelten.
-        DispatchQueue.main.async {
-            isApplyingHistory = false
-        }
     }
 
     private func persistEditingHistory() {
@@ -1057,6 +1162,9 @@ public struct LessonDrawingOverlayView: View {
             before: NoteUndoSnapshot(textBoxes: beforeBoxes, drawingData: beforeDrawing),
             after: NoteUndoSnapshot(textBoxes: [], drawingData: emptyDrawing.dataRepresentation())
         )
+        // Explizit in die Historie – nicht vom asynchronen Delegate-Event
+        // abhängen (der doppelte Record wird per Äquivalenz geprüft verworfen).
+        recordHistorySnapshot()
     }
 
     // MARK: - Textfarbe des ausgewählten Feldes
@@ -1362,6 +1470,8 @@ public struct LessonDrawingOverlayView: View {
         toolSelection = .text
         Haptics.success()
         showToast("Handschrift umgewandelt: \(recognizedBoxes.count) Textfeld(er).")
+        // Explizit in die Historie (wie bei „Seite leeren“).
+        recordHistorySnapshot()
     }
 
     /// Größe der Zeichenfläche in Punkten – Basis für die Rückrechnung der
@@ -1637,6 +1747,9 @@ public struct LessonDrawingOverlayView: View {
     private func tagPickerOverlay(containerSize: CGSize, pillFrame: CGRect) -> some View {
         let contentHeight = 120 + CGFloat(max(1, viewModel.tagSettings.tags.count)) * 62
             + (noteTagID == nil ? 0 : 56)
+        // Extra-Zeile für die Sprechblasen-Zunge, damit der Panel-Rahmen
+        // Inhalt UND Zunge fasst.
+        let tailHeight: CGFloat = 13
         let frame = InteractionPolicies.tagPickerFrame(
             buttonMinX: Double(pillFrame.minX),
             buttonMaxX: Double(pillFrame.maxX),
@@ -1644,14 +1757,35 @@ public struct LessonDrawingOverlayView: View {
             buttonMaxY: Double(pillFrame.maxY),
             containerWidth: Double(containerSize.width),
             containerHeight: Double(containerSize.height),
-            contentHeight: Double(contentHeight)
+            contentHeight: Double(contentHeight) + Double(tailHeight)
         )
         let panel = CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height)
+        // `placesBelow` = Panel liegt UNTER der Pille → Zunge zeigt nach oben.
+        let tailOnTop = frame.placesBelow
+        let tailCenterX = panel.width > 0
+            ? min(max((pillFrame.midX - panel.minX) / panel.width, 0.08), 0.92)
+            : 0.5
+        let bubble = TagPickerBubbleShape(
+            cornerRadius: 18,
+            tailWidth: 22,
+            tailHeight: tailHeight,
+            tailCenterX: tailCenterX,
+            tailOnTop: tailOnTop
+        )
+        let bodyRect = bubble.bodyRect(in: panel)
+        // Anker der Skalierung: der Zungenspitzen-Punkt, also genau dort, wo
+        // die Pille liegt. Die Blase wächst von der Pille hinein und wieder
+        // heraus – kein einfaches Ein-/Ausblenden.
+        //
+        // Achtung: Die Skalierung wird AUF die bereits per `.offset`
+        // positionierte View angewandt; der Anker ist also in deren
+        // Layout-Fläche zu geben (dort liegt die Zungenspitze bei
+        // panel.minX + tailCenterX·W bzw. panel.minY bzw. panel.minY + H).
         let anchorUnit = UnitPoint(
-            x: panel.width > 0
-                ? min(max((pillFrame.midX - panel.minX) / panel.width, 0), 1)
-                : 0.5,
-            y: frame.placesBelow ? 0 : 1
+            x: panel.width > 0 ? tailCenterX + panel.minX / panel.width : 0.5,
+            y: tailOnTop
+                ? (panel.height > 0 ? panel.minY / panel.height : 0)
+                : (panel.height > 0 ? 1 + panel.minY / panel.height : 1)
         )
 
         ZStack(alignment: .topLeading) {
@@ -1661,27 +1795,34 @@ public struct LessonDrawingOverlayView: View {
                     dismissTagPicker()
                 }
 
-            NoteTagPickerView(
-                tags: viewModel.tagSettings.tags,
-                selectedTagID: noteTagID,
-                maxPanelHeight: panel.height,
-                onSelect: { newID in
-                    noteTagID = newID
-                    dismissTagPicker()
-                }
-            )
-            .frame(width: panel.width, height: panel.height, alignment: .top)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-            )
-            .shadow(color: Color.black.opacity(0.18), radius: 16, x: 0, y: 8)
+            // Panel = Sprechblase (Kontur inkl. Zunge) mit Inhalt in der
+            // Zungenfreien Innenfläche.
+            ZStack(alignment: .topLeading) {
+                bubble
+                    .fill(.regularMaterial)
+                    .shadow(color: Color.black.opacity(0.18), radius: 16, x: 0, y: 8)
+
+                bubble
+                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+
+                NoteTagPickerView(
+                    tags: viewModel.tagSettings.tags,
+                    selectedTagID: noteTagID,
+                    maxPanelHeight: bodyRect.height,
+                    onSelect: { newID in
+                        noteTagID = newID
+                        dismissTagPicker()
+                    }
+                )
+                .frame(width: bodyRect.width, height: bodyRect.height, alignment: .top)
+                .offset(x: bodyRect.minX, y: bodyRect.minY)
+            }
+            .frame(width: panel.width, height: panel.height, alignment: .topLeading)
             .offset(x: panel.minX, y: panel.minY)
             .transition(
                 .asymmetric(
-                    insertion: .scale(scale: 0.55, anchor: anchorUnit).combined(with: .opacity),
-                    removal: .scale(scale: 0.9, anchor: anchorUnit).combined(with: .opacity)
+                    insertion: .scale(scale: 0.4, anchor: anchorUnit).combined(with: .opacity),
+                    removal: .scale(scale: 0.4, anchor: anchorUnit).combined(with: .opacity)
                 )
             )
         }
@@ -1811,23 +1952,6 @@ public struct LessonDrawingOverlayView: View {
         }
     }
 
-    /// Zweiter Tipp auf ein bereits gewähltes Werkzeug: wieder ausschalten und
-    /// zum zuletzt benutzten Zeichenwerkzeug zurückkehren. Gibt es keines (oder
-    /// wäre es dasselbe Werkzeug), wird der Stift mit der ersten Slot-Farbe
-    /// gewählt – so führt der zweite Tipp nie in eine Sackgasse.
-    private func deselectSelectedTool() {
-        // Auf dem iPhone gibt es keinen Stift-Knopf und ohne Apple Pencil ist
-        // das Text-Werkzeug die einzige Eingabe – dort bleibt es gewählt.
-        if isPhoneLayout, case .text = toolSelection { return }
-
-        let fallbackHex = viewModel.drawingSettings.penColorSlots.first ?? "#1E1E1E"
-        if let last = lastInkingTool, last != toolSelection {
-            toolSelection = last
-        } else {
-            toolSelection = .pen(color: UIColor(hex: fallbackHex))
-        }
-    }
-
     private func toggleEraserAndLastTool() {
         Haptics.select()
         if case .eraser = toolSelection {
@@ -1867,10 +1991,19 @@ public struct LessonDrawingOverlayView: View {
 
     private func beginLinearUndoScrub(buttonWindowOrigin: CGPoint) {
         let origin = overlayPoint(fromGlobal: buttonWindowOrigin)
+        // Wiederholbare Schritte nach OBEN (über den Knopf) begrenzen: Der
+        // verfügbare Platz bis zur Oberkante bestimmt, wie weit der Scrubber
+        // in die Redo-Richtung laufen darf.
+        let redoSpace = max(0, origin.y - 40)
+        let redoTicks = min(
+            editingHistory.redoCount,
+            Int(redoSpace / CGFloat(NoteUndoSessionPolicy.linearTickSpacing))
+        )
         undoScrubSession = UndoScrubSession(
             origin: origin,
             style: .linear,
             startUndoCount: editingHistory.undoCount,
+            startRedoCount: redoTicks,
             currentOffset: 0,
             targetOffset: 0,
             circleStartAngle: 0,
@@ -1889,12 +2022,17 @@ public struct LessonDrawingOverlayView: View {
         )
         let offset = UndoScrubMath.linearOffset(
             translationY: translationY,
-            undoTicks: undoTicks
+            undoTicks: undoTicks,
+            redoTicks: session.startRedoCount
         )
         applyScrubOffset(offset, to: &session)
     }
 
-    private func beginCircularUndoScrub(buttonWindowOrigin: CGPoint, circleCenterInGlobal: CGPoint) {
+    private func beginCircularUndoScrub(
+        buttonWindowOrigin: CGPoint,
+        circleCenterInGlobal: CGPoint,
+        intendedRadius: CGFloat? = nil
+    ) {
         let button = overlayPoint(fromGlobal: buttonWindowOrigin)
         let center: CGPoint
         if circleCenterInGlobal != .zero {
@@ -1904,12 +2042,20 @@ public struct LessonDrawingOverlayView: View {
         } else {
             center = button
         }
-        let radius = hypot(button.x - center.x, button.y - center.y)
+        // Radius: bevorzugt den von der Palette gemeldeten on-screen-Bogen
+        // (exakt so groß wie die Kreis-Bar). Nur wenn der nicht verfügbar
+        // ist, entsteht er aus dem Abstand Knopf → Mitte; die Fallback-Mitte
+        // (Hover-Punkt) kann sonst zu großen Kreisen führen.
+        var radius = hypot(button.x - center.x, button.y - center.y)
+        if let intended = intendedRadius, intended > 8 {
+            radius = intended
+        }
         let startAngle = atan2(button.y - center.y, button.x - center.x)
         undoScrubSession = UndoScrubSession(
             origin: button,
             style: .circular,
             startUndoCount: editingHistory.undoCount,
+            startRedoCount: editingHistory.redoCount,
             currentOffset: 0,
             targetOffset: 0,
             circleStartAngle: startAngle,
@@ -1940,23 +2086,33 @@ public struct LessonDrawingOverlayView: View {
         )
         guard distanceToCenter > 12 else { return }
 
+        let current = atan2(local.y - session.circleCenter.y, local.x - session.circleCenter.x)
+        if let last = session.circleLastAngle {
+            // Die Drehung wird Schritt für Schritt **mitaddiert** und nie aus
+            // der absoluten Position neu berechnet. So bleiben auch ein
+            // voller Umlauf (360°) und das Zurückdrehen zur Startposition
+            // stabil – an der Startposition selbst springt nichts um.
+            session.circleAccumulatedAngle += UndoScrubMath.normalizedAngleDelta(from: last, to: current)
+        }
+        session.circleLastAngle = current
+
         let undoTicks = NoteUndoSessionPolicy.circularTickCount(undoCount: session.startUndoCount)
-        let stepAngle = CGFloat(NoteUndoSessionPolicy.circularStepAngle())
+        let stepAngle = CGFloat(NoteUndoSessionPolicy.circularStepAngle(undoCount: session.startUndoCount))
         let offset = UndoScrubMath.circularOffset(
-            from: session.circleStartAngle,
-            to: local,
-            center: session.circleCenter,
+            accumulatedAngle: session.circleAccumulatedAngle,
             undoTicks: undoTicks,
-            stepAngle: stepAngle
+            stepAngle: stepAngle,
+            redoTicks: session.startRedoCount
         )
         applyScrubOffset(offset, to: &session)
     }
 
     private func applyScrubOffset(_ offset: Int, to session: inout UndoScrubSession) {
-        // Der Scrubber macht ausschließlich rückgängig: Der gültige Bereich
-        // ist 0 … vorhandene Undo-Schritte. Ein Redo-Bereich existiert nicht
-        // mehr, deshalb kann die Leiste auch nicht mehr „nach oben wachsen“.
-        let clamped = max(0, min(offset, session.startUndoCount))
+        // Vorwärts (0 … Undo-Schritte): Rückgängig. Rückwärts
+        // (-Redo-Schritte … -1): Wiederholen – aber nur so weit, wie in
+        // dieser Sitzung gestartet wurde (damit sind genau die Schritte
+        // wiederherstellbar, die der Scrubber selbst rückgängig gemacht hat).
+        let clamped = min(max(offset, -session.startRedoCount), session.startUndoCount)
         guard clamped != session.targetOffset else { return }
 
         // Der Finger bestimmt das **Ziel**, nicht den sofort angewandten

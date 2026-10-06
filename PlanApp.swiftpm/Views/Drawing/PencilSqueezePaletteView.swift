@@ -32,7 +32,7 @@ struct PencilSqueezePaletteView: View {
     var undoCount: Int = 0
     var redoCount: Int = 0
     var historyRevision: Int = 0
-    var onUndoScrubBegan: (CGPoint, CGPoint) -> Void = { _, _ in }
+    var onUndoScrubBegan: (CGPoint, CGPoint, CGFloat?) -> Void = { _, _, _ in }
     var onUndoScrubChanged: (CGSize, CGPoint) -> Void = { _, _ in }
     var onUndoScrubEnded: () -> Void = {}
     var hidesNonUndoElements: Bool = false
@@ -276,6 +276,11 @@ struct PencilSqueezePaletteView: View {
                 allowsFinger: false,
                 style: .circular,
                 circleCenterInGlobal: visualCircleCenter,
+                // Echter on-screen-Radius des Bogens: So wird der Undo-Kreis
+                // immer exakt so groß wie die Kreis-Bar selbst – er kann nicht
+                // mehr „zu groß“ werden, wenn die Mittelpunkts-Sonde noch
+                // keinen aktuellen Wert liefert.
+                circleRadiusOverride: arcRadius * paletteScale,
                 onTap: {
                     Haptics.tap()
                     onUndo()
@@ -291,7 +296,7 @@ struct PencilSqueezePaletteView: View {
         .hoverEffect(.lift)
         .modifier(paletteElementHoverTracking("undo"))
         .accessibilityLabel("Rückgängig")
-        .accessibilityHint("Mit dem Stift eine Sekunde halten, um im Kreis mehrere Schritte zu scrubben")
+        .accessibilityHint("Mit dem Stift eine Sekunde halten, um im vollen Kreis mehrere Schritte zu scrubben")
     }
 
     private func toolButton(_ tool: SqueezePaletteTool) -> some View {

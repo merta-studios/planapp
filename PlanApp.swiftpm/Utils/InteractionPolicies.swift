@@ -121,41 +121,59 @@ public enum InteractionPolicies {
 // MARK: - Scrubber-Mathematik
 
 public enum UndoScrubMath {
-    /// Der Scrubber kennt nur noch rückgängige Schritte (`0 ... undoTicks`).
+    /// Der lineare Scrubber kennt rückgängige Schritte (`0 ... undoTicks`)
+    /// und, über den Startpunkt hinaus, Wiederholungen
+    /// (`-redoTicks ... -1`): Zieht man den Finger zurück, werden die in
+    /// dieser Sitzung rückgängig gemachten Schritte wiederhergestellt.
     public static func linearOffset(
         translationY: CGFloat,
         undoTicks: Int,
+        redoTicks: Int = 0,
         spacing: CGFloat = CGFloat(NoteUndoSessionPolicy.linearTickSpacing)
     ) -> Int {
-        guard spacing > 0, undoTicks > 0 else { return 0 }
+        guard spacing > 0, undoTicks > 0 || redoTicks > 0 else { return 0 }
         let raw = Int((translationY / spacing).rounded())
-        return min(max(raw, 0), undoTicks)
+        return min(max(raw, -max(0, redoTicks)), max(0, undoTicks))
     }
 
-    /// Winkelgeste auf dem halben Kreis. Die Bewegung wird auf genau den
-    /// dargestellten Bogen begrenzt; bei ±180° wird **nicht** auf die andere
-    /// Seite umgebogen (das war der Sprung-Bug beim Ziehen an der Kreismitte).
+    /// Kontinuierlicher Winkel-Zuwachs zwischen zwei aufeinanderfolgenden
+    /// Positionen, in den Bereich (-π, π] gefaltet. So bleibt auch ein voller
+    /// Umlauf stabil: Es wird der *Weg* gemessen, nicht die Position, und an
+    /// der Kreismitte / der Startposition springt nichts um.
+    public static func normalizedAngleDelta(from last: CGFloat, to current: CGFloat) -> CGFloat {
+        guard last.isFinite, current.isFinite else { return 0 }
+        var delta = current - last
+        while delta > .pi { delta -= 2 * .pi }
+        while delta <= -.pi { delta += 2 * .pi }
+        return delta
+    }
+
+    /// Winkelgeste auf dem vollen Kreis. `accumulatedAngle` ist die
+    /// kontinuierlich mitaddierte Gesamtdrehung seit Scrub-Start (vorzeichen-
+    /// getreu in Kreis-Koordinaten, UIKit-Convention: positiv = im
+    /// Uhrzeigersinn). In Bogenrichtung drehen macht rückgängig
+    /// (`0 ... undoTicks`), gegen die Bogenrichtung drehen stellt die in
+    /// dieser Sitzung rückgängig gemachten Schritte wieder her
+    /// (`-redoTicks ... -1`). Die Kreisticks laufen über genau einen vollen
+    /// Umlauf, deshalb laufen beide Richtungen über denselben Bogen – der
+    /// Knopf wandert nur spiegelbildlich.
     public static func circularOffset(
-        from startAngle: CGFloat,
-        to point: CGPoint,
-        center: CGPoint,
+        accumulatedAngle: CGFloat,
         undoTicks: Int,
         stepAngle: CGFloat,
+        redoTicks: Int = 0,
         undoSweepSign: CGFloat = CGFloat(InteractionPolicies.circularUndoSweepSign)
     ) -> Int {
-        guard stepAngle > 0, undoTicks > 0, undoSweepSign != 0 else { return 0 }
-        let sweep = CGFloat(undoTicks) * stepAngle
-        let current = atan2(point.y - center.y, point.x - center.x)
-        var delta = current - startAngle
-        if undoSweepSign > 0 {
-            delta = min(max(delta, 0), sweep)
-        } else {
-            delta = max(min(delta, 0), -sweep)
+        guard stepAngle > 0, undoSweepSign != 0, accumulatedAngle.isFinite,
+              undoTicks > 0 || redoTicks > 0 else {
+            return 0
         }
-        // Geometrischer Winkel in Undo-Schritte: negatives Vorzeichen heißt,
-        // die Striche liegen entgegen der Werkzeug-Werkzeugleiste.
-        let signed = delta * undoSweepSign
-        let raw = Int((signed / stepAngle).rounded())
-        return min(max(raw, 0), undoTicks)
+        let sweep = CGFloat(max(0, undoTicks)) * stepAngle
+        let redoSweep = CGFloat(max(0, redoTicks)) * stepAngle
+        // In Bogenrichtung positiv drehen.
+        let signed = accumulatedAngle * undoSweepSign
+        let clamped = min(max(signed, -redoSweep), sweep)
+        let raw = Int((clamped / stepAngle).rounded())
+        return min(max(raw, -max(0, redoTicks)), max(0, undoTicks))
     }
 }

@@ -215,69 +215,99 @@ expect(
 )
 expect(NoteUndoSessionPolicy.linearTickCount(undoCount: 10, availableHeight: 96) == 3, "Balken stoppt am Bildschirmrand")
 expect(NoteUndoSessionPolicy.linearTickCount(undoCount: 2, availableHeight: 400) == 2, "Weniger Schritte als Höhe")
-expect(NoteUndoSessionPolicy.circularTickCount(undoCount: 80) == NoteUndoSessionPolicy.circularMaxTicks, "Maximal ein halber Kreis")
-expect(NoteUndoSessionPolicy.circularTickCount(undoCount: 4) == 4, "Weniger Schritte als der halbe Kreis")
+expect(NoteUndoSessionPolicy.circularTickCount(undoCount: 80) == NoteUndoSessionPolicy.circularMaxTicks, "Maximal zwölf Stufen auf dem vollen Kreis")
+expect(NoteUndoSessionPolicy.circularTickCount(undoCount: 4) == 4, "Weniger Schritte als Stufen")
 
-// MARK: - Scrubber: nur rückgängig, halber Kreis, kein Sprung
+// MARK: - Scrubber: voller Kreis, kontinuierliche Drehung, Redo der Sitzung
 
 expect(
-    abs(NoteUndoSessionPolicy.circularSweepAngle - .pi) < 0.000_1,
-    "Der runde Scrubber läuft nur einen halben Kreis"
+    abs(NoteUndoSessionPolicy.circularSweepAngle - 2 * .pi) < 0.000_1,
+    "Der runde Scrubber läuft einen vollen Kreis"
 )
 expect(
     abs(
-        NoteUndoSessionPolicy.circularStepAngle() * Double(NoteUndoSessionPolicy.circularMaxTicks)
+        NoteUndoSessionPolicy.circularStepAngle(undoCount: 12) * 12
             - NoteUndoSessionPolicy.circularSweepAngle
     ) < 0.000_1,
-    "Die Schritte decken genau den halben Kreis ab"
+    "Zwölf Schritte decken genau den vollen Kreis ab"
+)
+expect(
+    abs(
+        NoteUndoSessionPolicy.circularStepAngle(undoCount: 4) * 4
+            - NoteUndoSessionPolicy.circularSweepAngle
+    ) < 0.000_1,
+    "Vier Schritte strecken sich auf den vollen Kreis"
 )
 
 expect(UndoScrubMath.linearOffset(translationY: 96, undoTicks: 10) == 3, "Lineare Schritte folgen dem Finger")
-expect(UndoScrubMath.linearOffset(translationY: -200, undoTicks: 10) == 0, "Nach oben gibt es keinen Redo-Bereich mehr")
+expect(UndoScrubMath.linearOffset(translationY: -200, undoTicks: 10) == 0, "Ohne Sitzung-Redo-Schritte: über den Start bleibt 0")
 expect(UndoScrubMath.linearOffset(translationY: 900, undoTicks: 10) == 10, "Mehr als alle Schritte wird begrenzt")
 expect(UndoScrubMath.linearOffset(translationY: 40, undoTicks: 0) == 0, "Ohne Schritte kein Ausschlag")
+expect(UndoScrubMath.linearOffset(translationY: -64, undoTicks: 10, redoTicks: 4) == -2, "Zurückziehen wiederholt Sitzungsschritte")
+expect(UndoScrubMath.linearOffset(translationY: -400, undoTicks: 10, redoTicks: 4) == -4, "Redo stoppt am Vorrat der Sitzung")
+expect(UndoScrubMath.linearOffset(translationY: -32, undoTicks: 0, redoTicks: 4) == -1, "Redo-only-Sitzung ohne Undo-Schritte")
 
-let scrubStepAngle = NoteUndoSessionPolicy.circularStepAngle()
-let scrubStart = 0.5
-let scrubCenter = CGPoint(x: 200, y: 200)
-func scrubPoint(_ angle: Double) -> CGPoint {
-    CGPoint(x: scrubCenter.x + 100 * CGFloat(cos(angle)), y: scrubCenter.y + 100 * CGFloat(sin(angle)))
+// Winkel-Addition über die ±180°-Grenze hinweg: Der Weg wird gemessen,
+// nicht die Position – an der Kreismitte / Startposition springt nichts.
+let wrappedDelta = UndoScrubMath.normalizedAngleDelta(from: CGFloat(.pi - 0.1), to: CGFloat(-.pi + 0.1))
+expect(abs(wrappedDelta - 0.2) < 0.001, "Sprung über die 180°-Grenze zählt als kleiner Schritt")
+let backwardsDelta = UndoScrubMath.normalizedAngleDelta(from: CGFloat(-.pi + 0.1), to: CGFloat(.pi - 0.1))
+expect(abs(backwardsDelta + 0.2) < 0.001, "… und in die Gegenrichtung bleibt negativ")
+
+let scrubStepAngle = Double(NoteUndoSessionPolicy.circularStepAngle(undoCount: 8))
+/// Kontinuierlich mitaddierter Winkel nach `steps` Schritten;
+/// `undoDirection: true` = in Bogenrichtung (undoSweepSign = −1 → negativer Winkel).
+func accumulatedAngle(steps: Int, undoDirection: Bool) -> CGFloat {
+    (undoDirection ? -1 : 1) * CGFloat(steps) * CGFloat(scrubStepAngle)
 }
 expect(
     UndoScrubMath.circularOffset(
-        from: CGFloat(scrubStart), to: scrubPoint(scrubStart - 2 * scrubStepAngle),
-        center: scrubCenter, undoTicks: 8, stepAngle: CGFloat(scrubStepAngle)
+        accumulatedAngle: accumulatedAngle(steps: 2, undoDirection: true),
+        undoTicks: 8, stepAngle: CGFloat(scrubStepAngle)
     ) == 2,
-    "Zwei Schritte auf dem Bogen"
+    "Zwei Schritte in Bogenrichtung"
 )
 expect(
     UndoScrubMath.circularOffset(
-        from: CGFloat(scrubStart), to: scrubPoint(scrubStart + 3 * scrubStepAngle),
-        center: scrubCenter, undoTicks: 8, stepAngle: CGFloat(scrubStepAngle)
+        accumulatedAngle: accumulatedAngle(steps: 3, undoDirection: false),
+        undoTicks: 8, stepAngle: CGFloat(scrubStepAngle)
     ) == 0,
-    "Gegen die Bogenrichtung bleibt bei 0 – kein Redo"
+    "Gegen die Bogenrichtung ohne Redo-Vorrat bleibt bei 0"
 )
 expect(
     UndoScrubMath.circularOffset(
-        from: CGFloat(scrubStart), to: scrubPoint(scrubStart - 8 * scrubStepAngle),
-        center: scrubCenter, undoTicks: 4, stepAngle: CGFloat(scrubStepAngle)
-    ) == 4,
-    "Der Bogen endet an der letzten vorhandenen Stufe"
+        accumulatedAngle: accumulatedAngle(steps: 3, undoDirection: false),
+        undoTicks: 8, stepAngle: CGFloat(scrubStepAngle), redoTicks: 4
+    ) == -3,
+    "Gegen die Bogenrichtung wiederholt genau die Sitzungsschritte"
 )
 expect(
     UndoScrubMath.circularOffset(
-        from: CGFloat(scrubStart), to: scrubPoint(scrubStart - 6 * scrubStepAngle),
-        center: scrubCenter, undoTicks: 4, stepAngle: CGFloat(scrubStepAngle)
-    ) == 4,
-    "Mehr Schritte als auf dem Bogen: wird begrenzt, kein Redo"
-)
-let wrappedScrub = UndoScrubMath.circularOffset(
-    from: CGFloat(scrubStart), to: scrubPoint(scrubStart - 30 * scrubStepAngle),
-    center: scrubCenter, undoTicks: 12, stepAngle: CGFloat(scrubStepAngle)
+        accumulatedAngle: accumulatedAngle(steps: 9, undoDirection: false),
+        undoTicks: 8, stepAngle: CGFloat(scrubStepAngle), redoTicks: 4
+    ) == -4,
+    "Redo stoppt am Vorrat der Sitzung"
 )
 expect(
-    wrappedScrub >= 0 && wrappedScrub <= 12,
-    "Auch nach einem vollen Umlauf bleibt der Wert im gültigen Bereich"
+    UndoScrubMath.circularOffset(
+        accumulatedAngle: accumulatedAngle(steps: 8, undoDirection: true),
+        undoTicks: 8, stepAngle: CGFloat(scrubStepAngle)
+    ) == 8,
+    "Ein voller Umlauf in Bogenrichtung erreicht die letzte Stufe"
+)
+expect(
+    UndoScrubMath.circularOffset(
+        accumulatedAngle: accumulatedAngle(steps: 14, undoDirection: true),
+        undoTicks: 8, stepAngle: CGFloat(scrubStepAngle)
+    ) == 8,
+    "Mehr als ein voller Umlauf wird begrenzt"
+)
+expect(
+    UndoScrubMath.circularOffset(
+        accumulatedAngle: accumulatedAngle(steps: 8, undoDirection: true),
+        undoTicks: 4, stepAngle: CGFloat(scrubStepAngle)
+    ) == 4,
+    "Umlauf endet an der letzten vorhandenen Stufe"
 )
 
 // MARK: - „Nächste Woche“ am Wochenende und nach der letzten Stunde am Freitag

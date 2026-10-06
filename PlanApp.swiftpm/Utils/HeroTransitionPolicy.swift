@@ -53,16 +53,22 @@ public enum NoteUndoSessionPolicy {
     public static let maximumSteps = 40
     public static let linearTickSpacing: Double = 32
 
-    /// Der runde Scrubber läuft nur einen **halben** Kreis. Ein voller Kreis
-    /// war mit dem Finger nicht mehr erreichbar und führte beim Ziehen über
-    /// die Kreismitte zu Sprüngen auf die Gegenseite.
-    public static let circularSweepAngle: Double = .pi
-    /// So viele Undo-Schritte passen auf den halben Kreis (15° je Schritt).
+    /// Der runde Scrubber läuft einen **vollen** Kreis. Die Stufen verteilen
+    /// sich über die kompletten 360°, und das Zurückdrehen an der Startposition
+    /// ist erlaubt: Damit lassen sich genau die Schritte wiederherstellen, die
+    /// in derselben Scrub-Sitzung rückgängig gemacht wurden (Redo). Sprünge
+    /// über die Kreismitte gibt es nicht, weil der Winkel kontinuierlich
+    /// mitaddiert wird und nicht pro Position neu berechnet wird.
+    public static let circularSweepAngle: Double = 2 * .pi
+    /// So viele Undo-Stufen passen auf den vollen Kreis (30° je Stufe bei
+    /// 12 Schritten).
     public static let circularMaxTicks = 12
 
-    /// Winkel eines einzelnen Schritts auf dem halben Kreis.
-    public static func circularStepAngle(maxTicks: Int = circularMaxTicks) -> Double {
-        let ticks = max(1, maxTicks)
+    /// Winkel eines einzelnen Schritts auf dem vollen Kreis. Die Stufen
+    /// füllen den Kreis immer vollständig: Weniger Undo-Schritte bedeuten
+    /// größere Abstände (z. B. 4 Schritte à 90°), mehr sind auf 12 begrenzt.
+    public static func circularStepAngle(undoCount: Int) -> Double {
+        let ticks = max(1, circularTickCount(undoCount: undoCount))
         return circularSweepAngle / Double(ticks)
     }
 
@@ -86,8 +92,8 @@ public enum NoteUndoSessionPolicy {
         return min(undoCount, Int(availableHeight / tickSpacing))
     }
 
-    /// Höchstens ein halber Kreis – der Scrubber macht ausschließlich
-    /// rückgängig.
+    /// Höchstens `circularMaxTicks` Stufen – der Scrubber macht rückgängig
+    /// (und innerhalb derselben Sitzung wiederherstellen).
     public static func circularTickCount(undoCount: Int, maxTicks: Int = circularMaxTicks) -> Int {
         min(max(0, undoCount), max(0, maxTicks))
     }

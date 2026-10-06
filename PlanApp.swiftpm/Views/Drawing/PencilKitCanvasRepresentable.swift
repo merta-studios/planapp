@@ -52,7 +52,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
     /// Wie lange der Stift am Ende eines Strichs still gehalten werden muss,
     /// bis der Strich zur geraden Linie einrastet.
-    public static let straightLineHoldDuration: TimeInterval = 2.0
+    public static let straightLineHoldDuration: TimeInterval = 1.5
 
     public init(
         drawing: Binding<PKDrawing>,
@@ -113,6 +113,16 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         canvasView.overrideUserInterfaceStyle = .light
         canvasView.drawing = drawing
         canvasView.delegate = context.coordinator
+
+        // PencilKits eingebaute Undo-Verwaltung deaktivieren. Die App führt
+        // ihre eigene, die Notiz umfassende Historie (Zeichnung + Textfelder)
+        // im Overlay. Solange der Canvas parallel seine Striche in
+        // `undoManager` registriert, konnte jeder System-Undo (z. B.
+        // Geräterschütteln) die Zeichenfläche gegen die Historie zurücksetzen
+        // – so kam nach einem neuen Strich das bereits rückgängig gemachte
+        // wieder zum Vorschein. Einzelne Undo-Aktionen der App laufen
+        // ausschließlich über die eigene Historie.
+        canvasView.undoManager = nil
 
         // Zeichen-Eingabe: standardmäßig nur der Apple Pencil. Ist die
         // Einstellung „Apple Pencil“ aus, zeichnet auch der Finger (normaler
@@ -202,7 +212,19 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         if uiView.overrideUserInterfaceStyle != .light {
             uiView.overrideUserInterfaceStyle = .light
         }
-        if !context.coordinator.preservesCanvasDrawing, uiView.drawing != drawing {
+        // Die Zeichenfläche ist während eines laufenden Strichs die einzige
+        // Quelle der Wahrheit (PencilKit hält den Live-Strich; das Binding
+        // wird vom Delegate gepflegt). Jetzt schreiben wir sie nur dann, wenn
+        // sich der von außen gesetzte Zustand unterscheidet – und melden das
+        // dem Coordinator an, damit der resultierende Delegate-Callback nicht
+        // den umgekehrten Weg (Canvas → Binding → Historie) mitgeht und
+        // dadurch Undo-Einträge doppelt oder fehlerhaft legt.
+        let isInking = uiView.drawingGestureRecognizer.state == .began
+            || uiView.drawingGestureRecognizer.state == .changed
+        if !isInking,
+           !context.coordinator.preservesCanvasDrawing,
+           uiView.drawing != drawing {
+            context.coordinator.markExternalDrawingWrite()
             uiView.drawing = drawing
         }
         applyTool(to: uiView)
@@ -326,6 +348,19 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         var preservesCanvasDrawing: Bool {
             if let straightenUntil, straightenUntil > Date() { return true }
             return false
+        }
+        /// `true`, wenn die zuletzt auf `canvasView.drawing` geschriebene
+        /// Änderung **nicht** vom Nutzer gezeichnet, sondern von außen
+        /// gesetzt wurde (Undo/Redo/Reset/gerade Linie). Der zugehörige
+        /// Delegate-Callback wird dadurch unterdrückt: Das SwiftUI-Binding
+        /// und die Historie sind in dem Moment bereits aktuell, und ein
+        /// Write-back würde veraltete Zustände als neue Undo-Schritte
+        /// verzeichnen (das war die Ursache dafür, dass Undo-Schritte
+        /// verschluckt oder „Wiederholen“ blockiert wurden).
+        private var externalDrawingWrite = false
+
+        func markExternalDrawingWrite() {
+            externalDrawingWrite = true
         }
 
         init(_ parent: PencilKitCanvasRepresentable) {
@@ -500,10 +535,14 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 // Das Fenster bleibt kurz offen, damit ein späteres Commit
                 // die Gerade nicht wieder mit der Kurve überschreibt.
                 self.straightenUntil = Date().addingTimeInterval(0.45)
+                // Apple Pencil Pro vibriert zur Bestätigung des Einrastens.
                 self.playSnapFeedback()
-                // Die gerade Linie erscheint sofort – noch während der Stift
-                // gehalten wird. Bisher passierte sichtbar erst beim Loslassen
-                // etwas, weil PencilKit den Strich erst dann übernimmt.
+                // Die gerade Linie ersetzt den Strich SOFORT – noch während
+                // der Stift gehalten wird. Die alte, schräge Linie wird damit
+                // ausgeblendet, statt neben der geraden Linie weiterzuzeigen.
+                // Falls PencilKit den live gezogenen Strich erst beim
+                // Loslassen in `drawing` übernimmt, greifen die verzögerten
+                // Nachführungen im `straightenUntil`-Fenster.
                 self.showStraightPreview()
                 self.applyStraightLineSoon()
             }
@@ -666,19 +705,20 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
             var strokes = drawing.strokes
             strokes[strokes.count - 1] = newStroke
-            let previousDrawing = drawing
             let straightened = PKDrawing(strokes: strokes)
 
+            // Externe Änderung: Der Delegate-Callback darf diese Aktion nicht
+            // zusätzlich als „Strich-Mutation“ nachtragen.
+            markExternalDrawingWrite()
             canvasView.drawing = straightened
-            canvasView.undoManager?.registerUndo(withTarget: canvasView) { target in
-                target.drawing = previousDrawing
-            }
-            canvasView.undoManager?.setActionName("Gerade Linie")
 
+            // Die gerade Linie ist ein echter, rückgängig machbarer Schritt:
+            // Über die Historie des Overlays (kein Canvas-Undo – der ist
+            // deaktiviert) landet die vorherige schräge Linie auf dem
+            // Undo-Stack. Ein „Rückgängig“ nach einer geraden Linie stellt
+            // deshalb genau die ursprüngliche Kurve wieder her.
             parent.drawing = straightened
             parent.onStrokeMutation()
-            parent.onUndoAvailable(canvasView.undoManager?.canUndo ?? false)
-            parent.onRedoAvailable(canvasView.undoManager?.canRedo ?? false)
             parent.onStraightLineSnap()
         }
 
@@ -753,6 +793,14 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
         public func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             parent.onCanvasActivity()
+            if externalDrawingWrite {
+                // Externe Änderung (Undo/Redo/Reset/gerade Linie): Binding
+                // und Historie sind aktuell – kein Write-back, keine
+                // „Strich-Mutation“, sonst legt die Historie aus dem
+                // Wiederholungs-Zustand einen neuen Eintrag an.
+                externalDrawingWrite = false
+                return
+            }
             if straightenRequested || (straightenUntil.map { $0 > Date() } ?? false) {
                 DispatchQueue.main.async { [weak self] in
                     self?.straightenLastStrokeIfRequested()
