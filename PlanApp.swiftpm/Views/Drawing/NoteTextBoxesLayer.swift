@@ -3,14 +3,17 @@ import UIKit
 
 /// Geschätzte Höhe eines Textfelds inkl. Innenabstand – dieselbe Rechnung
 /// wie beim Rendern der Notiz-Vorschau, damit Klemme und Vorschau übereinstimmen.
-func estimatedTextBoxHeight(_ box: NoteTextBox) -> CGFloat {
+func estimatedTextBoxHeight(
+    _ box: NoteTextBox,
+    fontStyle: NoteTextFontStyle = .system
+) -> CGFloat {
     let width = box.width.isFinite ? CGFloat(box.width) : 240
     let fontSize = box.fontSize.isFinite ? CGFloat(box.fontSize) : 17
     let innerWidth = max(20, width - 16)
     let bounding = (box.text as NSString).boundingRect(
         with: CGSize(width: innerWidth, height: .greatestFiniteMagnitude),
         options: [.usesLineFragmentOrigin],
-        attributes: [.font: UIFont.systemFont(ofSize: max(1, fontSize))],
+        attributes: [.font: fontStyle.uiFont(size: max(1, fontSize))],
         context: nil
     )
     let height = bounding.height.isFinite ? bounding.height : 0
@@ -53,9 +56,10 @@ struct NoteTextBoxesLayer: View {
     let areaSize: CGSize
     /// Undo-Registrierung: (Snapshot vorher, Snapshot nachher).
     let registerUndo: (_ before: [NoteTextBox], _ after: [NoteTextBox]) -> Void
-    /// Farbe und Schriftgröße neuer Textfelder.
+    /// Farbe, Schriftgröße und Schriftart der Textfelder.
     var newTextColorHex: String = NoteTextBox.defaultColorHex
     var newTextFontSize: Double = NoteTextBox.defaultFontSize
+    var textFontStyle: NoteTextFontStyle = .system
 
     static let coordinateSpaceName = "noteTextBoxesLayer"
 
@@ -125,7 +129,8 @@ struct NoteTextBoxesLayer: View {
                     onGestureEnd: { finishGesture() },
                     onChangeFontSize: { delta in
                         changeFontSize(id: box.id, by: delta)
-                    }
+                    },
+                    fontStyle: textFontStyle
                 )
             }
         }
@@ -330,7 +335,7 @@ struct NoteTextBoxesLayer: View {
     /// Klemmt ein Feld vollständig in die Zeichenfläche ein.
     private func clampBoxIntoArea(_ box: inout NoteTextBox) {
         let size = safeAreaSize
-        let height = estimatedTextBoxHeight(box)
+        let height = estimatedTextBoxHeight(box, fontStyle: textFontStyle)
         let maxX = max(Double(margin), Double(size.width) - box.width - Double(margin))
         let maxY = max(Double(margin), Double(size.height - height) - Double(margin))
         box.x = min(max(Double(margin), box.x), maxX)
@@ -361,6 +366,8 @@ private struct NoteTextBoxView: View {
     let onResize: (_ newX: CGFloat, _ newWidth: CGFloat) -> Void
     let onGestureEnd: () -> Void
     let onChangeFontSize: (Double) -> Void
+    /// Schriftart aller Textfelder (aus den Einstellungen).
+    let fontStyle: NoteTextFontStyle
 
     @State private var moveStart: CGPoint? = nil
     @State private var resizeStartX: CGFloat? = nil
@@ -461,7 +468,7 @@ private struct NoteTextBoxView: View {
         let trimmed = box.text.trimmingCharacters(in: .whitespacesAndNewlines)
 
         return Text(trimmed.isEmpty ? "Text" : box.text)
-            .font(.system(size: boxFontSize))
+            .font(fontStyle.font(size: boxFontSize))
             // Die Zeichenfläche ist immer weiß, auch wenn die App im Dark
             // Mode läuft. Deshalb kein dynamisches `.primary` verwenden.
             .foregroundColor(trimmed.isEmpty ? .gray : Color(uiColor: boxTextUIColor))
@@ -490,6 +497,7 @@ private struct NoteTextBoxView: View {
         NoteTextEditor(
             text: box.text,
             fontSize: boxFontSize,
+            fontStyle: fontStyle,
             textColor: boxTextUIColor,
             isEditing: isEditing,
             onChangeText: onChangeText,
@@ -501,7 +509,7 @@ private struct NoteTextBoxView: View {
         .id(box.id)
         .frame(
             width: boxWidth,
-            height: estimatedTextBoxHeight(box),
+            height: estimatedTextBoxHeight(box, fontStyle: fontStyle),
             alignment: .topLeading
         )
     }
@@ -520,7 +528,7 @@ private struct NoteTextBoxView: View {
                     Haptics.tap()
                 }
                 guard let start = moveStart else { return }
-                let boxHeight = estimatedTextBoxHeight(box)
+                let boxHeight = estimatedTextBoxHeight(box, fontStyle: fontStyle)
                 let maxX = max(margin, areaSize.width - boxWidth - margin)
                 let maxY = max(margin, areaSize.height - boxHeight - margin)
                 let newX = min(max(margin, start.x + value.translation.width), maxX)

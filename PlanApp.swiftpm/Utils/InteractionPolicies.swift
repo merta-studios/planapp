@@ -117,3 +117,45 @@ public enum InteractionPolicies {
         newMode == "notesOnly" && previousMode != "notesOnly"
     }
 }
+
+// MARK: - Scrubber-Mathematik
+
+public enum UndoScrubMath {
+    /// Der Scrubber kennt nur noch rückgängige Schritte (`0 ... undoTicks`).
+    public static func linearOffset(
+        translationY: CGFloat,
+        undoTicks: Int,
+        spacing: CGFloat = CGFloat(NoteUndoSessionPolicy.linearTickSpacing)
+    ) -> Int {
+        guard spacing > 0, undoTicks > 0 else { return 0 }
+        let raw = Int((translationY / spacing).rounded())
+        return min(max(raw, 0), undoTicks)
+    }
+
+    /// Winkelgeste auf dem halben Kreis. Die Bewegung wird auf genau den
+    /// dargestellten Bogen begrenzt; bei ±180° wird **nicht** auf die andere
+    /// Seite umgebogen (das war der Sprung-Bug beim Ziehen an der Kreismitte).
+    public static func circularOffset(
+        from startAngle: CGFloat,
+        to point: CGPoint,
+        center: CGPoint,
+        undoTicks: Int,
+        stepAngle: CGFloat,
+        undoSweepSign: CGFloat = CGFloat(InteractionPolicies.circularUndoSweepSign)
+    ) -> Int {
+        guard stepAngle > 0, undoTicks > 0, undoSweepSign != 0 else { return 0 }
+        let sweep = CGFloat(undoTicks) * stepAngle
+        let current = atan2(point.y - center.y, point.x - center.x)
+        var delta = current - startAngle
+        if undoSweepSign > 0 {
+            delta = min(max(delta, 0), sweep)
+        } else {
+            delta = max(min(delta, 0), -sweep)
+        }
+        // Geometrischer Winkel in Undo-Schritte: negatives Vorzeichen heißt,
+        // die Striche liegen entgegen der Werkzeug-Werkzeugleiste.
+        let signed = delta * undoSweepSign
+        let raw = Int((signed / stepAngle).rounded())
+        return min(max(raw, 0), undoTicks)
+    }
+}

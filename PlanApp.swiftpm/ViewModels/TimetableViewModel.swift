@@ -158,9 +158,27 @@ public final class TimetableViewModel: ObservableObject {
     // MARK: - Initializer
 
     public init() {
-        self.selectedWeekStart = Date().startOfWeek()
+        self.selectedWeekStart = Date.relevantCurrentWeekStart()
         loadInitialData()
+
+        // Erst nach dem Laden der Stundenzeiten ist bekannt, wann die letzte
+        // Stunde endet. Am Freitag nach dieser Zeit zeigt die App bereits die
+        // kommende Schulwoche (dort wird der Montag hellgelb hervorgehoben).
+        let relevant = Date.relevantCurrentWeekStart(
+            lastLessonEndMinutes: lastLessonEndMinutes
+        )
+        if relevant != selectedWeekStart {
+            selectedWeekStart = relevant
+        }
+
         setupAutoRefresh()
+    }
+
+    /// Ende der letzten Unterrichtsstunde als Minute des Tages. Grundlage für
+    /// die Regel „Am Freitag nach der letzten Stunde beginnt die nächste
+    /// Schulwoche“ – und für die hellgelbe Hervorhebung des kommenden Montags.
+    public var lastLessonEndMinutes: Int? {
+        periods.map(\.endMinutes).max()
     }
 
     private func loadInitialData() {
@@ -261,14 +279,28 @@ public final class TimetableViewModel: ObservableObject {
     /// Folgewoche). Wird verwendet, um den "Zur aktuellen Woche"-Button
     /// im Header ein- bzw. auszublenden.
     public func isViewingRelevantCurrentWeek(relativeTo date: Date = Date()) -> Bool {
-        selectedWeekStart == Date.relevantCurrentWeekStart(from: date)
+        selectedWeekStart == Date.relevantCurrentWeekStart(
+            from: date,
+            lastLessonEndMinutes: lastLessonEndMinutes
+        )
+    }
+
+    /// Ob die angezeigte Woche in der Zukunft liegt und deshalb der kommende
+    /// Montag (hellgelb) statt „heute“ (blau) hervorgehoben wird.
+    public func upcomingWeekHighlightDay(relativeTo date: Date = Date()) -> Date? {
+        Date.upcomingWeekHighlightDay(
+            from: date,
+            lastLessonEndMinutes: lastLessonEndMinutes
+        )
     }
 
     /// Springt zur aktuellen Woche zurück und lädt genau diese Woche nach.
     /// Am Wochenende (wenn kein Tag der laufenden Woche mehr "heute" sein
     /// kann) springt dies direkt zur nächsten Schulwoche.
     public func goToCurrentWeek() {
-        let current = Date.relevantCurrentWeekStart()
+        let current = Date.relevantCurrentWeekStart(
+            lastLessonEndMinutes: lastLessonEndMinutes
+        )
         weekNavigationDirection = current >= selectedWeekStart ? 1 : -1
         selectWeek(current)
     }
@@ -276,7 +308,9 @@ public final class TimetableViewModel: ObservableObject {
     /// Fordert einen animierten Rutsch zur aktuellen Woche an. Die eigentliche
     /// Slide-Animation übernimmt die TimetableView (Wochen-Karussell).
     public func requestJumpToCurrentWeek() {
-        let target = Date.relevantCurrentWeekStart()
+        let target = Date.relevantCurrentWeekStart(
+            lastLessonEndMinutes: lastLessonEndMinutes
+        )
         guard target != selectedWeekStart else { return }
         weekJumpRequest = target
     }

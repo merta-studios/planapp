@@ -12,8 +12,11 @@ struct UndoScrubSession: Equatable {
     var origin: CGPoint
     var style: UndoScrubStyle
     var startUndoCount: Int
-    var startRedoCount: Int
+    /// Tatsächlich angewandte Schritte (bestimmt die hervorgehobene Stufe).
     var currentOffset: Int
+    /// Ziel des Fingers. Der Knopf **gleitet** dorthin, statt zu springen;
+    /// die Schritte werden dabei einzeln angewandt.
+    var targetOffset: Int
     /// Kreis: Winkel des Undo-Buttons beim Start (Bogenmaß).
     var circleStartAngle: CGFloat
     var circleRadius: CGFloat
@@ -88,6 +91,10 @@ final class UndoScrubHandleView: UIView {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         registerIfNeeded()
+        if window != nil {
+            // Sobald der Knopf sichtbar ist: Pencil-Pro-Haptik vorbereiten.
+            Haptics.attachFeedbackView(self)
+        }
     }
 
     override func layoutSubviews() {
@@ -202,7 +209,9 @@ final class UndoScrubWindowTracker: UIGestureRecognizer, UIGestureRecognizerDele
         cancelFallback?.cancel()
         cancelFallback = nil
         let windowPoint = touch.location(in: host)
-        Haptics.attachFeedbackView(touch.view ?? host)
+        // Für die Pencil-Pro-Haptik zählt die tatsächliche Knopf-View, nicht
+        // irgendein Treffer-View unter dem Stift.
+        Haptics.attachFeedbackView(activeBox?.view ?? touch.view ?? host)
         if isScrubbing {
             if state == .possible { state = .began }
             if state == .began || state == .changed { state = .changed }
@@ -354,21 +363,19 @@ struct UndoScrubOverlay: View {
             undoCount: session.startUndoCount,
             availableHeight: max(0, session.containerHeight - session.origin.y - 28)
         )
-        let redoTicks = min(session.startRedoCount, 8)
         let spacing = CGFloat(NoteUndoSessionPolicy.linearTickSpacing)
 
         return ZStack {
             let totalDown = CGFloat(undoTicks) * spacing
-            let totalUp = CGFloat(redoTicks) * spacing
             Capsule()
                 .fill(.ultraThinMaterial)
-                .frame(width: 44, height: totalDown + totalUp + 44)
+                .frame(width: 44, height: totalDown + 44)
                 .overlay(
                     Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
                 )
                 .position(
                     x: session.origin.x,
-                    y: session.origin.y + (totalDown - totalUp) / 2
+                    y: session.origin.y + totalDown / 2
                 )
 
             if undoTicks > 0 {
@@ -380,56 +387,35 @@ struct UndoScrubOverlay: View {
                 }
             }
 
-            if redoTicks > 0 {
-                ForEach(1...redoTicks, id: \.self) { step in
-                    Capsule()
-                        .fill(Color.secondary.opacity(step == -appliedOffset ? 0.95 : 0.45))
-                        .frame(width: 18, height: 3)
-                        .position(x: session.origin.x, y: session.origin.y - CGFloat(step) * spacing)
-                }
-            }
-
             scrubHandle(systemPointSize: 16, diameter: 40, circular: false)
                 .position(
                     x: session.origin.x,
-                    y: session.origin.y + CGFloat(appliedOffset) * spacing
+                    y: session.origin.y + CGFloat(session.targetOffset) * spacing
                 )
-                .animation(handleSnap, value: appliedOffset)
+                .animation(handleSnap, value: session.targetOffset)
         }
         .allowsHitTesting(false)
     }
 
     private var circularBar: some View {
         let undoTicks = NoteUndoSessionPolicy.circularTickCount(undoCount: session.startUndoCount)
-        let redoTicks = NoteUndoSessionPolicy.redoTickCount(
-            redoCount: session.startRedoCount,
-            maxTicks: max(0, NoteUndoSessionPolicy.circularMaxTicks - undoTicks)
-        )
         let radius = session.circleRadius
         let center = session.circleCenter
         let handleOnButton = radius < 8
         let start = session.circleStartAngle
         let sign = CGFloat(InteractionPolicies.circularUndoSweepSign)
-        let stepAngle = undoTicks + redoTicks > 0
-            ? (2 * CGFloat.pi) / CGFloat(NoteUndoSessionPolicy.circularMaxTicks)
+        // Nur ein halber Kreis: Der Scrubber endet nach 180°, statt sich auf
+        // der Rückseite weiterzudrehen. Dadurch kann die Berührung nicht mehr
+        // „auf die andere Seite“ springen.
+        let stepAngle = undoTicks > 0
+            ? CGFloat(NoteUndoSessionPolicy.circularStepAngle())
             : 0
         let lineWidth = CGFloat(InteractionPolicies.circularRingLineWidth)
         let undoSweep = CGFloat(undoTicks) * stepAngle * sign
-        let redoSweep = CGFloat(redoTicks) * stepAngle * -sign
 
         return ZStack {
-            if abs(undoSweep) >= 2 * .pi - 0.05 {
-                Circle()
-                    .stroke(.ultraThinMaterial, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                    .frame(width: radius * 2, height: radius * 2)
-                    .position(center)
-            } else if undoTicks > 0 {
+            if undoTicks > 0 {
                 ring(from: start, sweep: undoSweep, radius: radius, center: center, lineWidth: lineWidth)
-            }
-
-            if redoTicks > 0, abs(undoSweep) < 2 * .pi - 0.05 {
-                ring(from: start, sweep: redoSweep, radius: radius, center: center, lineWidth: lineWidth * 0.72)
-                    .opacity(0.85)
             }
 
             if undoTicks > 0 {
@@ -443,14 +429,7 @@ struct UndoScrubOverlay: View {
                 }
             }
 
-            if redoTicks > 0 {
-                ForEach(1...redoTicks, id: \.self) { step in
-                    let angle = start - CGFloat(step) * stepAngle * sign
-                    tick(at: angle, center: center, radius: radius, lineWidth: lineWidth, emphasized: step == -appliedOffset)
-                }
-            }
-
-            let handleAngle = start + CGFloat(appliedOffset) * stepAngle * sign
+            let handleAngle = start + CGFloat(session.targetOffset) * stepAngle * sign
             let handlePoint = handleOnButton
                 ? session.origin
                 : CGPoint(
@@ -459,13 +438,15 @@ struct UndoScrubOverlay: View {
                 )
             scrubHandle(systemPointSize: 16, diameter: 44, circular: true)
                 .position(handlePoint)
-                .animation(handleSnap, value: appliedOffset)
+                .animation(handleSnap, value: session.targetOffset)
         }
         .allowsHitTesting(false)
     }
 
+    /// Der Knopf **gleitet** sichtbar über den Bogen zum Finger – er springt
+    /// nicht mit einem Ruck ans Ziel.
     private var handleSnap: Animation {
-        .spring(response: 0.22, dampingFraction: 0.74)
+        .spring(response: 0.22, dampingFraction: 0.82)
     }
 
     private func ring(
@@ -548,39 +529,5 @@ struct CircularScrubArc: Shape {
             }
         }
         return path
-    }
-}
-
-enum UndoScrubMath {
-    static func linearOffset(
-        translationY: CGFloat,
-        undoTicks: Int,
-        redoTicks: Int,
-        spacing: CGFloat = CGFloat(NoteUndoSessionPolicy.linearTickSpacing)
-    ) -> Int {
-        guard spacing > 0 else { return 0 }
-        let raw = Int((translationY / spacing).rounded())
-        return min(max(raw, -redoTicks), undoTicks)
-    }
-
-    static func circularOffset(
-        from startAngle: CGFloat,
-        to point: CGPoint,
-        center: CGPoint,
-        undoTicks: Int,
-        redoTicks: Int,
-        stepAngle: CGFloat,
-        undoSweepSign: CGFloat = CGFloat(InteractionPolicies.circularUndoSweepSign)
-    ) -> Int {
-        guard stepAngle > 0, undoSweepSign != 0 else { return 0 }
-        let current = atan2(point.y - center.y, point.x - center.x)
-        var delta = current - startAngle
-        while delta > .pi { delta -= 2 * .pi }
-        while delta < -.pi { delta += 2 * .pi }
-        // Geometrischer Winkel in Undo-Schritte: negatives Vorzeichen heißt,
-        // die Striche liegen entgegen der Werkzeug-Bar.
-        let signed = delta * undoSweepSign
-        let raw = Int((signed / stepAngle).rounded())
-        return min(max(raw, -redoTicks), undoTicks)
     }
 }

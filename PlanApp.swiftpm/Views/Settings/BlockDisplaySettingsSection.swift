@@ -109,20 +109,25 @@ public struct BlockDisplaySettingsSection: View {
                 }
 
                 Toggle(isOn: Binding(
-                    get: { viewModel.displaySettings.showTimes },
+                    get: { viewModel.displaySettings.showTags },
                     set: { val in
-                        viewModel.displaySettings.showTimes = val
+                        viewModel.displaySettings.showTags = val
                         viewModel.saveDisplaySettings()
                     }
                 )) {
                     HStack(spacing: 8) {
-                        Image(systemName: "clock")
+                        Image(systemName: "tag")
                             .font(.system(size: 14, weight: .regular, design: .default))
-                            .foregroundColor(.teal)
-                        Text("Uhrzeiten direkt im Block anzeigen")
+                            .foregroundColor(.indigo)
+                        Text("Tags anzeigen")
                             .font(.system(size: 14, weight: .regular, design: .default))
                     }
                 }
+
+                Text("Standardmäßig an. Zeigt den Tag einer Notiz im Stunden-Block und in den Notiz-Karten an.")
+                    .font(.system(size: 12, weight: .regular, design: .default))
+                    .foregroundColor(.secondary)
+                    .padding(.leading, 4)
             }
         }
         .padding(16)

@@ -27,6 +27,8 @@ import UIKit
 struct NoteTextEditor: UIViewRepresentable {
     let text: String
     let fontSize: CGFloat
+    /// Schriftart der Textfelder (Einstellungen → Zeichnen).
+    var fontStyle: NoteTextFontStyle = .system
     /// Farbe des Textes (über die Farb-Slots der Werkzeugleiste änderbar).
     let textColor: UIColor
     /// Ob das Feld gerade bearbeitet wird (Fokus halten/aufheben).
@@ -48,7 +50,7 @@ struct NoteTextEditor: UIViewRepresentable {
         textView.isScrollEnabled = false
         textView.isEditable = true
         textView.isSelectable = true
-        textView.font = .systemFont(ofSize: max(1, fontSize))
+        textView.font = fontStyle.uiFont(size: max(1, fontSize))
         // Text liegt auf dem festen weißen Papier und darf nicht mit dem
         // globalen Dark-Mode-Farbschema weiß werden.
         textView.textColor = textColor
@@ -77,9 +79,10 @@ struct NoteTextEditor: UIViewRepresentable {
     func updateUIView(_ uiView: CustomNoteTextView, context: Context) {
         context.coordinator.parent = self
 
-        let resolvedFontSize = max(1, fontSize)
-        if uiView.font?.pointSize != resolvedFontSize {
-            uiView.font = .systemFont(ofSize: resolvedFontSize)
+        let resolvedFont = fontStyle.uiFont(size: max(1, fontSize))
+        if uiView.font?.pointSize != resolvedFont.pointSize
+            || uiView.font?.fontName != resolvedFont.fontName {
+            uiView.font = resolvedFont
         }
         if uiView.textColor != textColor {
             uiView.textColor = textColor

@@ -725,7 +725,7 @@ private struct NoteOverviewCard: View, Equatable {
                 originalTeacherDisplayName: lesson.originalTeacher.map { viewModel.resolveTeacherName($0) },
                 relativeTo: relativeDay
             ) {
-                if let tag {
+                if viewModel.displaySettings.showTags, let tag {
                     NoteTagPill(tag: tag, size: .small)
                 }
             }

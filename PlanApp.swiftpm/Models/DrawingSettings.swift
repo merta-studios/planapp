@@ -9,6 +9,8 @@ public struct DrawingSettings: Codable, Equatable {
     public var eraserWidth: Double           // Standard-Dicke Radierer
     public var defaultCanvasHeight: Double   // Standard-Höhe der Zeichenfläche beim Öffnen
     public var defaultTextFontSize: Double   // Standard-Schriftgröße neuer Textfelder
+    /// Schriftart aller Textfelder (Einstellungen → Zeichnen).
+    public var textFontStyle: NoteTextFontStyle
     public var autoDeletePastNotes: Bool     // Notizen vergangener Stunden automatisch löschen
     public var defaultBackgroundStyle: NoteBackgroundStyle // Standard-Hintergrund neuer Notizen
     public var penColorSlots: [String]       // Farb-Slots für den Stift in der Werkzeugleiste
@@ -54,6 +56,7 @@ public struct DrawingSettings: Codable, Equatable {
         eraserWidth: Double = 24,
         defaultCanvasHeight: Double = 460,
         defaultTextFontSize: Double = NoteTextBox.defaultFontSize,
+        textFontStyle: NoteTextFontStyle = .system,
         autoDeletePastNotes: Bool = false,
         defaultBackgroundStyle: NoteBackgroundStyle = .blank,
         penColorSlots: [String] = DrawingSettings.defaultPenColorSlots,
@@ -70,6 +73,7 @@ public struct DrawingSettings: Codable, Equatable {
         self.eraserWidth = eraserWidth
         self.defaultCanvasHeight = defaultCanvasHeight
         self.defaultTextFontSize = Self.clampedTextFontSize(defaultTextFontSize)
+        self.textFontStyle = textFontStyle
         self.autoDeletePastNotes = autoDeletePastNotes
         self.defaultBackgroundStyle = defaultBackgroundStyle
         self.penColorSlots = penColorSlots.isEmpty ? DrawingSettings.defaultPenColorSlots : penColorSlots
@@ -83,7 +87,7 @@ public struct DrawingSettings: Codable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case penWidth, markerWidth, eraserWidth, defaultCanvasHeight, defaultTextFontSize, autoDeletePastNotes
+        case penWidth, markerWidth, eraserWidth, defaultCanvasHeight, defaultTextFontSize, textFontStyle, autoDeletePastNotes
         case defaultBackgroundStyle
         case penColorSlots, markerColorSlots
         case applePencilOnly, autoDeselectEraser
@@ -101,6 +105,7 @@ public struct DrawingSettings: Codable, Equatable {
         let decodedTextFontSize = try container.decodeIfPresent(Double.self, forKey: .defaultTextFontSize)
             ?? NoteTextBox.defaultFontSize
         self.defaultTextFontSize = Self.clampedTextFontSize(decodedTextFontSize)
+        self.textFontStyle = try container.decodeIfPresent(NoteTextFontStyle.self, forKey: .textFontStyle) ?? .system
         self.autoDeletePastNotes = try container.decodeIfPresent(Bool.self, forKey: .autoDeletePastNotes) ?? false
         self.defaultBackgroundStyle = try container.decodeIfPresent(NoteBackgroundStyle.self, forKey: .defaultBackgroundStyle) ?? .blank
 
@@ -143,6 +148,7 @@ public struct DrawingSettings: Codable, Equatable {
         try container.encode(eraserWidth, forKey: .eraserWidth)
         try container.encode(defaultCanvasHeight, forKey: .defaultCanvasHeight)
         try container.encode(defaultTextFontSize, forKey: .defaultTextFontSize)
+        try container.encode(textFontStyle, forKey: .textFontStyle)
         try container.encode(autoDeletePastNotes, forKey: .autoDeletePastNotes)
         try container.encode(defaultBackgroundStyle, forKey: .defaultBackgroundStyle)
         try container.encode(penColorSlots, forKey: .penColorSlots)

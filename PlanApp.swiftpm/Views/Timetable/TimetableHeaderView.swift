@@ -56,33 +56,8 @@ public struct TimetableHeaderView: View {
                     .shadow(color: neonBlue.opacity(0.9), radius: 5, x: 0, y: 0)
                     .shadow(color: neonBlue.opacity(0.55), radius: 12, x: 0, y: 0)
             }
-            if showsResetFilterButton {
-                resetFilterButton
-            }
         }
         .fixedSize(horizontal: true, vertical: false)
-    }
-
-    private var showsResetFilterButton: Bool {
-        viewModel.viewMode == .notesOnly && !viewModel.activeTagFilter.isEmpty
-    }
-
-    private var resetFilterButton: some View {
-        Button {
-            Haptics.tap()
-            viewModel.activeTagFilter.removeAll()
-        } label: {
-            Text("Filter zurücksetzen")
-                .font(.system(size: 12, weight: .semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-        }
-        .buttonStyle(.plain)
-        .liquidGlassButton(cornerRadius: 10, tint: .blue)
-        .foregroundColor(.primary)
-        .accessibilityLabel("Filter zurücksetzen")
     }
 
     private var appLogo: some View {
@@ -291,12 +266,7 @@ public struct TimetableHeaderView: View {
         let showsJumpButton = !viewModel.isViewingRelevantCurrentWeek(relativeTo: date)
 
         return HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 4) {
-                appLogo
-                if showsResetFilterButton {
-                    resetFilterButton
-                }
-            }
+            appLogo
             compactViewModeMenu
             applePencilStatus
 
@@ -333,12 +303,7 @@ public struct TimetableHeaderView: View {
         let syncColor = isStale ? Color.red : Color(red: 0.10, green: 0.62, blue: 0.28)
 
         return HStack(spacing: 6) {
-            VStack(alignment: .leading, spacing: 4) {
-                compactViewModeMenu
-                if showsResetFilterButton {
-                    resetFilterButton
-                }
-            }
+            compactViewModeMenu
 
             weekCard
                 .layoutPriority(2)

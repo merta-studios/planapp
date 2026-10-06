@@ -113,9 +113,60 @@ public struct DrawingSettingsSection: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text("Beispieltext")
-                    .font(.system(size: CGFloat(draftSettings.defaultTextFontSize), weight: .regular, design: .default))
+                    .font(draftSettings.textFontStyle.font(size: CGFloat(draftSettings.defaultTextFontSize)))
                     .foregroundColor(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(14)
+            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
+
+            // 3b. SCHRIFTART DER TEXTFELDER
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "textformat")
+                        .font(.system(size: 14, weight: .regular, design: .default))
+                        .foregroundColor(.blue)
+                    Text("Schriftart für Textfelder")
+                        .font(.system(size: 14, weight: .regular, design: .default))
+                    Spacer(minLength: 8)
+                }
+
+                Picker("Schriftart", selection: Binding(
+                    get: { draftSettings.textFontStyle },
+                    set: { newValue in
+                        draftSettings.textFontStyle = newValue
+                        commitDraftSettings()
+                    }
+                )) {
+                    ForEach(NoteTextFontStyle.allCases) { style in
+                        Text(style.title).tag(style)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(draftSettings.textFontStyle.previewText)
+                        .font(draftSettings.textFontStyle.font(size: 19))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+
+                    Text(draftSettings.textFontStyle.subtitle)
+                        .font(.system(size: 12, weight: .regular, design: .default))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(UIColor.tertiarySystemBackground))
+                )
+
+                Text("Gilt für alle Textfelder auf der Zeichenfläche – vorhandene und neue. Handschriftliche Pencil-Striche bleiben unverändert.")
+                    .font(.system(size: 12, weight: .regular, design: .default))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(14)
             .lightCard(cornerRadius: 14, strokeOpacity: 0.18)

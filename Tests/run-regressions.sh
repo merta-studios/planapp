@@ -19,6 +19,7 @@ trap 'rm -rf "$test_dir"' EXIT
     PlanApp.swiftpm/Views/Timetable/NotesOverviewLayout.swift \
     PlanApp.swiftpm/Views/Drawing/SqueezePaletteLayout.swift \
     PlanApp.swiftpm/Utils/InteractionPolicies.swift \
+    PlanApp.swiftpm/Utils/DateExtensions.swift \
     Tests/InteractionRegressions/main.swift \
     -o "$test_dir/interaction-regressions"
 "$test_dir/interaction-regressions"

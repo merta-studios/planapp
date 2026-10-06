@@ -6,11 +6,16 @@ enum DrawingOverlaySpace {
     static let name = "planapp.drawingOverlay"
 }
 
-struct TagButtonFramePreference: PreferenceKey {
-    static var defaultValue: CGRect = .zero
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        let next = nextValue()
-        if next.width > 1, next.height > 1 {
+/// Anker der Tag-Pille. Der Anker liefert den Rahmen der Pille **immer
+/// aktuell** in der Koordinatenwelt des Notiz-Overlays – auch wenn die Notiz
+/// verschoben, skaliert oder in der Größe verändert wurde. Früher wurde der
+/// Rahmen in einem State zwischengespeichert und beim ersten Öffnen der
+/// Auswahl deshalb gelegentlich als (0,0) gelesen: Die Auswahl erschien dann
+/// oben links am Bildschirmrand.
+struct TagPillAnchorPreference: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? = nil
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        if let next = nextValue() {
             value = next
         }
     }
@@ -117,10 +122,11 @@ public struct LessonDrawingOverlayView: View {
     @State private var isApplyingHistory = false
     @State private var historyRevision: Int = 0
     @State private var undoScrubSession: UndoScrubSession? = nil
+    /// Taktgeber für die einzeln angewandten Scrub-Schritte. Während der Knopf
+    /// zum Finger gleitet, wandert die Anwendung Schritt für Schritt hinterher.
+    @State private var scrubStepWorkItem: DispatchWorkItem? = nil
     @State private var overlayWindowOrigin: CGPoint = .zero
     @State private var overlaySize: CGSize = .zero
-    /// Rahmen der Tag-Pille im Overlay, damit die Auswahl nach unten ausweichen kann.
-    @State private var tagButtonFrame: CGRect = .zero
 
     // Live transform state. Updates come incrementally from the UIKit canvas so
     // there is no jump when the fingers are released.
@@ -146,6 +152,10 @@ public struct LessonDrawingOverlayView: View {
     // Staged transition: card first moves/grows and turns grey, editor controls
     // become visible only afterwards.
     @State private var isExpanded = false
+    /// Eigener Zustand nur für die Abdunkelung des Hintergrunds. Sie wird beim
+    /// Schließen **sofort** und in einer eigenen, kurzen Animation ausgelassen
+    /// – unabhängig davon, wie lange der Hero-Morph zurück zum Block dauert.
+    @State private var isBackdropVisible = false
     @State private var showsEditor = false
     @State private var didInitialize = false
     /// Aktuell von der Systemtastatur verdeckte Höhe am unteren Rand.
@@ -189,10 +199,27 @@ public struct LessonDrawingOverlayView: View {
                 // mehrere Finger und Pencil-Touches werden vom UIKit-Recognizer
                 // verworfen; während eines Strichs ist das Schließen gesperrt.
                 ZStack {
+                    // Die Abdunkelung besteht aus zwei Ebenen:
+                    // * eine reine Schwarz-Ebene (ganz normal animierbar), und
+                    // * das Blur-Material als **eigene** Ansicht, die nur
+                    //   existiert, solange abgedunkelt wird.
+                    //
+                    // Früher lag das Material als `.ultraThinMaterial.opacity(…)`
+                    // im Hintergrund derselben Farbe. Ein Material ist aber
+                    // keine animierbare Schicht: Beim Schließen der Notiz blieb
+                    // der milchige Schleier über der ganzen App stehen – im
+                    // Modus „Nur Notizen“ sah der Bildschirm danach leer aus,
+                    // obwohl die Notizen längst zurückgeglitten waren.
                     Color.black
-                        .opacity(isExpanded ? 0.58 : 0)
-                        .background(.ultraThinMaterial.opacity(isExpanded ? 1 : 0))
+                        .opacity(isBackdropVisible ? 0.58 : 0)
                         .allowsHitTesting(false)
+
+                    if isBackdropVisible {
+                        Rectangle()
+                            .fill(.ultraThinMaterial)
+                            .transition(.opacity)
+                            .allowsHitTesting(false)
+                    }
 
                     PalmSafeBackdropDismissView(
                         isEnabled: isExpanded && showsEditor && !isMovingFromHeader && !isResizing,
@@ -232,12 +259,6 @@ public struct LessonDrawingOverlayView: View {
                 if let undoScrubSession {
                     UndoScrubOverlay(session: undoScrubSession, appliedOffset: undoScrubSession.currentOffset)
                         .zIndex(40)
-                        .transition(.opacity)
-                }
-
-                if isTagPickerPresented {
-                    tagPickerOverlay(containerSize: geometry.size)
-                        .zIndex(45)
                         .transition(.opacity)
                 }
 
@@ -292,9 +313,17 @@ public struct LessonDrawingOverlayView: View {
                 }
             }
             .coordinateSpace(name: DrawingOverlaySpace.name)
-            .onPreferenceChange(TagButtonFramePreference.self) { frame in
-                if frame.width > 1, frame.height > 1 {
-                    tagButtonFrame = frame
+            // Die Tag-Auswahl hängt direkt am echten Rahmen der Tag-Pille:
+            // Sie taucht dort auf, wo der Tag steht, und wird beim Öffnen und
+            // Schließen von genau diesem Punkt aus skaliert.
+            .overlayPreferenceValue(TagPillAnchorPreference.self) { anchor in
+                GeometryReader { proxy in
+                    if isTagPickerPresented, let anchor {
+                        tagPickerOverlay(
+                            containerSize: proxy.size,
+                            pillFrame: proxy[anchor]
+                        )
+                    }
                 }
             }
             .background {
@@ -339,12 +368,14 @@ public struct LessonDrawingOverlayView: View {
                         heroBlend = 0
                         withAnimation(.spring(response: 0.48, dampingFraction: 0.85)) {
                             isExpanded = true
+                            isBackdropVisible = true
                             heroBlend = 1
                         }
                     } else {
                         heroBlend = 1
                         withAnimation(.spring(response: 0.48, dampingFraction: 0.85)) {
                             isExpanded = true
+                            isBackdropVisible = true
                         }
                     }
 
@@ -575,7 +606,8 @@ public struct LessonDrawingOverlayView: View {
                         recordHistorySnapshot()
                     },
                     newTextColorHex: preferredTextColorHex,
-                    newTextFontSize: viewModel.drawingSettings.defaultTextFontSize
+                    newTextFontSize: viewModel.drawingSettings.defaultTextFontSize,
+                    textFontStyle: viewModel.drawingSettings.textFontStyle
                 )
                 .frame(
                     width: paperWidth,
@@ -784,6 +816,7 @@ public struct LessonDrawingOverlayView: View {
                 onCopyTextToClipboard: { copyNoteTextToClipboard() },
                 onUndo: { performUndo() },
                 onRedo: { performRedo() },
+                onDeselectSelectedTool: { deselectSelectedTool() },
                 undoCount: editingHistory.undoCount,
                 redoCount: editingHistory.redoCount,
                 historyRevision: historyRevision,
@@ -919,7 +952,7 @@ public struct LessonDrawingOverlayView: View {
         let keyboardTop = viewport.size.height - covered
         let panelTop = renderCenter(in: viewport).y - (panelHeight * scale / 2)
         let canvasTop = panelTop + headerHeight * scale
-        let boxBottom = canvasTop + (CGFloat(box.y) + estimatedTextBoxHeight(box)) * scale
+        let boxBottom = canvasTop + (CGFloat(box.y) + estimatedTextBoxHeight(box, fontStyle: viewModel.drawingSettings.textFontStyle)) * scale
 
         let limit = keyboardTop - 16
         guard boxBottom > limit else { return }
@@ -1077,7 +1110,8 @@ public struct LessonDrawingOverlayView: View {
                 textBoxes: visibleBoxes,
                 backgroundStyle: noteBackgroundStyle,
                 backgroundScale: noteBackgroundScale,
-                clipRect: canvasRect
+                clipRect: canvasRect,
+                textFontStyle: viewModel.drawingSettings.textFontStyle
               ) else {
             Haptics.warning()
             showToast("Diese Notiz ist noch leer.")
@@ -1523,7 +1557,8 @@ public struct LessonDrawingOverlayView: View {
             textBoxes: cleanedTextBoxes,
             backgroundStyle: noteBackgroundStyle,
             backgroundScale: noteBackgroundScale,
-            clipRect: canvasRect
+            clipRect: canvasRect,
+            textFontStyle: viewModel.drawingSettings.textFontStyle
         )
         let drawingData = croppedDrawing.dataRepresentation()
         let calculatedLines = max(3, min(10, Int((canvasHeight - headerHeight) / 56)))
@@ -1532,6 +1567,12 @@ public struct LessonDrawingOverlayView: View {
 
         withAnimation(.easeOut(duration: 0.12)) {
             showsEditor = false
+        }
+        // Erst die Abdunkelung – in einer eigenen, kurzen Animation. So kann
+        // sie nicht als Schleier stehen bleiben, falls der Hero-Morph
+        // (Abbrechen, App-Wechsel, Moduswechsel) nicht zu Ende läuft.
+        withAnimation(.easeOut(duration: 0.18)) {
+            isBackdropVisible = false
         }
         withAnimation(.spring(response: 0.40, dampingFraction: 0.88)) {
             isExpanded = false
@@ -1564,7 +1605,7 @@ public struct LessonDrawingOverlayView: View {
     private var tagAccessory: some View {
         Button {
             Haptics.tap()
-            isTagPickerPresented = true
+            presentTagPicker()
         } label: {
             if let tag = viewModel.tagSettings.tag(withID: noteTagID) {
                 NoteTagPill(tag: tag, size: .regular)
@@ -1573,36 +1614,51 @@ public struct LessonDrawingOverlayView: View {
             }
         }
         .buttonStyle(.plain)
-        .background(
-            GeometryReader { proxy in
-                Color.clear
-                    .preference(
-                        key: TagButtonFramePreference.self,
-                        value: proxy.frame(in: .named(DrawingOverlaySpace.name))
-                    )
-            }
-        )
+        .anchorPreference(key: TagPillAnchorPreference.self, value: .bounds) { $0 }
     }
 
-    private func tagPickerOverlay(containerSize: CGSize) -> some View {
+    private func presentTagPicker() {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            isTagPickerPresented = true
+        }
+    }
+
+    private func dismissTagPicker() {
+        withAnimation(.easeOut(duration: 0.16)) {
+            isTagPickerPresented = false
+        }
+    }
+
+    /// Kleine Tag-Auswahl direkt an der Tag-Pille. `pillFrame` kommt aus dem
+    /// Anker der Pille und ist damit immer korrekt – auch nach Verschieben
+    /// oder Skalieren der Notiz. Öffnen und Schließen skalieren von der Pille
+    /// aus (Rein- und Raus-Animation), statt einfach zu überblenden.
+    @ViewBuilder
+    private func tagPickerOverlay(containerSize: CGSize, pillFrame: CGRect) -> some View {
         let contentHeight = 120 + CGFloat(max(1, viewModel.tagSettings.tags.count)) * 62
             + (noteTagID == nil ? 0 : 56)
         let frame = InteractionPolicies.tagPickerFrame(
-            buttonMinX: tagButtonFrame.minX,
-            buttonMaxX: tagButtonFrame.maxX,
-            buttonMinY: tagButtonFrame.minY,
-            buttonMaxY: tagButtonFrame.maxY,
-            containerWidth: containerSize.width,
-            containerHeight: containerSize.height,
-            contentHeight: contentHeight
+            buttonMinX: Double(pillFrame.minX),
+            buttonMaxX: Double(pillFrame.maxX),
+            buttonMinY: Double(pillFrame.minY),
+            buttonMaxY: Double(pillFrame.maxY),
+            containerWidth: Double(containerSize.width),
+            containerHeight: Double(containerSize.height),
+            contentHeight: Double(contentHeight)
         )
         let panel = CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height)
+        let anchorUnit = UnitPoint(
+            x: panel.width > 0
+                ? min(max((pillFrame.midX - panel.minX) / panel.width, 0), 1)
+                : 0.5,
+            y: frame.placesBelow ? 0 : 1
+        )
 
-        return ZStack(alignment: .topLeading) {
-            Color.black.opacity(0.01)
+        ZStack(alignment: .topLeading) {
+            Color.black.opacity(0.001)
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    isTagPickerPresented = false
+                    dismissTagPicker()
                 }
 
             NoteTagPickerView(
@@ -1611,7 +1667,7 @@ public struct LessonDrawingOverlayView: View {
                 maxPanelHeight: panel.height,
                 onSelect: { newID in
                     noteTagID = newID
-                    isTagPickerPresented = false
+                    dismissTagPicker()
                 }
             )
             .frame(width: panel.width, height: panel.height, alignment: .top)
@@ -1622,8 +1678,13 @@ public struct LessonDrawingOverlayView: View {
             )
             .shadow(color: Color.black.opacity(0.18), radius: 16, x: 0, y: 8)
             .offset(x: panel.minX, y: panel.minY)
+            .transition(
+                .asymmetric(
+                    insertion: .scale(scale: 0.55, anchor: anchorUnit).combined(with: .opacity),
+                    removal: .scale(scale: 0.9, anchor: anchorUnit).combined(with: .opacity)
+                )
+            )
         }
-        .onPreferenceChange(TagButtonFramePreference.self) { tagButtonFrame = $0 }
     }
 
     // MARK: - Notiz kopieren & einfügen
@@ -1643,7 +1704,8 @@ public struct LessonDrawingOverlayView: View {
             textBoxes: cleanedTextBoxes,
             backgroundStyle: noteBackgroundStyle,
             backgroundScale: noteBackgroundScale,
-            clipRect: canvasRect
+            clipRect: canvasRect,
+            textFontStyle: viewModel.drawingSettings.textFontStyle
         )
         return LessonNote(
             id: lesson.noteKey,
@@ -1749,6 +1811,23 @@ public struct LessonDrawingOverlayView: View {
         }
     }
 
+    /// Zweiter Tipp auf ein bereits gewähltes Werkzeug: wieder ausschalten und
+    /// zum zuletzt benutzten Zeichenwerkzeug zurückkehren. Gibt es keines (oder
+    /// wäre es dasselbe Werkzeug), wird der Stift mit der ersten Slot-Farbe
+    /// gewählt – so führt der zweite Tipp nie in eine Sackgasse.
+    private func deselectSelectedTool() {
+        // Auf dem iPhone gibt es keinen Stift-Knopf und ohne Apple Pencil ist
+        // das Text-Werkzeug die einzige Eingabe – dort bleibt es gewählt.
+        if isPhoneLayout, case .text = toolSelection { return }
+
+        let fallbackHex = viewModel.drawingSettings.penColorSlots.first ?? "#1E1E1E"
+        if let last = lastInkingTool, last != toolSelection {
+            toolSelection = last
+        } else {
+            toolSelection = .pen(color: UIColor(hex: fallbackHex))
+        }
+    }
+
     private func toggleEraserAndLastTool() {
         Haptics.select()
         if case .eraser = toolSelection {
@@ -1792,8 +1871,8 @@ public struct LessonDrawingOverlayView: View {
             origin: origin,
             style: .linear,
             startUndoCount: editingHistory.undoCount,
-            startRedoCount: editingHistory.redoCount,
             currentOffset: 0,
+            targetOffset: 0,
             circleStartAngle: 0,
             circleRadius: 0,
             circleCenter: .zero,
@@ -1808,11 +1887,9 @@ public struct LessonDrawingOverlayView: View {
             undoCount: session.startUndoCount,
             availableHeight: available
         )
-        let redoTicks = min(session.startRedoCount, 8)
         let offset = UndoScrubMath.linearOffset(
             translationY: translationY,
-            undoTicks: undoTicks,
-            redoTicks: redoTicks
+            undoTicks: undoTicks
         )
         applyScrubOffset(offset, to: &session)
     }
@@ -1833,8 +1910,8 @@ public struct LessonDrawingOverlayView: View {
             origin: button,
             style: .circular,
             startUndoCount: editingHistory.undoCount,
-            startRedoCount: editingHistory.redoCount,
             currentOffset: 0,
+            targetOffset: 0,
             circleStartAngle: startAngle,
             circleRadius: radius,
             circleCenter: center,
@@ -1855,36 +1932,88 @@ public struct LessonDrawingOverlayView: View {
             x: windowLocation.x - overlayWindowOrigin.x,
             y: windowLocation.y - overlayWindowOrigin.y
         )
-        let undoTicks = NoteUndoSessionPolicy.circularTickCount(undoCount: session.startUndoCount)
-        let redoTicks = NoteUndoSessionPolicy.redoTickCount(
-            redoCount: session.startRedoCount,
-            maxTicks: max(0, NoteUndoSessionPolicy.circularMaxTicks - undoTicks)
+        // Direkt an der Kreismitte ist `atan2` nicht mehr stabil. Solche
+        // Samples werden ignoriert, statt den Scrubber springen zu lassen.
+        let distanceToCenter = hypot(
+            local.x - session.circleCenter.x,
+            local.y - session.circleCenter.y
         )
-        let stepAngle = (2 * CGFloat.pi) / CGFloat(NoteUndoSessionPolicy.circularMaxTicks)
+        guard distanceToCenter > 12 else { return }
+
+        let undoTicks = NoteUndoSessionPolicy.circularTickCount(undoCount: session.startUndoCount)
+        let stepAngle = CGFloat(NoteUndoSessionPolicy.circularStepAngle())
         let offset = UndoScrubMath.circularOffset(
             from: session.circleStartAngle,
             to: local,
             center: session.circleCenter,
             undoTicks: undoTicks,
-            redoTicks: redoTicks,
             stepAngle: stepAngle
         )
         applyScrubOffset(offset, to: &session)
     }
 
     private func applyScrubOffset(_ offset: Int, to session: inout UndoScrubSession) {
-        let delta = offset - session.currentOffset
-        guard delta != 0 else { return }
-        if delta > 0 {
-            for _ in 0..<delta { _ = performSilentUndo() }
-        } else {
-            for _ in 0..<(-delta) { _ = performSilentRedo() }
-        }
-        session.currentOffset = offset
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.74)) {
+        // Der Scrubber macht ausschließlich rückgängig: Der gültige Bereich
+        // ist 0 … vorhandene Undo-Schritte. Ein Redo-Bereich existiert nicht
+        // mehr, deshalb kann die Leiste auch nicht mehr „nach oben wachsen“.
+        let clamped = max(0, min(offset, session.startUndoCount))
+        guard clamped != session.targetOffset else { return }
+
+        // Der Finger bestimmt das **Ziel**, nicht den sofort angewandten
+        // Schritt: Der Knopf gleitet animiert dorthin, die Schritte wandern
+        // einzeln hinterher (siehe `driveScrubSteps`). So springt die Anzeige
+        // nicht mehr mit einem Ruck mehrere Schritte auf einmal zurück.
+        session.targetOffset = clamped
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
             undoScrubSession = session
         }
+        driveScrubSteps(towards: session)
+    }
+
+    /// Wendet die Scrub-Schritte einzeln und im festen Takt an – immer genau
+    /// so viele, wie der Knopf auf dem Bogen bereits passiert hat. Der
+    /// angewandte Stand ist damit immer korrekt, auch wenn der Finger schnell
+    /// über mehrere Stufen zieht.
+    private func driveScrubSteps(towards session: UndoScrubSession) {
+        scrubStepWorkItem?.cancel()
+        let item = DispatchWorkItem { [self] in stepScrub(towards: session) }
+        scrubStepWorkItem = item
+        stepScrub(towards: session)
+    }
+
+    private func stepScrub(towards session: UndoScrubSession) {
+        guard let live = undoScrubSession, live.startUndoCount == session.startUndoCount else { return }
+        let delta = session.targetOffset - live.currentOffset
+        guard delta != 0 else { return }
+
+        let applied = delta > 0 ? performSilentUndo() : performSilentRedo()
+        guard applied else {
+            // Kein Schritt mehr verfügbar (z. B. Historie erschöpft): Ziel
+            // korrigieren, damit die Anzeige nicht über den Vorrat hinausläuft.
+            var corrected = live
+            corrected.targetOffset = live.currentOffset
+            undoScrubSession = corrected
+            return
+        }
+
+        var updated = live
+        updated.currentOffset += delta > 0 ? 1 : -1
+        // Die hervorgehobene Stufe wandert kurz hinterher – der Knopf selbst
+        // gleitet bereits zum Finger.
+        withAnimation(.easeOut(duration: 0.12)) {
+            undoScrubSession = updated
+        }
+        // Einrast-Feedback pro Schritt – der Apple Pencil Pro vibriert selbst.
         Haptics.pencilSnap(intensity: 0.9)
+
+        guard updated.currentOffset != session.targetOffset else { return }
+        // Ein Schritt pro Takt: Der Knopf wandert sichtbar über den Bogen.
+        let item = DispatchWorkItem { [self] in
+            guard let next = undoScrubSession else { return }
+            stepScrub(towards: next)
+        }
+        scrubStepWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.07, execute: item)
     }
 
     private func performSilentUndo() -> Bool {
@@ -1902,6 +2031,18 @@ public struct LessonDrawingOverlayView: View {
     }
 
     private func endUndoScrub() {
+        // Beim Loslassen sofort aufholen: Alle noch offenen Schritte werden
+        // ohne Takt angewandt, damit der Zustand exakt dem Ziel entspricht.
+        scrubStepWorkItem?.cancel()
+        scrubStepWorkItem = nil
+        if let live = undoScrubSession {
+            let delta = live.targetOffset - live.currentOffset
+            if delta > 0 {
+                for _ in 0..<delta { _ = performSilentUndo() }
+            } else if delta < 0 {
+                for _ in 0..<(-delta) { _ = performSilentRedo() }
+            }
+        }
         withAnimation(.easeOut(duration: 0.16)) {
             undoScrubSession = nil
         }

@@ -32,6 +32,35 @@ public struct DayColumnView: View {
         day.isToday
     }
 
+    /// Montag der kommenden Schulwoche, wenn die laufende Woche schon vorbei
+    /// ist (Wochenende bzw. Freitag nach der letzten Stunde). Dieser Tag wird
+    /// wie „heute“ hervorgehoben – aber bewusst in **hellem Gelb**, damit die
+    /// kommende Woche sofort ins Auge fällt.
+    private var isUpcomingWeekDay: Bool {
+        guard !isToday else { return false }
+        guard let highlight = viewModel.upcomingWeekHighlightDay() else { return false }
+        return day.isSameDay(as: highlight)
+    }
+
+    /// Hervorgehobener Tag der Spalte (heute oder kommender Schultag).
+    private var isHighlightedDay: Bool { isToday || isUpcomingWeekDay }
+
+    /// Hervorhebungsfarbe der Spalte. Heute = Blau, kommende Woche = helles
+    /// Gelb.
+    private var highlightColor: Color {
+        isToday ? .blue : Color(red: 0.98, green: 0.84, blue: 0.30)
+    }
+
+    /// Schrift-/Akzentfarbe für den Kopf der kommenden Woche: dunkles Amber,
+    /// damit sie auf hellem Gelb gut lesbar bleibt.
+    private var upcomingWeekTextColor: Color {
+        Color(red: 0.62, green: 0.47, blue: 0.03)
+    }
+
+    private var highlightTextColor: Color {
+        isToday ? .blue : upcomingWeekTextColor
+    }
+
     private var timetableHeight: CGFloat {
         CGFloat(viewModel.periods.count) * rowHeight
     }
@@ -65,12 +94,12 @@ public struct DayColumnView: View {
 
     @ViewBuilder
     private var headerBackground: some View {
-        if isToday {
+        if isHighlightedDay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.blue.opacity(0.15))
+                .fill(highlightColor.opacity(isToday ? 0.15 : 0.22))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Color.blue.opacity(0.4), lineWidth: 1)
+                        .strokeBorder(highlightColor.opacity(isToday ? 0.4 : 0.6), lineWidth: 1)
                 )
         } else {
             Rectangle()
@@ -82,17 +111,21 @@ public struct DayColumnView: View {
         VStack(spacing: isCompact ? 1 : 3) {
             HStack(spacing: 4) {
                 Text(isCompact ? String(day.weekdayLongString.prefix(2)) : day.weekdayLongString)
-                    .font(.system(size: isCompact ? 12 : 14, weight: isCompact && isToday ? .semibold : .regular, design: .default))
-                    .foregroundColor(isToday ? .blue : .primary)
+                    .font(.system(size: isCompact ? 12 : 14, weight: isCompact && isHighlightedDay ? .semibold : .regular, design: .default))
+                    .foregroundColor(isHighlightedDay ? highlightTextColor : .primary)
 
-                if isToday, !isCompact {
-                    StatusBadge(.today)
+                if isHighlightedDay, !isCompact {
+                    if isToday {
+                        StatusBadge(.today)
+                    } else {
+                        StatusBadge(.upcomingWeek)
+                    }
                 }
             }
 
             Text(isCompact ? day.compactHeaderDateString : day.headerDateString)
                 .font(.system(size: isCompact ? 9 : 12, weight: .regular, design: .default))
-                .foregroundColor(isToday ? .blue.opacity(0.85) : .secondary)
+                .foregroundColor(isHighlightedDay ? highlightTextColor.opacity(0.85) : .secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
@@ -145,19 +178,25 @@ public struct DayColumnView: View {
             Rectangle()
                 .fill(cellBackgroundColor(column: columnIndex, row: rowIndex))
 
-            if isToday {
+            if isHighlightedDay {
                 Rectangle()
-                    .fill(Color.blue.opacity(rowIndex.isMultiple(of: 2) ? 0.10 : 0.14))
+                    .fill(
+                        highlightColor.opacity(
+                            isToday
+                                ? (rowIndex.isMultiple(of: 2) ? 0.10 : 0.14)
+                                : (rowIndex.isMultiple(of: 2) ? 0.10 : 0.16)
+                        )
+                    )
             }
         }
     }
 
     @ViewBuilder
     private var todayColumnAccent: some View {
-        if isToday {
+        if isHighlightedDay {
             HStack {
                 Rectangle()
-                    .fill(Color.blue.opacity(0.48))
+                    .fill(highlightColor.opacity(isToday ? 0.48 : 0.75))
                     .frame(width: 3)
                 Spacer()
             }
@@ -213,16 +252,18 @@ public struct DayColumnView: View {
         }
     }
 
+    /// „Jetzt“-Markierung: bewusst nur eine **waagerechte** Linie mit Punkt.
+    ///
+    /// Der frühere senkrechte rote Balken lief vom Spaltenkopf bis zur
+    /// aktuellen Uhrzeit und lag direkt neben dem blauen (bzw. gelben)
+    /// Tagesbalken am linken Rand – das sah wie ein roter „Strich bis zur
+    /// Seitenkante“ aus. Die Uhrzeit lässt sich an der waagerechten Linie
+    /// genauso gut ablesen.
     private func currentTimeIndicatorLine(at offsetY: CGFloat) -> some View {
-        let verticalLineHeight = max(CGFloat.zero, offsetY)
         let horizontalLineOffset = max(CGFloat.zero, offsetY - 1)
         let dotOffset = max(CGFloat.zero, offsetY - 3.5)
 
         return ZStack(alignment: .topLeading) {
-            Rectangle()
-                .fill(Color.red.opacity(0.85))
-                .frame(width: 3, height: verticalLineHeight)
-
             Rectangle()
                 .fill(Color.red.opacity(0.9))
                 .frame(height: 2)
@@ -232,7 +273,7 @@ public struct DayColumnView: View {
             Circle()
                 .fill(Color.red)
                 .frame(width: 7, height: 7)
-                .offset(x: -2, y: dotOffset)
+                .offset(x: 1, y: dotOffset)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .allowsHitTesting(false)
@@ -273,14 +314,20 @@ public struct DayColumnView: View {
 
     private var columnBackground: some View {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(isToday ? Color.blue.opacity(0.08) : .clear)
+            .fill(
+                isToday
+                    ? Color.blue.opacity(0.08)
+                    : (isUpcomingWeekDay ? highlightColor.opacity(0.10) : .clear)
+            )
     }
 
     private var columnBorder: some View {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
             .strokeBorder(
-                isToday ? Color.blue.opacity(0.38) : .clear,
-                lineWidth: isToday ? 1.25 : 0
+                isToday
+                    ? Color.blue.opacity(0.38)
+                    : (isUpcomingWeekDay ? highlightColor.opacity(0.55) : .clear),
+                lineWidth: isHighlightedDay ? 1.25 : 0
             )
     }
 }

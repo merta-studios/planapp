@@ -9,23 +9,36 @@ public enum Haptics {
     private static let notificationGenerator = UINotificationFeedbackGenerator()
     /// Ansicht, über die der Apple Pencil Pro die Vibration selbst auslöst.
     private static weak var feedbackView: UIView?
+    /// Ansicht, an die der vorbereitete Generator gebunden ist.
+    private static weak var preparedPencilView: UIView?
     /// Vor dem Einrasten vorbereitet, sonst kommt die Pencil-Vibration nicht an.
     private static var preparedPencilSnap: UIImpactFeedbackGenerator?
 
     /// Merkt sich die Ansicht unter dem Stift und bereitet den Generator vor.
-    /// Ein frischer Generator erst im Moment des Einrastens vibriert den Pencil nicht.
+    /// Ein frischer Generator erst im Moment des Einrastens vibriert den Pencil
+    /// nicht – deshalb wird hier vorbereitet und bei jedem weiteren Aufruf auf
+    /// derselben Ansicht nur noch einmal nachgeschärft.
     public static func attachFeedbackView(_ view: UIView?) {
         guard let view else { return }
-        if feedbackView === view, preparedPencilSnap != nil { return }
+        if feedbackView === view, let existing = preparedPencilSnap {
+            // Bereits vorbereitet: nur die Bereitschaft auffrischen, damit die
+            // Apple-Pencil-Pro-Vibration zuverlässig ankommt.
+            existing.prepare()
+            return
+        }
         feedbackView = view
         if #available(iOS 17.5, *), view.window != nil {
+            // Die Ansicht muss sichtbar im Fenster liegen: Nur dann leitet
+            // iPadOS die Vibration an den Apple Pencil Pro weiter.
             let generator = UIImpactFeedbackGenerator(style: .rigid, view: view)
             generator.prepare()
             preparedPencilSnap = generator
+            preparedPencilView = view
         } else {
             let generator = UIImpactFeedbackGenerator(style: .rigid)
             generator.prepare()
             preparedPencilSnap = generator
+            preparedPencilView = view
         }
     }
 
@@ -45,8 +58,12 @@ public enum Haptics {
     /// vibriert der Apple Pencil, sonst das Gerät.
     public static func pencilSnap(intensity: CGFloat = 1.0) {
         let clamped = min(1, max(0.4, intensity))
-        if preparedPencilSnap == nil {
-            attachFeedbackView(feedbackView)
+        if let view = feedbackView, view.window != nil {
+            // Frisch an der echten Ansicht erzeugen, falls der gespeicherte
+            // Generator zu einer inzwischen entfernten View gehört.
+            if preparedPencilSnap == nil || preparedPencilView !== view {
+                attachFeedbackView(view)
+            }
         }
         if preparedPencilSnap == nil {
             let generator = UIImpactFeedbackGenerator(style: .rigid)
@@ -54,6 +71,8 @@ public enum Haptics {
             preparedPencilSnap = generator
         }
         preparedPencilSnap?.impactOccurred(intensity: clamped)
+        // Direkt wieder scharf stellen: Der nächste Einrast-Schritt kommt
+        // während des Ziehens oft schon wenige Millisekunden später.
         preparedPencilSnap?.prepare()
     }
 

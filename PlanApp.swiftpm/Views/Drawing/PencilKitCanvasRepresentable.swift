@@ -311,6 +311,16 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         private var stillStrokeEnd: CGPoint?
         private var lastObservedPointCount = 0
         private var stillnessSampler: Timer?
+        /// Beginn des gerade gezogenen Strichs in Zeichenkoordinaten.
+        private var liveStrokeStart: CGPoint?
+        /// Aktuelles (gehaltenes) Strichende für die Live-Vorschau.
+        private var liveStrokeEnd: CGPoint?
+        /// Dünne Ebene ÜBER der Zeichenfläche. Sie zeigt die gerade Linie
+        /// bereits **während** des Stillhaltens. PencilKit übernimmt den Strich
+        /// erst beim Loslassen – ohne diese Vorschau erschien die Linie erst
+        /// danach.
+        private var straightPreviewLayer: CAShapeLayer?
+        private var previewClearWorkItem: DispatchWorkItem?
         /// Solange gesetzt, darf SwiftUI die gerade eingerastete Zeichnung
         /// nicht mit dem noch gekrümmten Binding überschreiben.
         var preservesCanvasDrawing: Bool {
@@ -386,6 +396,8 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 activeStrokeSources.insert(source)
                 if !wasActive {
                     holdAnchor = location
+                    liveStrokeStart = location
+                    liveStrokeEnd = location
                     lastSignificantMovement = Date()
                     straightenRequested = false
                     straightenUntil = nil
@@ -393,11 +405,16 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 } else if hypot(location.x - holdAnchor.x, location.y - holdAnchor.y) > 12 {
                     // Kleines Stiftzittern setzt den Halt nicht zurück.
                     holdAnchor = location
+                    liveStrokeEnd = location
                     stillStrokeEnd = currentStrokeEnd()
                     lastSignificantMovement = Date()
+                    // Weitergezeichnet: Die Vorschau einer alten Linie muss weg.
+                    clearStraightPreview()
                     straightenRequested = false
                     straightenUntil = nil
                     scheduleHoldCheck()
+                } else {
+                    liveStrokeEnd = location
                 }
             case .ended, .cancelled, .failed:
                 activeStrokeSources.remove(source)
@@ -434,13 +451,19 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             let grew = strokeGrew()
             if moved || grew {
                 holdAnchor = location
+                liveStrokeEnd = location
                 stillStrokeEnd = currentStrokeEnd()
                 lastSignificantMovement = Date()
+                // Weitergezeichnet: Vorschau verwerfen.
+                clearStraightPreview()
                 straightenRequested = false
                 straightenUntil = nil
                 scheduleHoldCheck()
-            } else if holdWorkItem == nil {
-                scheduleHoldCheck()
+            } else {
+                liveStrokeEnd = location
+                if holdWorkItem == nil {
+                    scheduleHoldCheck()
+                }
             }
         }
 
@@ -478,6 +501,10 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 // die Gerade nicht wieder mit der Kurve überschreibt.
                 self.straightenUntil = Date().addingTimeInterval(0.45)
                 self.playSnapFeedback()
+                // Die gerade Linie erscheint sofort – noch während der Stift
+                // gehalten wird. Bisher passierte sichtbar erst beim Loslassen
+                // etwas, weil PencilKit den Strich erst dann übernimmt.
+                self.showStraightPreview()
                 self.applyStraightLineSoon()
             }
             holdWorkItem = item
@@ -485,6 +512,76 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 deadline: .now() + PencilKitCanvasRepresentable.straightLineHoldDuration,
                 execute: item
             )
+        }
+
+        // MARK: - Live-Vorschau der geraden Linie
+
+        /// Zeichnet die gerade Linie als eigene, dünne Ebene über der
+        /// Zeichenfläche – mit Farbe und Dicke des aktiven Werkzeugs.
+        private func showStraightPreview() {
+            guard let canvasView,
+                  let start = liveStrokeStart,
+                  let end = liveStrokeEnd ?? stillStrokeEnd else { return }
+            let length = hypot(end.x - start.x, end.y - start.y)
+            guard length.isFinite, length >= 12 else { return }
+
+            let layer = straightPreviewLayer ?? CAShapeLayer()
+            let path = UIBezierPath()
+            path.move(to: start)
+            path.addLine(to: end)
+
+            layer.path = path.cgPath
+            layer.strokeColor = previewStrokeColor.cgColor
+            layer.fillColor = UIColor.clear.cgColor
+            layer.lineWidth = previewStrokeWidth
+            layer.lineCap = .round
+            layer.lineJoin = .round
+            layer.opacity = 1
+            if layer.superlayer == nil {
+                canvasView.layer.addSublayer(layer)
+            }
+            straightPreviewLayer = layer
+        }
+
+        private var previewStrokeColor: UIColor {
+            switch parent.toolSelection {
+            case .pen(let color):
+                return color
+            case .marker(let color):
+                // Textmarker wird von PencilKit halbtransparent gezeichnet.
+                return color.withAlphaComponent(0.55)
+            case .eraser, .lasso, .text:
+                return UIColor.black
+            }
+        }
+
+        private var previewStrokeWidth: CGFloat {
+            switch parent.toolSelection {
+            case .pen:
+                return max(2, parent.penWidth)
+            case .marker:
+                return max(4, parent.markerWidth)
+            case .eraser, .lasso, .text:
+                return max(2, parent.penWidth)
+            }
+        }
+
+        /// Blendet die Vorschau aus. `delayed` überbrückt den Moment, in dem
+        /// PencilKit den echten Strich erst beim Loslassen übernimmt.
+        private func clearStraightPreview(delayed: Bool = false) {
+            previewClearWorkItem?.cancel()
+            previewClearWorkItem = nil
+            guard delayed else {
+                straightPreviewLayer?.removeFromSuperlayer()
+                straightPreviewLayer = nil
+                return
+            }
+            let item = DispatchWorkItem { [weak self] in
+                self?.straightPreviewLayer?.removeFromSuperlayer()
+                self?.straightPreviewLayer = nil
+            }
+            previewClearWorkItem = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
         }
 
         private func applyStraightLineSoon() {
@@ -678,6 +775,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             lastSignificantMovement = Date()
             lastObservedPointCount = 0
             stillStrokeEnd = nil
+            clearStraightPreview()
+            liveStrokeStart = canvasView.drawingGestureRecognizer.location(in: canvasView)
+            liveStrokeEnd = liveStrokeStart
             if isInkingToolActive {
                 activeStrokeSources.insert("tool")
                 holdAnchor = canvasView.drawingGestureRecognizer.location(in: canvasView)
@@ -701,6 +801,11 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             stillnessSampler = nil
             holdWorkItem?.cancel()
             holdWorkItem = nil
+            // Der echte Strich wird gleich ersetzt; die Vorschau bleibt kurz
+            // darüber liegen, damit es an dieser Stelle nicht flackert.
+            clearStraightPreview(delayed: true)
+            liveStrokeStart = nil
+            liveStrokeEnd = nil
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 // Der Strich liegt erst beim Loslassen sicher in `drawing`.
@@ -781,7 +886,8 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         textBoxes: [NoteTextBox],
         backgroundStyle: NoteBackgroundStyle = .blank,
         backgroundScale: Double = NoteBackgroundMetrics.defaultScale,
-        clipRect: CGRect? = nil
+        clipRect: CGRect? = nil,
+        textFontStyle: NoteTextFontStyle = .system
     ) -> UIImage? {
         var contentRect = CGRect.null
 
@@ -790,7 +896,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         }
 
         for box in textBoxes {
-            let boxHeight = estimatedTextBoxHeight(box)
+            let boxHeight = estimatedTextBoxHeight(box, fontStyle: textFontStyle)
             let boxRect = CGRect(
                 x: CGFloat(box.x),
                 y: CGFloat(box.y),
@@ -848,7 +954,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 guard !box.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     continue
                 }
-                let font = UIFont.systemFont(ofSize: CGFloat(box.fontSize))
+                let font = textFontStyle.uiFont(size: CGFloat(box.fontSize))
                 let attributes: [NSAttributedString.Key: Any] = [
                     .font: font,
                     .foregroundColor: UIColor(hex: box.colorHex.isEmpty

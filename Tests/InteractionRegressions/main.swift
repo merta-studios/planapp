@@ -215,8 +215,123 @@ expect(
 )
 expect(NoteUndoSessionPolicy.linearTickCount(undoCount: 10, availableHeight: 96) == 3, "Balken stoppt am Bildschirmrand")
 expect(NoteUndoSessionPolicy.linearTickCount(undoCount: 2, availableHeight: 400) == 2, "Weniger Schritte als Höhe")
-expect(NoteUndoSessionPolicy.circularTickCount(undoCount: 80) == NoteUndoSessionPolicy.circularMaxTicks, "Maximal ein Kreis")
-expect(NoteUndoSessionPolicy.circularTickCount(undoCount: 4) == 4, "Weniger Schritte als ein Kreis")
+expect(NoteUndoSessionPolicy.circularTickCount(undoCount: 80) == NoteUndoSessionPolicy.circularMaxTicks, "Maximal ein halber Kreis")
+expect(NoteUndoSessionPolicy.circularTickCount(undoCount: 4) == 4, "Weniger Schritte als der halbe Kreis")
+
+// MARK: - Scrubber: nur rückgängig, halber Kreis, kein Sprung
+
+expect(
+    abs(NoteUndoSessionPolicy.circularSweepAngle - .pi) < 0.000_1,
+    "Der runde Scrubber läuft nur einen halben Kreis"
+)
+expect(
+    abs(
+        NoteUndoSessionPolicy.circularStepAngle() * Double(NoteUndoSessionPolicy.circularMaxTicks)
+            - NoteUndoSessionPolicy.circularSweepAngle
+    ) < 0.000_1,
+    "Die Schritte decken genau den halben Kreis ab"
+)
+
+expect(UndoScrubMath.linearOffset(translationY: 96, undoTicks: 10) == 3, "Lineare Schritte folgen dem Finger")
+expect(UndoScrubMath.linearOffset(translationY: -200, undoTicks: 10) == 0, "Nach oben gibt es keinen Redo-Bereich mehr")
+expect(UndoScrubMath.linearOffset(translationY: 900, undoTicks: 10) == 10, "Mehr als alle Schritte wird begrenzt")
+expect(UndoScrubMath.linearOffset(translationY: 40, undoTicks: 0) == 0, "Ohne Schritte kein Ausschlag")
+
+let scrubStepAngle = NoteUndoSessionPolicy.circularStepAngle()
+let scrubStart = 0.5
+let scrubCenter = CGPoint(x: 200, y: 200)
+func scrubPoint(_ angle: Double) -> CGPoint {
+    CGPoint(x: scrubCenter.x + 100 * CGFloat(cos(angle)), y: scrubCenter.y + 100 * CGFloat(sin(angle)))
+}
+expect(
+    UndoScrubMath.circularOffset(
+        from: CGFloat(scrubStart), to: scrubPoint(scrubStart - 2 * scrubStepAngle),
+        center: scrubCenter, undoTicks: 8, stepAngle: CGFloat(scrubStepAngle)
+    ) == 2,
+    "Zwei Schritte auf dem Bogen"
+)
+expect(
+    UndoScrubMath.circularOffset(
+        from: CGFloat(scrubStart), to: scrubPoint(scrubStart + 3 * scrubStepAngle),
+        center: scrubCenter, undoTicks: 8, stepAngle: CGFloat(scrubStepAngle)
+    ) == 0,
+    "Gegen die Bogenrichtung bleibt bei 0 – kein Redo"
+)
+expect(
+    UndoScrubMath.circularOffset(
+        from: CGFloat(scrubStart), to: scrubPoint(scrubStart - 8 * scrubStepAngle),
+        center: scrubCenter, undoTicks: 4, stepAngle: CGFloat(scrubStepAngle)
+    ) == 4,
+    "Der Bogen endet an der letzten vorhandenen Stufe"
+)
+expect(
+    UndoScrubMath.circularOffset(
+        from: CGFloat(scrubStart), to: scrubPoint(scrubStart - 6 * scrubStepAngle),
+        center: scrubCenter, undoTicks: 4, stepAngle: CGFloat(scrubStepAngle)
+    ) == 4,
+    "Mehr Schritte als auf dem Bogen: wird begrenzt, kein Redo"
+)
+let wrappedScrub = UndoScrubMath.circularOffset(
+    from: CGFloat(scrubStart), to: scrubPoint(scrubStart - 30 * scrubStepAngle),
+    center: scrubCenter, undoTicks: 12, stepAngle: CGFloat(scrubStepAngle)
+)
+expect(
+    wrappedScrub >= 0 && wrappedScrub <= 12,
+    "Auch nach einem vollen Umlauf bleibt der Wert im gültigen Bereich"
+)
+
+// MARK: - „Nächste Woche“ am Wochenende und nach der letzten Stunde am Freitag
+
+let germanCalendar = Calendar.germanCalendar
+let friday = germanCalendar.date(from: DateComponents(
+    calendar: germanCalendar, year: 2026, month: 10, day: 9, hour: 15, minute: 0
+))
+let monday = germanCalendar.date(from: DateComponents(
+    calendar: germanCalendar, year: 2026, month: 10, day: 5, hour: 9, minute: 0
+))
+let saturday = germanCalendar.date(from: DateComponents(
+    calendar: germanCalendar, year: 2026, month: 10, day: 10, hour: 11, minute: 0
+))
+expect(friday != nil && monday != nil && saturday != nil, "Testdaten lassen sich bauen")
+
+if let friday, let monday, let saturday {
+    // `startOfWeek()` liefert Montag 00:00 – genau das ist der Wochen-Schlüssel.
+    let mondayStart = monday.startOfWeek(using: germanCalendar)
+    let nextMondayStart = germanCalendar.date(byAdding: .day, value: 7, to: mondayStart)
+
+    expect(
+        Date.relevantCurrentWeekStart(from: friday, lastLessonEndMinutes: 16 * 60) == mondayStart,
+        "Freitag vor der letzten Stunde bleibt die laufende Woche"
+    )
+    expect(
+        Date.relevantCurrentWeekStart(from: friday, lastLessonEndMinutes: 13 * 60) == nextMondayStart,
+        "Freitag nach der letzten Stunde zeigt auf die kommende Woche"
+    )
+    expect(
+        Date.upcomingWeekHighlightDay(from: friday, lastLessonEndMinutes: 13 * 60) == nextMondayStart,
+        "Der kommende Montag wird hellgelb hervorgehoben"
+    )
+    expect(
+        Date.upcomingWeekHighlightDay(from: friday, lastLessonEndMinutes: 16 * 60) == nil,
+        "Vor der letzten Stunde am Freitag gibt es keinen Extra-Hinweis"
+    )
+    expect(
+        Date.relevantCurrentWeekStart(from: saturday) == nextMondayStart,
+        "Am Wochenende gilt bereits die kommende Woche"
+    )
+    expect(
+        Date.upcomingWeekHighlightDay(from: saturday) == nextMondayStart,
+        "Am Wochenende wird der Montag der kommenden Woche markiert"
+    )
+    expect(
+        Date.upcomingWeekHighlightDay(from: monday) == nil,
+        "Unter der Woche wird kein kommender Montag markiert"
+    )
+    expect(
+        Date.relevantCurrentWeekStart(from: monday) == mondayStart,
+        "Montag ist die laufende Woche"
+    )
+}
 
 // MARK: - Undo-Kreis, schmale Leiste, Tag-Popover, Jetzt-Sprung, Filter
 
