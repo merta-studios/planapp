@@ -82,7 +82,7 @@ public struct DrawingToolbarView: View {
 
         var title: String {
             switch self {
-            case .text: return "Text-Werkzeug"
+            case .text: return "Text"
             case .lasso: return "Lasso"
             case .eraser: return "Radierer"
             }
@@ -91,11 +91,11 @@ public struct DrawingToolbarView: View {
         var message: String {
             switch self {
             case .text:
-                return "Tippe auf die Zeichenfläche, um Text einzufügen. Schriftart und Größe legst du in den Einstellungen unter „Zeichnen“ fest – dort stehen mehrere Schriften zur Auswahl."
+                return "Verwalte die Standard-Schriftgröße und Schriftart in den Einstellungen dieser App!"
             case .lasso:
-                return "Führe eine geschlossene Geste um den Bereich, den du verschieben, kopieren oder löschen möchtest."
+                return "Was suchst du? Mehr gibt es hier nicht einzustellen!"
             case .eraser:
-                return "Wische über Striche oder Textfelder, um sie zu entfernen. Die Breite passt du über den Dicke-Regler an."
+                return "Verwalte automatisches Abwählen des Radierers in den Einstellungen dieser App!"
             }
         }
     }
@@ -107,6 +107,11 @@ public struct DrawingToolbarView: View {
                 if !newValue { activeToolHint = nil }
             }
         )
+    }
+
+    private func toggleToolHint(_ hint: ToolHint) {
+        Haptics.tap()
+        activeToolHint = activeToolHint == hint ? nil : hint
     }
 
     @ViewBuilder
@@ -121,7 +126,11 @@ public struct DrawingToolbarView: View {
                 .lineSpacing(2)
         }
         .padding(14)
-        .frame(width: 260, alignment: .leading)
+        .frame(
+            width: DrawingColorPalettePopover.popoverSize.width,
+            height: DrawingColorPalettePopover.popoverSize.height,
+            alignment: .leading
+        )
     }
 
     private var isCompactToolbar: Bool {
@@ -594,11 +603,11 @@ public struct DrawingToolbarView: View {
         return Button {
             if isSelected {
                 // Zweiter Tipp: Mini-Hinweis statt Abwahl / Stift-Rückfall.
-                Haptics.tap()
-                activeToolHint = .text
+                toggleToolHint(.text)
                 return
             }
             Haptics.select()
+            activeToolHint = nil
             toolSelection = .text
         } label: {
             // Nur das Aa-Symbol, kein Beschriftungstext.
@@ -736,11 +745,11 @@ public struct DrawingToolbarView: View {
         return Button {
             if isSelected {
                 // Zweiter Tipp: Mini-Hinweis statt Abwahl / Stift-Rückfall.
-                Haptics.tap()
-                activeToolHint = .eraser
+                toggleToolHint(.eraser)
                 return
             }
             Haptics.select()
+            activeToolHint = nil
             toolSelection = .eraser
         } label: {
             Image(systemName: "eraser")
@@ -770,11 +779,11 @@ public struct DrawingToolbarView: View {
         return Button {
             if isSelected {
                 // Zweiter Tipp: Mini-Hinweis statt Abwahl / Stift-Rückfall.
-                Haptics.tap()
-                activeToolHint = .lasso
+                toggleToolHint(.lasso)
                 return
             }
             Haptics.select()
+            activeToolHint = nil
             toolSelection = .lasso
         } label: {
             Image(systemName: "lasso")

@@ -468,15 +468,20 @@ public struct LessonBlockView: View {
                 })
             }
             if viewModel.tag(for: lesson) != nil {
-                tagElements.append(.divider())
-                tagElements.append(UIAction(
-                    title: "Tag entfernen",
-                    image: UIImage(systemName: "xmark.circle"),
-                    attributes: .destructive
-                ) { _ in
-                    Haptics.tap()
-                    viewModel.setTag(nil, for: lesson)
-                })
+                tagElements.append(UIMenu(
+                    title: "",
+                    options: .displayInline,
+                    children: [
+                        UIAction(
+                            title: "Tag entfernen",
+                            image: UIImage(systemName: "xmark.circle"),
+                            attributes: .destructive
+                        ) { _ in
+                            Haptics.tap()
+                            viewModel.setTag(nil, for: lesson)
+                        }
+                    ]
+                ))
             }
             elements.append(UIMenu(title: "Tag", image: UIImage(systemName: "tag"), children: tagElements))
         }
@@ -536,18 +541,15 @@ public struct LessonBlockView: View {
 }
 
 /// Unsichtbare UIKit-Brücke für das block-gewidmete „Optionen“-Menü:
-/// Apple-Pencil-Pro-Squeeze (und der Pencil-Button-Tap) fordern das
-/// `UIContextMenuInteraction`-Menü programmatisch an. Der lange Druck selbst
-/// läuft über das SwiftUI-`.contextMenu` des Blocks; beide Wege zeigen das
-/// identische Menü.
+/// Apple-Pencil-Pro-Squeeze (und der Pencil-Button-Tap) präsentieren das
+/// Menü programmatisch über `UIEditMenuInteraction`. Ein langer Druck läuft
+/// weiterhin über das SwiftUI-`.contextMenu` des Blocks; beide Wege zeigen
+/// dasselbe Menü.
 ///
-/// Der `buildMenu`-Closure wird bei jedem SwiftUI-Render aktualisiert, daher
-/// baut das Menü immer aus dem aktuellen Zustand. Weil UIKit das Menü
-/// präsentiert, kann ein Re-Render der Karte (Hover, Vorschau-Refresh) ein
-/// offenes Menü nicht abreißen.
+/// Der `buildMenu`-Closure wird bei jedem SwiftUI-Render aktualisiert, damit
+/// das Menü stets den aktuellen ViewModel-Zustand verwendet.
 private struct LessonBlockSqueezeMenuBridge: UIViewRepresentable {
-    /// Nur beim Hovern über den Block (dasselbe Verhalten wie vor der
-    /// Umstellung auf das Kontextmenü).
+    /// Nur beim Hovern über den Block (dasselbe Verhalten wie bisher).
     var isSqueezeEnabled: Bool
     var buildMenu: () -> UIMenu
 
@@ -565,9 +567,10 @@ private struct LessonBlockSqueezeMenuBridge: UIViewRepresentable {
         view.addInteraction(squeeze)
         context.coordinator.pencilInteraction = squeeze
 
-        let menu = UIContextMenuInteraction(delegate: context.coordinator)
-        view.addUIContextMenuInteraction(menu)
-        context.coordinator.contextMenuInteraction = menu
+        let editMenu = UIEditMenuInteraction(delegate: context.coordinator)
+        view.addInteraction(editMenu)
+        context.coordinator.editMenuInteraction = editMenu
+        context.coordinator.anchorView = view
 
         context.coordinator.update(from: self)
         return view
@@ -575,13 +578,15 @@ private struct LessonBlockSqueezeMenuBridge: UIViewRepresentable {
 
     func updateUIView(_ uiView: UIView, context: Context) {
         context.coordinator.update(from: self)
+        context.coordinator.anchorView = uiView
     }
 
-    final class Coordinator: NSObject, UIPencilInteractionDelegate, UIContextMenuInteractionDelegate {
+    final class Coordinator: NSObject, UIPencilInteractionDelegate, UIEditMenuInteractionDelegate {
         var isSqueezeEnabled = false
         var buildMenu: () -> UIMenu = { UIMenu(title: "") }
         weak var pencilInteraction: UIPencilInteraction?
-        weak var contextMenuInteraction: UIContextMenuInteraction?
+        weak var editMenuInteraction: UIEditMenuInteraction?
+        weak var anchorView: UIView?
 
         func update(from parent: LessonBlockSqueezeMenuBridge) {
             isSqueezeEnabled = parent.isSqueezeEnabled
@@ -593,22 +598,33 @@ private struct LessonBlockSqueezeMenuBridge: UIViewRepresentable {
             _ interaction: UIPencilInteraction,
             didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze
         ) {
-            guard squeeze.phase == .ended, isSqueezeEnabled else { return }
-            Haptics.tap()
-            contextMenuInteraction?.requestMenu()
+            guard squeeze.phase == .ended else { return }
+            presentMenuIfEnabled()
         }
 
         func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
-            guard isSqueezeEnabled else { return }
-            Haptics.tap()
-            contextMenuInteraction?.requestMenu()
+            presentMenuIfEnabled()
         }
 
-        func contextMenuInteraction(
-            _ interaction: UIContextMenuInteraction,
-            willBeginWithCompletion completion: @escaping (UIMenu?) -> Void
-        ) {
-            completion(buildMenu())
+        private func presentMenuIfEnabled() {
+            guard isSqueezeEnabled,
+                  let editMenuInteraction,
+                  let anchorView else { return }
+
+            Haptics.tap()
+            let configuration = UIEditMenuConfiguration(
+                identifier: nil,
+                sourcePoint: CGPoint(x: anchorView.bounds.midX, y: anchorView.bounds.midY)
+            )
+            editMenuInteraction.presentEditMenu(with: configuration)
+        }
+
+        func editMenuInteraction(
+            _ interaction: UIEditMenuInteraction,
+            menuFor configuration: UIEditMenuConfiguration,
+            suggestedActions: [UIMenuElement]
+        ) -> UIMenu? {
+            buildMenu()
         }
     }
 }

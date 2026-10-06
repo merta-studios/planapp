@@ -2,6 +2,13 @@ import SwiftUI
 import PencilKit
 import UIKit
 
+/// Canvas whose responder-chain undo manager is intentionally disabled.
+/// The note editor owns a combined drawing-and-text history, so PencilKit must
+/// not register a competing, drawing-only undo history with the system.
+private final class UndoDisabledPKCanvasView: PKCanvasView {
+    override var undoManager: UndoManager? { nil }
+}
+
 /// SwiftUI wrapper for `PKCanvasView` with Apple-Pencil-only drawing.
 /// Direct finger touches never draw; two fingers are forwarded to the surrounding
 /// note as incremental pan updates. Zooming is deliberately not supported – the
@@ -103,7 +110,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     }
 
     public func makeUIView(context: Context) -> PKCanvasView {
-        let canvasView = PKCanvasView()
+        let canvasView = UndoDisabledPKCanvasView()
         canvasView.backgroundColor = .clear
         canvasView.isOpaque = false
         // Das Papier ist immer weiß. PencilKit würde im Dark Mode des Geräts
@@ -114,15 +121,10 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         canvasView.drawing = drawing
         canvasView.delegate = context.coordinator
 
-        // PencilKits eingebaute Undo-Verwaltung deaktivieren. Die App führt
-        // ihre eigene, die Notiz umfassende Historie (Zeichnung + Textfelder)
-        // im Overlay. Solange der Canvas parallel seine Striche in
-        // `undoManager` registriert, konnte jeder System-Undo (z. B.
-        // Geräterschütteln) die Zeichenfläche gegen die Historie zurücksetzen
-        // – so kam nach einem neuen Strich das bereits rückgängig gemachte
-        // wieder zum Vorschein. Einzelne Undo-Aktionen der App laufen
-        // ausschließlich über die eigene Historie.
-        canvasView.undoManager = nil
+        // Die eigene, Notiz umfassende Undo-Historie (Zeichnung + Textfelder)
+        // wird im Overlay geführt. `undoManager` ist in UIKit nur lesbar; die
+        // Unterklasse oben liefert deshalb dauerhaft nil, damit System-Undo
+        // keine konkurrierenden PencilKit-Striche registriert.
 
         // Zeichen-Eingabe: standardmäßig nur der Apple Pencil. Ist die
         // Einstellung „Apple Pencil“ aus, zeichnet auch der Finger (normaler
