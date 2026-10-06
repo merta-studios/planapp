@@ -124,13 +124,13 @@ public struct NotesOverviewListView: View {
             let relativeDay = Calendar.germanCalendar.startOfDay(for: currentMinute)
 
             let showsNowJump = nowJumpReady && !filteredEntries.isEmpty && InteractionPolicies.shouldShowNowJumpButton(
-                lineMinY: nowLineFrame?.minY,
-                lineMaxY: nowLineFrame?.maxY,
-                viewportHeight: geometry.size.height
+                lineMinY: nowLineFrame.map { Double($0.minY) },
+                lineMaxY: nowLineFrame.map { Double($0.maxY) },
+                viewportHeight: Double(geometry.size.height)
             )
             let jumpPointsDown = InteractionPolicies.nowJumpPointsDown(
-                lineMidY: nowLineFrame.map { $0.midY },
-                viewportHeight: geometry.size.height
+                lineMidY: nowLineFrame.map { Double($0.midY) },
+                viewportHeight: Double(geometry.size.height)
             )
 
             VStack(spacing: 0) {
@@ -179,20 +179,23 @@ public struct NotesOverviewListView: View {
             }
             .animation(.spring(response: 0.35, dampingFraction: 0.82), value: showsNowJump)
             .onPreferenceChange(NowLineFramePreference.self) { frame in
-                let height = geometry.size.height
+                let height = Double(geometry.size.height)
                 let show = InteractionPolicies.shouldShowNowJumpButton(
-                    lineMinY: frame?.minY,
-                    lineMaxY: frame?.maxY,
+                    lineMinY: frame.map { Double($0.minY) },
+                    lineMaxY: frame.map { Double($0.maxY) },
                     viewportHeight: height
                 )
                 let previousShow = InteractionPolicies.shouldShowNowJumpButton(
-                    lineMinY: nowLineFrame?.minY,
-                    lineMaxY: nowLineFrame?.maxY,
+                    lineMinY: nowLineFrame.map { Double($0.minY) },
+                    lineMaxY: nowLineFrame.map { Double($0.maxY) },
                     viewportHeight: height
                 )
-                let down = InteractionPolicies.nowJumpPointsDown(lineMidY: frame?.midY, viewportHeight: height)
+                let down = InteractionPolicies.nowJumpPointsDown(
+                    lineMidY: frame.map { Double($0.midY) },
+                    viewportHeight: height
+                )
                 let previousDown = InteractionPolicies.nowJumpPointsDown(
-                    lineMidY: nowLineFrame?.midY,
+                    lineMidY: nowLineFrame.map { Double($0.midY) },
                     viewportHeight: height
                 )
                 guard show != previousShow || down != previousDown || (frame == nil) != (nowLineFrame == nil) else {

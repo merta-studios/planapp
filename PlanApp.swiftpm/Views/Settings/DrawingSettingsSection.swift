@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Einstellungsbereich für die Zeichenfläche: Standard-Dicken, Standard-Größe
-/// sowie das Verwalten aller Notizen.
+/// Einstellungsbereich für Zeichenfläche und Notizen: Standard-Dicken, Größen
+/// für Zeichenfläche und Textfelder sowie das Verwalten aller Notizen.
 public struct DrawingSettingsSection: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
 
@@ -86,7 +86,41 @@ public struct DrawingSettingsSection: View {
             .padding(14)
             .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
 
-            // 3. STANDARD-HINTERGRUND
+            // 3. STANDARD-SCHRIFTGRÖSSE NEUER TEXTFELDER
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "textformat.size")
+                        .font(.system(size: 14, weight: .regular, design: .default))
+                        .foregroundColor(.blue)
+                    Text("Standard-Schriftgröße für Textfelder")
+                        .font(.system(size: 14, weight: .regular, design: .default))
+                    Spacer(minLength: 8)
+                    Text("\(Int(draftSettings.defaultTextFontSize)) pt")
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+
+                Slider(
+                    value: draftBinding(\.defaultTextFontSize),
+                    in: NoteTextBox.minimumFontSize...NoteTextBox.maximumFontSize,
+                    step: 1,
+                    onEditingChanged: handleSliderEditingChanged
+                )
+
+                Text("Neue Textfelder starten mit dieser Größe. Bereits erstellte Textfelder bleiben unverändert und lassen sich einzeln anpassen.")
+                    .font(.system(size: 12, weight: .regular, design: .default))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text("Beispieltext")
+                    .font(.system(size: CGFloat(draftSettings.defaultTextFontSize), weight: .regular, design: .default))
+                    .foregroundColor(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(14)
+            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
+
+            // 4. STANDARD-HINTERGRUND
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     Image(systemName: "rectangle.on.rectangle")
@@ -167,7 +201,7 @@ public struct DrawingSettingsSection: View {
             .padding(14)
             .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
 
-            // 4. EINGABE & RADIERER
+            // 5. EINGABE & RADIERER
             VStack(alignment: .leading, spacing: 12) {
                 if !isPhone {
                     Toggle(isOn: Binding(
@@ -244,7 +278,7 @@ public struct DrawingSettingsSection: View {
             .padding(14)
             .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
 
-            // 5. AUTOMATISCHES AUFRÄUMEN & ALLES LÖSCHEN
+            // 6. AUTOMATISCHES AUFRÄUMEN & ALLES LÖSCHEN
             VStack(alignment: .leading, spacing: 12) {
                 Toggle(isOn: Binding(
                     get: { draftSettings.autoDeletePastNotes },
