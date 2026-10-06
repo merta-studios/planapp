@@ -619,7 +619,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
         private func currentInkAndWidth() -> (PKInk, CGFloat) {
             if let tool = canvasView?.tool as? PKInkingTool {
-                return (tool.ink, tool.width)
+                return (PKInk(tool.inkType, color: tool.color), tool.width)
             }
             return (PKInk(.pen, color: .black), max(2, parent.penWidth))
         }

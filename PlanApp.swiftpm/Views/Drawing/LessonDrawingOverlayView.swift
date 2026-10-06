@@ -646,9 +646,6 @@ public struct LessonDrawingOverlayView: View {
                         lastStrokeMutation = Date()
                         recordHistorySnapshot()
                     },
-                    onCommitDrawingSteps: { steps in
-                        commitDrawingSteps(steps)
-                    },
                     onRequestUndo: {
                         performPencilGesture(viewModel.drawingSettings.doubleTapAction)
                     },
@@ -679,6 +676,9 @@ public struct LessonDrawingOverlayView: View {
                     },
                     onCanvasGestureEnded: {
                         handleCanvasGestureEnded()
+                    },
+                    onCommitDrawingSteps: { steps in
+                        commitDrawingSteps(steps)
                     }
                 )
                 .frame(
