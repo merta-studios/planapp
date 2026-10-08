@@ -32,7 +32,7 @@ struct PencilGesturesSection: View {
                 )
             }
             .padding(DeviceLayout.settingsInnerPadding)
-            .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
+            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
 
             VStack(alignment: .leading, spacing: 12) {
                 hintRow(
@@ -86,7 +86,7 @@ struct PencilGesturesSection: View {
             }
         }
         .padding(DeviceLayout.settingsOuterPadding)
-        .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
+        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
     }
 
     private var squeezeBinding: Binding<PencilGestureAction> {

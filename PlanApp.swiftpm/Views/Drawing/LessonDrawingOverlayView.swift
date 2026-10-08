@@ -192,6 +192,15 @@ public struct LessonDrawingOverlayView: View {
     /// iPhone: keine Apple-Pencil-Werkzeuge, nur Lasso/Text/Radierer per Finger.
     private let isPhoneLayout = DeviceLayout.isPhone
 
+    /// Abstand des Papier-Hintergrunds zur Haupt-Frame (linke/rechte Seite),
+    /// in Bildschirm-Punkten – bleibt beim Zoomen konstant.
+    private let paperHorizontalInset: CGFloat = 8
+    /// Abstand des Papiers unten, in Bildschirm-Punkten – konstant beim Zoomen.
+    private let paperBottomInset: CGFloat = 8
+    /// Eckenradius des Papiers in Bildschirm-Punkten – bleibt beim Zoomen
+    /// konstant klein (skaliert nicht mit).
+    private let paperCornerRadius: CGFloat = 11
+
     // Squeeze-Palette (Apple Pencil Pro): abgerundete Bogen-Werkzeugleiste
     // an der letzten Hover-Position des Stifts.
     @State private var isSqueezePaletteVisible = false
@@ -725,16 +734,29 @@ public struct LessonDrawingOverlayView: View {
     /// Block skaliert. Dadurch wachsen Striche, Text und Bilder gemeinsam,
     /// während die Kopfzeile oben ihre Größe behält.
     private func canvasBlock(viewport: DrawingViewport) -> some View {
-        ZStack(alignment: .topLeading) {
+        // Das Papier sitzt **innerhalb** des skalierten Blocks, damit es samt
+        // Muster mit der Zeichenfläche wächst. Damit der sichtbare Abstand
+        // zur Haupt-Frame (8 pt links/rechts/unten) und die Eckenrundung
+        // (11 pt) beim Zoomen **konstant** bleiben, werden Rahmen, Versatz
+        // und Radius hier durch `canvasScale` geteilt (Gegenskalierung). Auf
+        // dem Bildschirm landen so immer 8 pt Abstand und 11 pt Radius –
+        // unabhängig vom Zoom. Das Muster selbst bleibt Teil des Inhalts
+        // und skaliert mit (wie die Striche).
+        let inverseScale = 1 / canvasScale
+        return ZStack(alignment: .topLeading) {
             // A lightly separated writing surface keeps all Pencil colors
             // readable while the selected lesson itself visibly turns grey.
-            DrawingCanvasBackgroundView(style: noteBackgroundStyle, scale: noteBackgroundScale)
-                .frame(
-                    width: paperWidth - 16,
-                    height: max(180, canvasContentHeight - 8)
-                )
-                .offset(x: 8, y: 0)
-                .opacity(showsEditor ? 1 : 0)
+            DrawingCanvasBackgroundView(
+                style: noteBackgroundStyle,
+                scale: noteBackgroundScale,
+                cornerRadius: paperCornerRadius * inverseScale
+            )
+            .frame(
+                width: max(8, paperWidth - 2 * paperHorizontalInset * inverseScale),
+                height: max(180, canvasContentHeight - paperBottomInset * inverseScale)
+            )
+            .offset(x: paperHorizontalInset * inverseScale, y: 0)
+            .opacity(showsEditor ? 1 : 0)
 
             PencilKitCanvasRepresentable(
                 drawing: $drawing,
@@ -843,12 +865,19 @@ public struct LessonDrawingOverlayView: View {
 
     /// Text- und Bild-Ebene in unskalierten Zeichenflächen-Koordinaten.
     private var manipulableLayer: some View {
-        ZStack(alignment: .topLeading) {
+        // Ein Tipp auf die leere Fläche ist nur dann eine Bedienung (Auswahl
+        // aufheben), wenn der aktuelle Input die Fläche bedienen soll. Im
+        // Zeichen-Modus zeichnet der Finger/Stift stattdessen – dort darf die
+        // Ebene keinen vollflächigen Hintergrund haben, der das Zeichnen
+        // blockieren würde.
+        let allowsBackgroundTap = isTextToolActive || fingerManipulationEnabled
+        return ZStack(alignment: .topLeading) {
             NoteTextBoxesLayer(
                 textBoxes: $textBoxes,
                 selectedID: $selectedTextBoxID,
                 editingID: $editingTextBoxID,
                 isTextToolActive: isTextToolActive,
+                allowsBackgroundTap: allowsBackgroundTap,
                 areaSize: CGSize(
                     width: paperWidth,
                     height: canvasContentHeight
@@ -870,6 +899,7 @@ public struct LessonDrawingOverlayView: View {
                 isManipulationActive: isTextToolActive
                     || fingerManipulationEnabled
                     || selectedImageID != nil,
+                allowsBackgroundTap: allowsBackgroundTap,
                 areaSize: CGSize(
                     width: paperWidth,
                     height: canvasContentHeight
@@ -2272,7 +2302,16 @@ public struct LessonDrawingOverlayView: View {
         flushPendingCanvasChange()
         let before = imageBoxes
         imageBoxes.append(placed)
-        selectedImageID = placed.id
+        // Nur vorab auswählen, wenn der aktuelle Input das Bild bedienen
+        // kann (Text-Werkzeug oder Finger-Modus bei „Nur Apple Pencil“).
+        // Im reinen Zeichen-Modus (Stift, „Nur Apple Pencil“ aus) würde die
+        // Auswahl die Ebene über der Zeichenfläche aktivieren – Striche auf
+        // dem Bild würden es dann verschieben statt zeichnen. Dort wird das
+        // Bild nur abgelegt; ausgewählt werden kann es über das Text-Werkzeug
+        // bzw. den Finger-Modus.
+        if isTextToolActive || fingerManipulationEnabled {
+            selectedImageID = placed.id
+        }
         selectedTextBoxID = nil
         editingTextBoxID = nil
         recordImageChange(from: before, to: imageBoxes)

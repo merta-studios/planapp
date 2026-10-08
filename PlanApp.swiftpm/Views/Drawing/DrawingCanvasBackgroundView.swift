@@ -8,10 +8,21 @@ public struct DrawingCanvasBackgroundView: View {
     public let style: NoteBackgroundStyle
     /// Skalierung des Musters (1 = Standard, 0.5…2).
     public let scale: Double
+    /// Eckenradius des Papiers in lokalen (unskalierten) Punkten.
+    ///
+    /// Der Editor befüllt ihn mit `11 / canvasScale`, damit die Rundung auf
+    /// dem Bildschirm auch beim Zoomen konstant klein bleibt (siehe
+    /// `LessonDrawingOverlayView.canvasBlock`).
+    public let cornerRadius: CGFloat
 
-    public init(style: NoteBackgroundStyle, scale: Double = NoteBackgroundMetrics.defaultScale) {
+    public init(
+        style: NoteBackgroundStyle,
+        scale: Double = NoteBackgroundMetrics.defaultScale,
+        cornerRadius: CGFloat = 11
+    ) {
         self.style = style
         self.scale = scale
+        self.cornerRadius = cornerRadius
     }
 
     public var body: some View {
@@ -21,11 +32,11 @@ public struct DrawingCanvasBackgroundView: View {
             // Beides würde im Dark Mode eine graue Fläche ergeben. Die
             // Bedienelemente außerhalb dieser View dürfen weiterhin ihr
             // dunkles Erscheinungsbild verwenden.
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(Color.white)
 
             DrawingCanvasPattern(style: style, scale: scale)
-                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         }
     }
 }

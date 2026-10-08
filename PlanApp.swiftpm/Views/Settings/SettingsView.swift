@@ -52,7 +52,7 @@ public struct SettingsView: View {
                             .padding(.horizontal, 14)
                             .padding(.vertical, 6)
                     }
-                    .liquidGlassButton(cornerRadius: 10, tint: .blue, isFilled: true)
+                    .lightButton(cornerRadius: 10, tint: .blue, isFilled: true)
                     .foregroundColor(.white)
                 }
             }
@@ -105,7 +105,7 @@ private struct SettingsCategoryRow: View {
                 .foregroundColor(.secondary.opacity(0.7))
         }
         .padding(DeviceLayout.settingsInnerPadding)
-        .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
+        .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }

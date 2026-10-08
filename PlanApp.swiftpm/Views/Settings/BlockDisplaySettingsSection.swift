@@ -131,6 +131,6 @@ public struct BlockDisplaySettingsSection: View {
             }
         }
         .padding(DeviceLayout.settingsOuterPadding)
-        .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
+        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
     }
 }

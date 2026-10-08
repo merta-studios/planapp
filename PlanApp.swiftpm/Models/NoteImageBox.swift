@@ -59,11 +59,41 @@ public struct NoteImageBox: Identifiable, Codable, Equatable {
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }
 
+    /// Cache für bereits dekodierte Bilder, schlüsselbasiert über die
+    /// (inhaltsgleichen) Bilddaten.
+    ///
+    /// Ohne Cache würde jeder Zugriff auf `uiImage` die JPEG/PNG-Daten erneut
+    /// auf der Main-Thread dekodieren. `uiImage` wird aber nicht nur beim
+    /// Rendern gelesen, sondern bei **jedem Tick** einer Zieh- oder
+    /// Zoom-Geste (`NoteImageBoxView.body`, `sanitized()`, `aspectRatio`) –
+    /// mit mehreren Bildern in der Notiz war das der Grund für das extreme
+    /// Ruckeln, sobald Bilder vorhanden waren.
+    private static let decodedImageCache: NSCache<NSData, UIImage> = {
+        let cache = NSCache<NSData, UIImage>()
+        cache.countLimit = 12
+        // ~64 MB dekodierte Pixel; NSCache räumt bei Bedarf automatisch auf.
+        cache.totalCostLimit = 64 * 1024 * 1024
+        return cache
+    }()
+
     /// Das Bild in Original-Orientierung – `nil`, wenn die Daten kein
     /// lesbares Bild mehr enthalten (dann wird der Rahmen verworfen).
+    /// Dekodierung wird über einen gemeinsamen Cache geführt (siehe oben).
     public var uiImage: UIImage? {
         guard !imageData.isEmpty else { return nil }
-        return UIImage(data: imageData)
+        let key = imageData as NSData
+        if let cached = Self.decodedImageCache.object(forKey: key) {
+            return cached
+        }
+        guard let image = UIImage(data: imageData) else { return nil }
+        let pixels = max(1, Int(image.size.width * image.size.height))
+        let scale = max(1, image.scale)
+        Self.decodedImageCache.setObject(
+            image,
+            forKey: key,
+            cost: pixels * Int(scale * scale) * 4
+        )
+        return image
     }
 
     /// Seitenverhältnis (Breite / Höhe) aus den Bilddaten; fällt auf den

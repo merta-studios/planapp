@@ -57,7 +57,7 @@ struct AppearanceSettingsSection: View {
                 }
             }
             .padding(DeviceLayout.settingsInnerPadding)
-            .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
+            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
 
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "pencil.tip")
@@ -70,9 +70,9 @@ struct AppearanceSettingsSection: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(DeviceLayout.settingsInnerPadding)
-            .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
+            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
         }
         .padding(DeviceLayout.settingsOuterPadding)
-        .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
+        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
     }
 }

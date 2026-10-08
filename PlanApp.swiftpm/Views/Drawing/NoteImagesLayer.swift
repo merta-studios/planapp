@@ -20,6 +20,14 @@ struct NoteImagesLayer: View {
     /// Ob Bilder gerade angefasst werden dürfen (Text-Werkzeug oder
     /// Finger-Bedienung bei aktivem „Apple Pencil“).
     let isManipulationActive: Bool
+    /// Ob ein Tipp auf die leere Fläche die Auswahl aufheben darf.
+    ///
+    /// **Nur** wenn der aktuelle Input die Fläche bedienen soll (Text-Werkzeug
+    /// oder Finger-Modus bei „Nur Apple Pencil“). Ist ein Zeichen-Werkzeug
+    /// aktiv und zeichnet der Finger/Stift, darf es **keinen** vollflächigen
+    /// Hintergrund geben: Der würde jede Berührung (auch die des Stifts)
+    /// schlucken und das Zeichnen komplett blockieren.
+    let allowsBackgroundTap: Bool
     let areaSize: CGSize
     /// Undo-Registrierung: (Snapshot vorher, Snapshot nachher).
     let registerUndo: (_ before: [NoteImageBox], _ after: [NoteImageBox]) -> Void
@@ -43,8 +51,10 @@ struct NoteImagesLayer: View {
         let size = safeAreaSize
 
         return ZStack(alignment: .topLeading) {
-            // Hintergrund fängt Tipps ab und hebt die Auswahl auf.
-            if isManipulationActive, selectedID != nil {
+            // Hintergrund fängt Tipps ab und hebt die Auswahl auf. Er existiert
+            // nur, wenn ein Tipp auf leere Fläche eine Bedienung ist (nicht
+            // zeichnen) – sonst würde er die Zeichenfläche blockieren.
+            if allowsBackgroundTap, selectedID != nil {
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture {

@@ -45,7 +45,7 @@ public struct TeacherCustomizationSection: View {
                     .padding(.vertical, 9)
                     .padding(.horizontal, 12)
                 }
-                .liquidGlassButton(cornerRadius: 10, tint: .red)
+                .lightButton(cornerRadius: 10, tint: .red)
                 .foregroundColor(.red)
                 .disabled(viewModel.teacherNameCustomizations.isEmpty)
                 .opacity(viewModel.teacherNameCustomizations.isEmpty ? 0.45 : 1.0)
@@ -75,7 +75,7 @@ public struct TeacherCustomizationSection: View {
             }
         }
         .padding(DeviceLayout.settingsOuterPadding)
-        .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
+        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
         .alert("Alle Lehrer-Namen leeren", isPresented: $showDeleteAllAlert) {
             Button("Abbrechen", role: .cancel) {}
             Button("Alle leeren", role: .destructive) {
@@ -151,7 +151,7 @@ public struct TeacherCustomizationSection: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                 }
-                .liquidGlassButton(cornerRadius: 10, tint: .blue, isFilled: true)
+                .lightButton(cornerRadius: 10, tint: .blue, isFilled: true)
                 .foregroundColor(.white)
                 .disabled(!canAddTeacherName)
             }
@@ -168,7 +168,7 @@ public struct TeacherCustomizationSection: View {
             }
         }
         .padding(DeviceLayout.settingsInnerPadding)
-        .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.2)
+        .lightCard(cornerRadius: 14, strokeOpacity: 0.2)
     }
 
     private var emptyState: some View {
@@ -183,7 +183,7 @@ public struct TeacherCustomizationSection: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
-        .liquidGlassCard(cornerRadius: 12, strokeOpacity: 0.15)
+        .lightCard(cornerRadius: 12, strokeOpacity: 0.15)
     }
 
     private func teacherRow(_ item: TeacherNameCustomization) -> some View {
@@ -214,7 +214,7 @@ public struct TeacherCustomizationSection: View {
                     .foregroundColor(.blue)
                     .frame(width: 32, height: 32)
             }
-            .liquidGlassButton(cornerRadius: 16, tint: .blue)
+            .lightButton(cornerRadius: 16, tint: .blue)
 
             Button(action: {
                 Haptics.tap()
@@ -227,11 +227,11 @@ public struct TeacherCustomizationSection: View {
                     .foregroundColor(.red)
                     .frame(width: 32, height: 32)
             }
-            .liquidGlassButton(cornerRadius: 16, tint: .red)
+            .lightButton(cornerRadius: 16, tint: .red)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .liquidGlassCard(cornerRadius: 12, strokeOpacity: 0.18)
+        .lightCard(cornerRadius: 12, strokeOpacity: 0.18)
     }
 
     private var canAddTeacherName: Bool {
@@ -325,7 +325,7 @@ private struct EditTeacherSheet: View {
                             }
                         }
                         .padding(DeviceLayout.settingsOuterPadding)
-                        .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
+                        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
 
                         HStack(spacing: 12) {
                             Button(action: {
@@ -337,7 +337,7 @@ private struct EditTeacherSheet: View {
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 12)
                             }
-                            .liquidGlassButton(cornerRadius: 12)
+                            .lightButton(cornerRadius: 12)
                             .foregroundColor(.secondary)
 
                             Button(action: {
@@ -349,7 +349,7 @@ private struct EditTeacherSheet: View {
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 12)
                             }
-                            .liquidGlassButton(cornerRadius: 12, tint: .blue, isFilled: true)
+                            .lightButton(cornerRadius: 12, tint: .blue, isFilled: true)
                             .foregroundColor(.white)
                             .disabled(!canSave)
                         }
