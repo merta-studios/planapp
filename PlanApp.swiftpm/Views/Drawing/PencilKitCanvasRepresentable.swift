@@ -278,19 +278,13 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         // Nur schreiben, wenn das Binding einen **wirklich neuen** Stand von
         // außen bringt (Undo/Redo, „Seite leeren“, Einfügen, Laden).
         //
-        // WICHTIG: `PKDrawing` ist eine Klasse und `==`/`!=` vergleichen
-        // per `isEqual:` **Zeiger-Identität**, nicht den Inhalt. PencilKit
-        // liefert Zeichnungen aber als Kopien – ein reiner `!=`-Test würde
-        // jeden SwiftUI-Tick als „neu“ durchgehen lassen und die Fläche
-        // mitten im Zeichnen zurückschreiben. Deshalb zuerst Identität
-        // (`===`), dann der inhaltliche Vergleich (`drawingsMatch`):
+        // `PKDrawing` ist ein Werttyp. PencilKit und SwiftUI können für
+        // denselben Inhalt unterschiedliche Werte liefern; deshalb prüfen
+        // wir den Zeicheninhalt statt einer nicht verfügbaren Objektidentität.
         // `lastSyncedDrawing` ist der Stand, der zuletzt auf die Fläche kam.
-        let lastSynced = context.coordinator.lastSyncedDrawing
         let bindingIsNewer: Bool
-        if let lastSynced, lastSynced === drawing {
-            bindingIsNewer = false
-        } else if let lastSynced, Coordinator.drawingsMatch(drawing, lastSynced) {
-            bindingIsNewer = false
+        if let lastSynced = context.coordinator.lastSyncedDrawing {
+            bindingIsNewer = !Coordinator.drawingsMatch(drawing, lastSynced)
         } else {
             bindingIsNewer = true
         }
@@ -1363,10 +1357,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             let base = authoritativeDrawing ?? parent.drawing
             let reported = canvasView.drawing
             // Inhaltlich gleich = Meldung des eigenen, gerade gesetzten Stands
-            // (Undo/Redo, gerade Linie). WICHTIG: `PKDrawing ==` vergleicht nur
-            // Zeiger-Identität (NSObject.isEqual) – PencilKit liefert aber
-            // Kopien. Ohne den inhaltlichen Vergleich (`drawingsMatch`) liefe
-            // dieser Rückläufer als „neuer Strich“ durch die Pipeline.
+            // (Undo/Redo, gerade Linie). PencilKit kann für denselben Inhalt
+            // einen neuen PKDrawing-Wert liefern; der Inhaltsvergleich
+            // (`drawingsMatch`) verhindert, dass er als „neuer Strich“ gilt.
             if Self.drawingsMatch(reported, base) {
                 // nichts zu tun – und der externe Stand ist damit bestätigt.
                 awaitingExternalAcknowledgement = false
@@ -1403,10 +1396,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 allowsRemovals: gestureAllowsRemovals && !awaitingExternalAcknowledgement,
                 allowsStrokeReplacement: hasPendingDrawingChange && lastGestureWasInking
             )
-            // Inhaltlich gleich = nur der Rückläufer eines veralteten Stands
-            // (auch hier Zeiger-`==` vermeiden, siehe oben): Die Fläche
-            // bekommt den echten Stand zurück – ohne Binding-Änderung und
-            // ohne Historieneintrag.
+            // Inhaltlich gleich = nur der Rückläufer eines veralteten Stands:
+            // Die Fläche bekommt den echten Stand zurück – ohne Binding-
+            // Änderung und ohne Historieneintrag.
             if Self.drawingsMatch(committed, base) {
                 awaitingExternalAcknowledgement = false
                 writeCanvasWithoutBookkeeping(base)
