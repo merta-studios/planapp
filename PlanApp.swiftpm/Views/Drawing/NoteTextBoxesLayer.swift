@@ -89,16 +89,21 @@ struct NoteTextBoxesLayer: View {
             // aufheben oder (mit Text-Werkzeug) ein neues Feld erstellen.
             // Im Zeichen-Modus (Stift zeichnen) gibt es ihn nur, wenn der
             // Finger die Fläche bedienen darf – sonst würde er das Zeichnen
-            // blockieren.
+            // blockieren. Pencil-Berührungen reicht er im Zeichen-Modus
+            // durch: Der Stift zeichnet auf leerer Fläche weiter, statt zu
+            // deselecten; im Text-Modus tippt auch der Pencil normal.
             if isTextToolActive || (allowsBackgroundTap && (selectedID != nil || editingID != nil)) {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .gesture(
-                        SpatialTapGesture(coordinateSpace: .local)
-                            .onEnded { value in
-                                handleBackgroundTap(at: value.location)
-                            }
-                    )
+                PencilPassThroughHitTest(
+                    content: Color.clear
+                        .contentShape(Rectangle())
+                        .gesture(
+                            SpatialTapGesture(coordinateSpace: .local)
+                                .onEnded { value in
+                                    handleBackgroundTap(at: value.location)
+                                }
+                        ),
+                    pencilPassesThrough: !isTextToolActive
+                )
             }
 
             // Explizite ID verhindert, dass SwiftUI bei einer gerade
