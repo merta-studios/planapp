@@ -4,12 +4,21 @@ import UIKit.UIGestureRecognizerSubclass
 
 /// Eigene Hit-Fläche hinter dem Zettel. Sie bleibt auch während eines Strichs
 /// aktiv: Eingaben werden geprüft, statt die UIView mitten im Touch abzuschalten.
+///
+/// `isInsideCard` bekommt die Fenster-Koordinate eines Tipps und meldet, ob
+/// sie **auf der Notiz-Karte** liegt (inkl. runder Ecken und Griff-Streifen).
+/// Solche Tipps lehnt der Schließen-Erkenner grundsätzlich ab – ein Tipp am
+/// Rand des Zeichenbereichs darf nie die Notiz schließen (auch wenn er
+/// hit-test-mäßig auf den Backdrop fällt), sondern wird gezeichnet bzw.
+/// ignoriert.
 struct PalmSafeBackdropDismissView: UIViewRepresentable {
     let isEnabled: Bool
     /// Erlaubt zusätzlich einen bewussten **Apple-Pencil-Tipp** auf die Seite.
     /// Die Schutzregeln bleiben identisch: keine Mehrfinger-Kontakte, keine
     /// Handballen-Größe, kein Ziehen, keine laufende Zeichen-Berührung.
     var allowsPencilTap: Bool = false
+    /// Fenster-Koordinate liegt auf der Karte (Karte + Griff-Bereich).
+    var isInsideCard: (CGPoint) -> Bool = { _ in false }
     let canDismiss: () -> Bool
     let onDismiss: () -> Void
 
@@ -38,10 +47,27 @@ struct PalmSafeBackdropDismissView: UIViewRepresentable {
         coordinator.tap?.canRecognizeTap = { isEnabled && canDismiss() }
         coordinator.tap?.actionForTap = onDismiss
         coordinator.tap?.allowsPencilTap = allowsPencilTap
+        coordinator.isInsideCard = isInsideCard
     }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         weak var tap: IntentionalFingerTapRecognizer?
+        var isInsideCard: (CGPoint) -> Bool = { _ in false }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldReceive touch: UITouch
+        ) -> Bool {
+            // Tipp auf (bzw. knapp in) der Karte: nie ein Schließ-Tipp. Der
+            // Karten-Rahmen wird live aus der Hierarchie gelesen (inkl.
+            // Zoom, Verschieben, Hero-Skalierung).
+            let point = touch.location(in: nil)
+            if isInsideCard(point) {
+                DrawingDiagnostics.hit.debug("Rand-Tipp auf der Karte abgelehnt (kein Schließen)")
+                return false
+            }
+            return true
+        }
 
         func gestureRecognizer(
             _ gestureRecognizer: UIGestureRecognizer,
@@ -49,7 +75,12 @@ struct PalmSafeBackdropDismissView: UIViewRepresentable {
         ) -> Bool { true }
 
         @objc func handleTap(_ recognizer: IntentionalFingerTapRecognizer) {
-            guard recognizer.state == .recognized, recognizer.canRecognizeTap() else { return }
+            guard recognizer.state == .recognized else { return }
+            guard recognizer.canRecognizeTap() else {
+                DrawingDiagnostics.dismiss.debug("Hintergrund-Tipp verworfen (Cooldown/Handballen-Regel)")
+                return
+            }
+            DrawingDiagnostics.dismiss.info("Hintergrund-Tipp: Notiz schließen")
             recognizer.completedAction?()
         }
     }

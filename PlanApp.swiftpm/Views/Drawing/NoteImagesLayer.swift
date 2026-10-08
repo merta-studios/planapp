@@ -3,12 +3,16 @@ import UIKit
 
 /// Ebene über der Zeichenfläche für frei bewegliche, skalierbare Bilder.
 ///
-/// Bedienung (Text-Werkzeug aktiv):
+/// Bedienung (Auswahl-Regeln siehe `LayerInputPolicy`):
 /// - Tippen auf ein Bild: auswählen (verschiebbar, skalierbar, löschbar).
+///   Finger tippt Elemente immer an, wenn „Nur Apple Pencil“ an ist – sonst
+///   nur im Text-Werkzeug. Der Apple Pencil tippt nur im Text-Werkzeug an.
+/// - Tippen auf das **ausgewählte** Bild hebt im Zeichen-Modus die Auswahl
+///   wieder auf (danach ist die Stelle wieder frei für Striche).
 /// - Ziehen an den vier Eckpunkten: seitenrichtig skalieren.
 /// - Ziehen in der Mitte: verschieben.
 /// - Roter Knopf: löschen. Blauer Knopf: zuschneiden (eigene Übersicht).
-/// - Tippen daneben: Auswahl aufheben.
+/// - Tippen daneben (Text-Werkzeug/Finger-Modus): Auswahl aufheben.
 ///
 /// Wie die Text-Ebene arbeitet auch diese Ebene bewusst **ohne**
 /// `ForEach($images)`-Element-Bindings: Werte gehen nach unten, Änderungen
@@ -17,16 +21,23 @@ import UIKit
 struct NoteImagesLayer: View {
     @Binding var images: [NoteImageBox]
     @Binding var selectedID: UUID?
-    /// Ob Bilder gerade angefasst werden dürfen (Text-Werkzeug oder
-    /// Finger-Bedienung bei aktivem „Apple Pencil“).
-    let isManipulationActive: Bool
+    /// Ob das Text-Werkzeug aktiv ist: Im Text-Modus tippt auch der Apple
+    /// Pencil auf die Fläche (Auswahl aufheben); im Zeichen-Modus reicht die
+    /// Fläche Pencil-Berührungen durch (Strich statt Deselect).
+    let isTextToolActive: Bool
+    /// Ob Elemente neu auswählt werden dürfen (Tap oder Zieh-Beginn):
+    /// Text-Werkzeug oder Finger-Modus bei „Nur Apple Pencil“. Die Fläche des
+    /// **bereits ausgewählten** Bildes bleibt davon unabhängig anfassbar.
+    let canSelectElements: Bool
     /// Ob ein Tipp auf die leere Fläche die Auswahl aufheben darf.
     ///
     /// **Nur** wenn der aktuelle Input die Fläche bedienen soll (Text-Werkzeug
     /// oder Finger-Modus bei „Nur Apple Pencil“). Ist ein Zeichen-Werkzeug
     /// aktiv und zeichnet der Finger/Stift, darf es **keinen** vollflächigen
-    /// Hintergrund geben: Der würde jede Berührung (auch die des Stifts)
-    /// schlucken und das Zeichnen komplett blockieren.
+    /// Hintergrund geben, der das Zeichnen komplett blockieren würde. Der
+    /// Pencil wird zusätzlich von `PencilPassThroughHitTest` durchgereicht,
+    /// damit ein Stift-Strich auf der leeren Fläche auch bei ausgewähltem
+    /// Bild zeichnet und nicht die Auswahl aufhebt.
     let allowsBackgroundTap: Bool
     let areaSize: CGSize
     /// Undo-Registrierung: (Snapshot vorher, Snapshot nachher).
@@ -53,14 +64,19 @@ struct NoteImagesLayer: View {
         return ZStack(alignment: .topLeading) {
             // Hintergrund fängt Tipps ab und hebt die Auswahl auf. Er existiert
             // nur, wenn ein Tipp auf leere Fläche eine Bedienung ist (nicht
-            // zeichnen) – sonst würde er die Zeichenfläche blockieren.
+            // zeichnen) – sonst würde er die Zeichenfläche blockieren. Pencil-
+            // Berührungen reicht er im Zeichen-Modus durch (dort zeichnet der
+            // Stift auf leerer Fläche weiter).
             if allowsBackgroundTap, selectedID != nil {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        Haptics.tap()
-                        selectedID = nil
-                    }
+                PencilPassThroughHitTest(
+                    content: Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            Haptics.tap()
+                            selectedID = nil
+                        },
+                    pencilPassesThrough: !isTextToolActive
+                )
             }
 
             ForEach(images, id: \.id) { box in
@@ -68,7 +84,8 @@ struct NoteImagesLayer: View {
                     box: box,
                     isSelected: selectedID == box.id,
                     areaSize: size,
-                    onSelect: { select(box.id) },
+                    onTap: { handleTapSelect(box.id) },
+                    onEnsureSelected: { ensureSelected(box.id) },
                     onDelete: { deleteBox(id: box.id) },
                     onCrop: { onCrop(box.id) },
                     onGestureStart: {
@@ -101,9 +118,30 @@ struct NoteImagesLayer: View {
 
     // MARK: - Auswahl & Löschen
 
-    private func select(_ id: UUID) {
-        guard isManipulationActive else { return }
+    /// Tap auf ein Bild: auswählen – oder im Zeichen-Modus die Auswahl des
+    /// **angewählten** Bilds aufheben (Toggle). So kommt man nach dem
+    /// Einfügen/Anpassen mit einem weiteren Tipp zurück zum Zeichnen, auch
+    /// mitten auf dem Bild.
+    private func handleTapSelect(_ id: UUID) {
+        if selectedID == id, !isTextToolActive {
+            Haptics.select()
+            DrawingDiagnostics.hit.debug("Bild-Auswahl per Tap aufgehoben")
+            selectedID = nil
+            return
+        }
+        ensureSelected(id)
+    }
+
+    /// Auswahl sicherstellen (Tap auf ein anderes Bild, Beginn einer Zieh-
+    /// oder Skalier-Geste). Ziehen auf dem bereits ausgewählten Bild bleibt
+    /// auch dann eine Verschiebung, wenn Neu-Auswählen nicht erlaubt ist.
+    private func ensureSelected(_ id: UUID) {
         guard images.contains(where: { $0.id == id }) else { return }
+        guard selectedID != id else { return }
+        // Neue Auswahl nur, wenn der aktuelle Modus Elemente antippen darf
+        // (Text-Werkzeug oder Finger-Modus bei „Nur Apple Pencil“). Die
+        // Berührungsart filtert bereits die Eingabe-Hülle.
+        guard canSelectElements else { return }
         Haptics.select()
         selectedID = id
     }
@@ -149,7 +187,10 @@ private struct NoteImageBoxView: View {
     let box: NoteImageBox
     let isSelected: Bool
     let areaSize: CGSize
-    let onSelect: () -> Void
+    /// Tap auf das Bild (Auswahl bzw. Auswahl aufheben im Zeichen-Modus).
+    let onTap: () -> Void
+    /// Auswahl sicherstellen, bevor eine Zieh-/Skalier-Geste greift.
+    let onEnsureSelected: () -> Void
     let onDelete: () -> Void
     let onCrop: () -> Void
     let onGestureStart: () -> Void
@@ -256,7 +297,7 @@ private struct NoteImageBoxView: View {
         .contentShape(Rectangle())
         .gesture(moveGesture)
         .onTapGesture {
-            onSelect()
+            onTap()
         }
     }
 
@@ -268,7 +309,7 @@ private struct NoteImageBoxView: View {
                 if moveStart == nil {
                     moveStart = boxOrigin
                     onGestureStart()
-                    onSelect()
+                    onEnsureSelected()
                     Haptics.tap()
                 }
                 guard let start = moveStart else { return }
@@ -307,7 +348,7 @@ private struct NoteImageBoxView: View {
                 if scaleStartBox == nil {
                     scaleStartBox = box
                     onGestureStart()
-                    onSelect()
+                    onEnsureSelected()
                 }
                 guard let start = scaleStartBox else { return }
                 let startOrigin = CGPoint(x: CGFloat(start.x), y: CGFloat(start.y))

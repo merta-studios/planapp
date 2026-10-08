@@ -250,6 +250,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         context.coordinator.adoptInitialDrawing(drawing)
         applyTool(to: canvasView)
         context.coordinator.lastAppliedToolSignature = currentToolSignature
+        DrawingDiagnostics.stroke.debug(
+            "makeUIView: drawingPolicy=\(canvasView.drawingPolicy == .pencilOnly ? "pencilOnly" : "anyInput", privacy: .public)"
+        )
 
         DispatchQueue.main.async {
             self.onCanvasCreated(canvasView)
@@ -273,16 +276,29 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         let isInking = uiView.drawingGestureRecognizer.state == .began
             || uiView.drawingGestureRecognizer.state == .changed
         // Nur schreiben, wenn das Binding einen **wirklich neuen** Stand von
-        // außen bringt (Undo/Redo, „Seite leeren“, Einfügen, Laden):
-        // `lastSyncedDrawing` ist der Wert, der zuletzt auf die Fläche kam.
-        // Während einer laufenden Geste oder eines noch offenen Canvas-Stands
-        // ist das Binding absichtlich älter – ein Zurückschreiben würde dort
-        // den gerade gezeichneten Strich löschen.
+        // außen bringt (Undo/Redo, „Seite leeren“, Einfügen, Laden).
+        //
+        // WICHTIG: `PKDrawing` ist eine Klasse und `==`/`!=` vergleichen
+        // per `isEqual:` **Zeiger-Identität**, nicht den Inhalt. PencilKit
+        // liefert Zeichnungen aber als Kopien – ein reiner `!=`-Test würde
+        // jeden SwiftUI-Tick als „neu“ durchgehen lassen und die Fläche
+        // mitten im Zeichnen zurückschreiben. Deshalb zuerst Identität
+        // (`===`), dann der inhaltliche Vergleich (`drawingsMatch`):
+        // `lastSyncedDrawing` ist der Stand, der zuletzt auf die Fläche kam.
+        let lastSynced = context.coordinator.lastSyncedDrawing
+        let bindingIsNewer: Bool
+        if let lastSynced, lastSynced === drawing {
+            bindingIsNewer = false
+        } else if let lastSynced, Coordinator.drawingsMatch(drawing, lastSynced) {
+            bindingIsNewer = false
+        } else {
+            bindingIsNewer = true
+        }
         if !isInking,
            !context.coordinator.preservesCanvasDrawing,
            !context.coordinator.hasPendingDrawingChange,
-           uiView.drawing != drawing,
-           drawing != context.coordinator.lastSyncedDrawing {
+           bindingIsNewer {
+            DrawingDiagnostics.stroke.debug("updateUIView: externer Zeichnungsstand wird übernommen")
             context.coordinator.applyExternalDrawing(drawing)
         }
         context.coordinator.publishSelectionIfToolChanged(isInking: isInking)
@@ -317,6 +333,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         let policy: PKCanvasViewDrawingPolicy = pencilOnlyDrawing ? .pencilOnly : .anyInput
         if canvasView.drawingPolicy != policy {
             canvasView.drawingPolicy = policy
+            DrawingDiagnostics.stroke.debug(
+                "applyTool: drawingPolicy=\(policy == .pencilOnly ? "pencilOnly" : "anyInput", privacy: .public)"
+            )
             // Beim Zeichnen mit dem Finger dürfen die internen Scroll-/Zoom-
             // Gesten des Canvas nicht dazwischenfunken. (Beim Umschalten der
             // Policy kann PencilKit sie wieder aktivieren.)
@@ -561,8 +580,8 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             // Ein neuer, externer Stand entscheidet selbst über den Inhalt:
             // ein noch offener Canvas-Stand ist damit erledigt.
             discardPendingDrawingChange()
-            awaitingExternalAcknowledgement = true
             guard let canvasView else {
+                awaitingExternalAcknowledgement = true
                 authoritativeDrawing = newDrawing
                 lastSyncedDrawing = newDrawing
                 return
@@ -571,8 +590,14 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             authoritativeDrawing = newDrawing
             lastSyncedDrawing = newDrawing
             // Inhaltlich gleich = nichts zu tun. Ein Neusetzen würde nur
-            // PencilKits eigenen Zustand (z. B. eine Auswahl) verwerfen.
+            // PencilKits eigenen Zustand (z. B. eine Auswahl) verwerfen – und
+            // ein „externer Bestätigungs-Modus“ wäre falsch: Dann würde das
+            // nächste echte Radieren nicht als Löschen gewertet.
             guard !Self.drawingsMatch(previous, newDrawing) else { return }
+            DrawingDiagnostics.stroke.debug(
+                "applyExternalDrawing: Fläche neu setzen (\(newDrawing.strokes.count) Striche)"
+            )
+            awaitingExternalAcknowledgement = true
             noteRemovedStrokes(from: previous, to: newDrawing)
             // Läuft gerade das Geradeziehen, wird dessen Basis der neue Stand:
             // Sonst brächte das Abheben des Stifts die eben rückgängig
@@ -1337,10 +1362,13 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
 
             let base = authoritativeDrawing ?? parent.drawing
             let reported = canvasView.drawing
-            if reported == base {
-                // Meldung des eigenen, gerade gesetzten Stands (Undo/Redo,
-                // gerade Linie): nichts zu tun – und der externe Stand ist
-                // damit bestätigt.
+            // Inhaltlich gleich = Meldung des eigenen, gerade gesetzten Stands
+            // (Undo/Redo, gerade Linie). WICHTIG: `PKDrawing ==` vergleicht nur
+            // Zeiger-Identität (NSObject.isEqual) – PencilKit liefert aber
+            // Kopien. Ohne den inhaltlichen Vergleich (`drawingsMatch`) liefe
+            // dieser Rückläufer als „neuer Strich“ durch die Pipeline.
+            if Self.drawingsMatch(reported, base) {
+                // nichts zu tun – und der externe Stand ist damit bestätigt.
                 awaitingExternalAcknowledgement = false
                 return
             }
@@ -1375,10 +1403,11 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 allowsRemovals: gestureAllowsRemovals && !awaitingExternalAcknowledgement,
                 allowsStrokeReplacement: hasPendingDrawingChange && lastGestureWasInking
             )
-            if committed == base {
-                // Nur der Rückläufer eines veralteten Stands: Die Fläche
-                // bekommt den echten Stand zurück – ohne Binding-Änderung und
-                // ohne Historieneintrag.
+            // Inhaltlich gleich = nur der Rückläufer eines veralteten Stands
+            // (auch hier Zeiger-`==` vermeiden, siehe oben): Die Fläche
+            // bekommt den echten Stand zurück – ohne Binding-Änderung und
+            // ohne Historieneintrag.
+            if Self.drawingsMatch(committed, base) {
                 awaitingExternalAcknowledgement = false
                 writeCanvasWithoutBookkeeping(base)
                 return
@@ -1394,6 +1423,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 scheduleDrawingSettle()
                 return
             }
+            DrawingDiagnostics.stroke.debug(
+                "canvasViewDrawingDidChange: Strich übernommen (\(committed.strokes.count) Striche)"
+            )
             commitCanvasDrawing(committed)
         }
 
@@ -1417,6 +1449,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 canvasView.drawing = drawing
             }
             guard !Self.drawingsMatch(previous, drawing) else { return }
+            DrawingDiagnostics.stroke.debug(
+                "commitCanvasDrawing: \(drawing.strokes.count) Striche veröffentlicht"
+            )
             parent.drawing = drawing
             parent.onDrawingChange(previous, drawing)
         }
@@ -1566,6 +1601,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         /// Squeeze-Palette zu schließen, sobald wieder geschrieben wird.
         public func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
             parent.onCanvasActivity()
+            DrawingDiagnostics.stroke.debug("canvasViewDidBeginUsingTool")
             if straightSession != nil { return }
             // Ein offener Auswahl-Stand (Lasso) gehört als **eigener** Schritt
             // in die Historie, bevor die nächste Geste ihn mit sich ziehen

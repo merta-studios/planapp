@@ -299,6 +299,9 @@ public struct LessonDrawingOverlayView: View {
     @State private var isBackdropVisible = false
     @State private var showsEditor = false
     @State private var didInitialize = false
+    /// Live-Fenster-Rahmen der Notiz-Karte (inkl. Griff): Rand-Tipps darauf
+    /// dürfen die Notiz nicht schließen – siehe `PalmSafeBackdropDismissView`.
+    @State private var panelFrameHolder = ViewFrameHolder()
     /// Aktuell von der Systemtastatur verdeckte Höhe am unteren Rand.
     @State private var systemKeyboardCoveredHeight: CGFloat = 0
 
@@ -389,6 +392,11 @@ public struct LessonDrawingOverlayView: View {
                         // unverändert streng (Radius, Dauer, Bewegung,
                         // Mehrfachkontakte, Zeichen-Cooldown).
                         allowsPencilTap: true,
+                        // Tipp auf der Karte (auch Ecken/Griff-Streifen) ist
+                        // nie ein Schließ-Tipp – siehe `editorPanel`.
+                        isInsideCard: { windowPoint in
+                            panelFrameHolder.isInsideCurrentWindowFrame(windowPoint)
+                        },
                         canDismiss: {
                             let state = canvasView?.drawingGestureRecognizer.state
                             return drawingInputActivity.permitsBackdropTap(
@@ -715,12 +723,26 @@ public struct LessonDrawingOverlayView: View {
             }
             .frame(width: scaledPaperWidth, height: cardHeight)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            // Nach dem Clip die **volle** Kartenfläche tippbar machen:
+            // `clipShape` beschneidet nur die Darstellung, nicht die
+            // Hit-Tests. Ohne diese Content-Shape fällt ein Tipp in den
+            // runden Eck-Ausschnitten durch die Karte auf den Schließen-
+            // Backdrop – die Notiz ging dabei (verzögert) zu. Akzeptanz:
+            // Tippen am Rand (auch Ecken) zeichnet/ignoriert, schließt nie.
+            .contentShape(Rectangle())
 
             resizeHandle(viewport: viewport)
                 .opacity(showsEditor ? 1 : 0)
                 .allowsHitTesting(showsEditor)
         }
         .frame(width: scaledPaperWidth, height: panelHeight, alignment: .top)
+        // Auch der Streifen zwischen Karte und Zieh-Griff (sowie seitlich am
+        // Griff) gehört zur Notiz: Ein Tipp dort darf sie nicht schließen,
+        // sondern wird schlicht ignoriert.
+        .contentShape(Rectangle())
+        .background {
+            ViewFrameProbe(holder: panelFrameHolder)
+        }
         .scaleEffect(
             x: heroScale(in: viewport).width,
             y: heroScale(in: viewport).height,
@@ -834,25 +856,24 @@ public struct LessonDrawingOverlayView: View {
         .frame(width: scaledPaperWidth, height: scaledCanvasHeight, alignment: .topLeading)
     }
 
-    /// Die Text-/Bild-Ebene samt Finger-Hülle und Zwei-Finger-Zoom.
+    /// Die Text-/Bild-Ebene samt Eingabe-Filter und Zwei-Finger-Zoom.
     ///
-    /// Ist „Nur Apple Pencil“ an, fasst der Finger Text und Bilder über eine
-    /// eigene Hülle an (egal welches Werkzeug gewählt ist); der Stift fällt
-    /// durch die Hülle und zeichnet unbehelligt weiter.
+    /// Die Hülle entscheidet pro Berührungsart, ob die Ebene einen Tipp
+    /// annimmt (auswählen/verschieben) oder an die Zeichenfläche
+    /// durchreicht (zeichnen) – siehe ``LayerInputPolicy``. Der Filter gilt
+    /// immer, nicht nur bei „Nur Apple Pencil“: Auch ohne die Einstellung
+    /// darf ein Pencil-Strich im Zeichen-Modus nicht am Bild „kleben
+    /// bleiben“, nur weil die Ebene zufällig anfassbar ist.
     ///
     /// Bewusst eine eigene Funktion (statt direkt im `canvasBlock`): Der
     /// Editor ist so groß, dass der Swift-Compiler die Typen sonst nicht mehr
     /// in vertretbarer Zeit bestimmen kann.
     @ViewBuilder
     private func manipulableLayerContainer(viewport: DrawingViewport) -> some View {
-        let layer = manipulableLayer
-        Group {
-            if fingerManipulationEnabled {
-                FingerOnlyContent(content: layer)
-            } else {
-                layer
-            }
-        }
+        InputFilteredContent(
+            content: manipulableLayer,
+            policy: layerInputPolicy
+        )
         .frame(
             width: paperWidth,
             height: canvasContentHeight,
@@ -861,6 +882,59 @@ public struct LessonDrawingOverlayView: View {
         .opacity(showsEditor ? 1 : 0)
         .allowsHitTesting(manipulableLayerHitTesting)
         .simultaneousGesture(layerMagnificationGesture(in: viewport))
+    }
+
+    /// Eingabe-Regeln der Text-/Bild-Ebene (siehe ``LayerInputPolicy``).
+    ///
+    /// Auswahl-Regeln (vom Nutzer bestätigt): Finger tippt Elemente immer an,
+    /// wenn „Nur Apple Pencil“ **an** ist – sonst nur im Text-Werkzeug. Der
+    /// Apple Pencil tippt Elemente nur im Text-Werkzeug an; im Zeichen-Modus
+    /// bleibt allein die Fläche des **ausgewählten** Elements anfassbar
+    /// (dessen Optionen: Verschieben, Eck-Griffe, Löschen, Zuschneiden).
+    private var layerInputPolicy: LayerInputPolicy {
+        let images = imageBoxes
+        let texts = textBoxes
+        let selectedImage = selectedImageID
+        let selectedText = selectedTextBoxID
+        let editingText = editingTextBoxID
+        let fontStyle = viewModel.drawingSettings.textFontStyle
+        return LayerInputPolicy(
+            textToolActive: isTextToolActive,
+            fingerSelects: fingerManipulationEnabled,
+            selectionRects: {
+                var rects: [CGRect] = []
+                if let id = selectedImage,
+                   let box = images.first(where: { $0.id == id }) {
+                    // Inkl. Anfasser-Halo: Eck-Griffe ragen ~24 pt heraus, die
+                    // Options-Knöpfe liegen ~47 pt über der Oberkante.
+                    var rect = CGRect(
+                        x: CGFloat(box.x),
+                        y: CGFloat(box.y),
+                        width: CGFloat(box.width),
+                        height: CGFloat(box.height)
+                    )
+                    rect = rect.insetBy(dx: -24, dy: -24)
+                    rect.origin.y -= 28
+                    rect.size.height += 28
+                    rects.append(rect)
+                }
+                for id in [selectedText, editingText].compactMap({ $0 }) {
+                    guard let box = texts.first(where: { $0.id == id }) else { continue }
+                    let height = estimatedTextBoxHeight(box, fontStyle: fontStyle)
+                    var rect = CGRect(
+                        x: CGFloat(box.x),
+                        y: CGFloat(box.y),
+                        width: CGFloat(box.width),
+                        height: height
+                    )
+                    rect = rect.insetBy(dx: -24, dy: -24)
+                    rect.origin.y -= 28
+                    rect.size.height += 28
+                    rects.append(rect)
+                }
+                return rects
+            }
+        )
     }
 
     /// Text- und Bild-Ebene in unskalierten Zeichenflächen-Koordinaten.
@@ -893,12 +967,11 @@ public struct LessonDrawingOverlayView: View {
             NoteImagesLayer(
                 images: $imageBoxes,
                 selectedID: $selectedImageID,
-                // Ein ausgewähltes Bild bleibt auch dann anfassbar, wenn die
-                // Auswahl nicht über das Text-Werkzeug entstanden ist (z. B.
-                // direkt nach „Bild hinzufügen“).
-                isManipulationActive: isTextToolActive
-                    || fingerManipulationEnabled
-                    || selectedImageID != nil,
+                isTextToolActive: isTextToolActive,
+                // Neue Auswahl nur, wenn der Modus Elemente antippen darf
+                // (Nutzer-Regeln): Finger „immer“ bei „Nur Apple Pencil“,
+                // sonst nur im Text-Werkzeug.
+                canSelectElements: isTextToolActive || fingerManipulationEnabled,
                 allowsBackgroundTap: allowsBackgroundTap,
                 areaSize: CGSize(
                     width: paperWidth,
@@ -2025,6 +2098,7 @@ public struct LessonDrawingOverlayView: View {
 
     private func saveAndDismiss() {
         guard viewModel.isDrawingOverlayPresented, isExpanded else { return }
+        DrawingDiagnostics.dismiss.info("saveAndDismiss: Schließen beginnt")
         dismissSqueezePalette()
         // Ein noch offener Strich gehört in die Historie und in die
         // gespeicherte Sitzung, bevor die Notiz geschlossen wird.
@@ -2037,41 +2111,22 @@ public struct LessonDrawingOverlayView: View {
         selectedTextBoxID = nil
         editingTextBoxID = nil
 
-        persistEditingHistory()
-
+        // Billige Zustands-Sicherung sofort – alles hier ist reine
+        // Wertkopie. Das **teure** Rendern (Vorschau-Bild, Bild-Dekodierung,
+        // `dataRepresentation`) liegt bewusst erst im verzögerten Block
+        // weiter unten: Sonst friert die App vor dem ersten sichtbaren
+        // Schließ-Frame ein – der Nutzer erlebt das als „schließt sich
+        // verzögert“ (Rand-Tipp-Bug).
         let currentDrawing = canvasView?.drawing ?? drawing
-        // Immer die bekannte Papiergröße verwenden – `PKCanvasView.bounds`
-        // kann beim ersten Öffnen noch winzig oder 0 sein und hat dann die
-        // Vorschau im Stundenblock komisch klein gerendert.
-        let canvasSize = CGSize(
-            width: paperWidth,
-            height: max(180, canvasHeight - headerHeight)
-        )
-        let canvasRect = CGRect(origin: .zero, size: canvasSize)
-        let croppedDrawing = currentDrawing.cropped(to: canvasRect)
-
-        let cleanedTextBoxes = textBoxes.compactMap { box -> NoteTextBox? in
-            guard !box.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-            return box.sanitized(in: canvasRect.size)
-        }
-        let cleanedImageBoxes = imageBoxes.compactMap { box -> NoteImageBox? in
-            guard box.uiImage != nil else { return nil }
-            return box.sanitized(in: canvasRect.size)
-        }
-        let croppedImage = PencilKitCanvasRepresentable.renderNotePreview(
-            drawing: croppedDrawing,
-            textBoxes: cleanedTextBoxes,
-            images: cleanedImageBoxes,
-            backgroundStyle: noteBackgroundStyle,
-            backgroundScale: noteBackgroundScale,
-            clipRect: canvasRect,
-            textFontStyle: viewModel.drawingSettings.textFontStyle
-        )
-        let drawingData = croppedDrawing.dataRepresentation()
-        let calculatedLines = max(3, min(10, Int((canvasHeight - headerHeight) / 56)))
+        let rawTextBoxes = textBoxes
+        let rawImageBoxes = imageBoxes
+        let rawCanvasHeight = canvasHeight
+        let backgroundStyle = noteBackgroundStyle
         let backgroundScale = noteBackgroundScale
+        let textFontStyle = viewModel.drawingSettings.textFontStyle
         let tagID = noteTagID
 
+        // Schließen **sofort** sichtbar starten (unabhängig vom Rendern).
         withAnimation(.easeOut(duration: 0.12)) {
             showsEditor = false
         }
@@ -2087,10 +2142,43 @@ public struct LessonDrawingOverlayView: View {
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
+            persistEditingHistory()
+
+            // Immer die bekannte Papiergröße verwenden – `PKCanvasView.bounds`
+            // kann beim ersten Öffnen noch winzig oder 0 sein und hat dann die
+            // Vorschau im Stundenblock komisch klein gerendert.
+            let canvasSize = CGSize(
+                width: paperWidth,
+                height: max(180, rawCanvasHeight - headerHeight)
+            )
+            let canvasRect = CGRect(origin: .zero, size: canvasSize)
+            let croppedDrawing = currentDrawing.cropped(to: canvasRect)
+
+            let cleanedTextBoxes = rawTextBoxes.compactMap { box -> NoteTextBox? in
+                guard !box.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+                return box.sanitized(in: canvasRect.size)
+            }
+            let cleanedImageBoxes = rawImageBoxes.compactMap { box -> NoteImageBox? in
+                guard box.uiImage != nil else { return nil }
+                return box.sanitized(in: canvasRect.size)
+            }
+            let croppedImage = PencilKitCanvasRepresentable.renderNotePreview(
+                drawing: croppedDrawing,
+                textBoxes: cleanedTextBoxes,
+                images: cleanedImageBoxes,
+                backgroundStyle: backgroundStyle,
+                backgroundScale: backgroundScale,
+                clipRect: canvasRect,
+                textFontStyle: textFontStyle
+            )
+            let drawingData = croppedDrawing.dataRepresentation()
+            let calculatedLines = max(3, min(10, Int((rawCanvasHeight - headerHeight) / 56)))
+
             // `saveNote` persists the note and closes the overlay itself.
             // Do not call a second, non-existent close method here: with an
             // `@EnvironmentObject` that produces misleading Binding/dynamic
             // member diagnostics and prevents the package from building.
+            DrawingDiagnostics.dismiss.info("saveAndDismiss: speichere Notiz")
             viewModel.saveNote(
                 for: lesson,
                 drawingData: drawingData,
@@ -2098,7 +2186,7 @@ public struct LessonDrawingOverlayView: View {
                 lineCount: calculatedLines,
                 textBoxes: cleanedTextBoxes,
                 imageBoxes: cleanedImageBoxes,
-                backgroundStyle: noteBackgroundStyle,
+                backgroundStyle: backgroundStyle,
                 backgroundScale: backgroundScale,
                 tagID: tagID
             )
@@ -2302,19 +2390,18 @@ public struct LessonDrawingOverlayView: View {
         flushPendingCanvasChange()
         let before = imageBoxes
         imageBoxes.append(placed)
-        // Nur vorab auswählen, wenn der aktuelle Input das Bild bedienen
-        // kann (Text-Werkzeug oder Finger-Modus bei „Nur Apple Pencil“).
-        // Im reinen Zeichen-Modus (Stift, „Nur Apple Pencil“ aus) würde die
-        // Auswahl die Ebene über der Zeichenfläche aktivieren – Striche auf
-        // dem Bild würden es dann verschieben statt zeichnen. Dort wird das
-        // Bild nur abgelegt; ausgewählt werden kann es über das Text-Werkzeug
-        // bzw. den Finger-Modus.
-        if isTextToolActive || fingerManipulationEnabled {
-            selectedImageID = placed.id
-        }
+        // Das eingefügte Bild wird **immer** vorausgewählt – damit stehen
+        // direkt die Optionen (Verschieben, Eck-Griffe, Löschen, Zuschneiden)
+        // bereit. Das Zeichnen bleibt trotzdem möglich: nur die Fläche des
+        // ausgewählten Bildes selbst ist anfassbar (siehe `layerInputPolicy`);
+        // die leere Zeichenfläche zeichnet weiter, und ein erneuter Tipp auf
+        // das Bild hebt die Auswahl wieder auf (danach liegt auch das Bild
+        // frei für Striche).
+        selectedImageID = placed.id
         selectedTextBoxID = nil
         editingTextBoxID = nil
         recordImageChange(from: before, to: imageBoxes)
+        DrawingDiagnostics.stroke.info("insertImage: Bild eingefügt und vorausgewählt")
         Haptics.success()
     }
 

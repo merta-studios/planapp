@@ -24,6 +24,16 @@ final class ViewFrameHolder {
         ) else { return .zero }
         return frame
     }
+
+    /// Ob ein Punkt in **Fenster-Koordinaten** innerhalb des aktuellen
+    /// Rahmens liegt. Ein nicht plausibler Rahmen (0 × 0, z. B. vor dem
+    /// ersten Layout) zählt als „außerhalb“ – dann greifen die normalen
+    /// Schließ-Regeln.
+    func isInsideCurrentWindowFrame(_ windowPoint: CGPoint) -> Bool {
+        let frame = currentWindowFrame
+        guard frame.width > 1, frame.height > 1 else { return false }
+        return frame.contains(windowPoint)
+    }
 }
 
 /// Unsichtbare UIKit-Sonde, die den echten Fenster-Rahmen einer SwiftUI-View liefert.
