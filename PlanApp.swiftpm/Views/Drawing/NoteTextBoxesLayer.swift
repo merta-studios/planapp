@@ -378,6 +378,10 @@ private struct NoteTextBoxView: View {
     /// Durchmesser der runden Schriftgrößen-Knöpfe (bewusst groß genug,
     /// um sie auch mit dem Finger sicher zu treffen).
     private let fontSizeButtonDiameter: CGFloat = 46
+    /// Durchmesser der beiden blauen Breiten-Griffe links und rechts am Feld.
+    /// Auf dem iPhone bewusst kleiner, damit die Griffe das Feld nicht
+    /// verdecken (wie bei den Bild-Griffen in der Bild-Ebene).
+    private var handleDiameter: CGFloat { DeviceLayout.isPhone ? 20 : 24 }
 
     private enum ResizeEdge {
         case leading

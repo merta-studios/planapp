@@ -13,6 +13,15 @@ private enum NoteImagePickerKind: Identifiable {
     case camera
 
     var id: Self { self }
+
+    /// Aus dem Menü der Werkzeugleiste („Mehr Optionen“ → „Bild hinzufügen“).
+    init(_ source: NoteImageSource) {
+        switch source {
+        case .file: self = .file
+        case .photos: self = .photos
+        case .camera: self = .camera
+        }
+    }
 }
 
 /// Anker der Tag-Pille. Der Anker liefert den Rahmen der Pille **immer
@@ -210,6 +219,15 @@ public struct LessonDrawingOverlayView: View {
     /// Seiten-Griffe ausgeblendet.
     @State private var editingTextBoxID: UUID? = nil
 
+    // Bilder („Mehr Optionen“ → „Bild hinzufügen“). Sie liegen in derselben
+    // unskalierten Zeichenflächen-Koordinatenwelt wie die Textfelder.
+    @State private var imageBoxes: [NoteImageBox] = []
+    @State private var selectedImageID: UUID? = nil
+    /// Welche Bild-Quelle (Datei / Fotos / Kamera) gerade offen ist.
+    @State private var activeImagePicker: NoteImagePickerKind? = nil
+    /// Bild, das gerade in der eigenen Zuschneide-Ansicht liegt.
+    @State private var cropTarget: NoteImageBox? = nil
+
     /// Die **einzige** Rückgängig-Historie der Notiz: Zeichnung und
     /// Textfelder liegen als gemeinsame Zustände darin. Sie überlebt das
     /// automatische Schließen (siehe `persistEditingHistory`), damit
@@ -290,6 +308,16 @@ public struct LessonDrawingOverlayView: View {
     private var isTextToolActive: Bool {
         if case .text = toolSelection { return true }
         return false
+    }
+
+    /// Ob der **Finger** Textfelder und Bilder anfassen darf, obwohl
+    /// „Nur Apple Pencil“ eingeschaltet ist. Die Beschränkung gilt nur fürs
+    /// Zeichnen: Text und Bilder bleiben für den Finger erreichbar, egal
+    /// welches Werkzeug gewählt ist. Auf dem iPhone gibt es keinen Apple
+    /// Pencil – dort bedient der Finger ohnehin alles.
+    private var fingerManipulationEnabled: Bool {
+        guard !isPhoneLayout else { return false }
+        return viewModel.drawingSettings.applePencilOnly
     }
 
     private var isUndoScrubbing: Bool { undoScrubSession != nil }
@@ -603,34 +631,10 @@ public struct LessonDrawingOverlayView: View {
                 ShareSheet(activityItems: [item.image])
             }
             .sheet(item: $activeImagePicker) { kind in
-                Group {
-                    switch kind {
-                    case .file:
-                        NoteImageFilePicker(
-                            onPick: { insertImage($0) },
-                            onCancel: { activeImagePicker = nil }
-                        )
-                    case .photos:
-                        NoteImagePhotoPicker(
-                            onPick: { insertImage($0) },
-                            onCancel: { activeImagePicker = nil }
-                        )
-                    case .camera:
-                        NoteImageCameraPicker(
-                            onPick: { insertImage($0) },
-                            onCancel: { activeImagePicker = nil }
-                        )
-                    }
-                }
+                imagePickerSheet(for: kind)
             }
             .sheet(item: $cropTarget) { box in
-                if let uiImage = box.uiImage {
-                    NoteImageCropView(
-                        image: uiImage,
-                        onApply: { applyCroppedImage($0, for: box.id) },
-                        onCancel: { cropTarget = nil }
-                    )
-                }
+                cropSheet(for: box)
             }
             .alert("Handschrift umwandeln", isPresented: Binding(
                 get: { recognitionAlertMessage != nil },
@@ -801,28 +805,40 @@ public struct LessonDrawingOverlayView: View {
             .allowsHitTesting(showsEditor && !isTextToolActive)
 
             // Frei bewegliche Textfelder und Bilder über der Zeichenfläche.
-            // Ist „Apple Pencil“ an, fasst der Finger sie über eine eigene
-            // Hülle an (egal welches Werkzeug gewählt ist); der Stift fällt
-            // durch die Hülle und zeichnet unbehelligt weiter.
-            Group {
-                if fingerManipulationEnabled {
-                    FingerOnlyContent(content: manipulableLayer)
-                } else {
-                    manipulableLayer
-                }
-            }
-            .frame(
-                width: paperWidth,
-                height: canvasContentHeight,
-                alignment: .topLeading
-            )
-            .opacity(showsEditor ? 1 : 0)
-            .allowsHitTesting(manipulableLayerHitTesting)
-            .simultaneousGesture(layerMagnificationGesture(in: viewport))
+            manipulableLayerContainer(viewport: viewport)
         }
         .frame(width: paperWidth, height: canvasContentHeight, alignment: .topLeading)
         .scaleEffect(canvasScale, anchor: .topLeading)
         .frame(width: scaledPaperWidth, height: scaledCanvasHeight, alignment: .topLeading)
+    }
+
+    /// Die Text-/Bild-Ebene samt Finger-Hülle und Zwei-Finger-Zoom.
+    ///
+    /// Ist „Nur Apple Pencil“ an, fasst der Finger Text und Bilder über eine
+    /// eigene Hülle an (egal welches Werkzeug gewählt ist); der Stift fällt
+    /// durch die Hülle und zeichnet unbehelligt weiter.
+    ///
+    /// Bewusst eine eigene Funktion (statt direkt im `canvasBlock`): Der
+    /// Editor ist so groß, dass der Swift-Compiler die Typen sonst nicht mehr
+    /// in vertretbarer Zeit bestimmen kann.
+    @ViewBuilder
+    private func manipulableLayerContainer(viewport: DrawingViewport) -> some View {
+        let layer = manipulableLayer
+        Group {
+            if fingerManipulationEnabled {
+                FingerOnlyContent(content: layer)
+            } else {
+                layer
+            }
+        }
+        .frame(
+            width: paperWidth,
+            height: canvasContentHeight,
+            alignment: .topLeading
+        )
+        .opacity(showsEditor ? 1 : 0)
+        .allowsHitTesting(manipulableLayerHitTesting)
+        .simultaneousGesture(layerMagnificationGesture(in: viewport))
     }
 
     /// Text- und Bild-Ebene in unskalierten Zeichenflächen-Koordinaten.
@@ -848,7 +864,12 @@ public struct LessonDrawingOverlayView: View {
             NoteImagesLayer(
                 images: $imageBoxes,
                 selectedID: $selectedImageID,
-                isManipulationActive: isTextToolActive || fingerManipulationEnabled,
+                // Ein ausgewähltes Bild bleibt auch dann anfassbar, wenn die
+                // Auswahl nicht über das Text-Werkzeug entstanden ist (z. B.
+                // direkt nach „Bild hinzufügen“).
+                isManipulationActive: isTextToolActive
+                    || fingerManipulationEnabled
+                    || selectedImageID != nil,
                 areaSize: CGSize(
                     width: paperWidth,
                     height: canvasContentHeight
@@ -1074,7 +1095,10 @@ public struct LessonDrawingOverlayView: View {
                 canCopyNote: hasCopyableContent,
                 canPasteNote: viewModel.hasCopiedNote,
                 onCopyNote: { copyCurrentNote() },
-                onPasteNote: { pasteCopiedNote() }
+                onPasteNote: { pasteCopiedNote() },
+                onAddImage: { source in
+                    activeImagePicker = NoteImagePickerKind(source)
+                }
             )
             Spacer(minLength: 0)
         }
@@ -1347,8 +1371,28 @@ public struct LessonDrawingOverlayView: View {
         guard showsEditor else { return }
         let drawingData = drawing.dataRepresentation()
         editingHistory.record(
-            before: NoteHistorySnapshot(drawingData: drawingData, textBoxes: before),
-            after: NoteHistorySnapshot(drawingData: drawingData, textBoxes: after)
+            before: NoteHistorySnapshot(
+                drawingData: drawingData,
+                textBoxes: before,
+                images: imageBoxes
+            ),
+            after: NoteHistorySnapshot(
+                drawingData: drawingData,
+                textBoxes: after,
+                images: imageBoxes
+            )
+        )
+    }
+
+    /// Übernimmt einen fertigen Bild-Schritt (Verschieben, Skalieren,
+    /// Löschen, Zuschneiden, Einfügen). Zeichnung und Textfelder bleiben
+    /// unverändert – nur die Bilder unterscheiden sich.
+    private func recordImageChange(from before: [NoteImageBox], to after: [NoteImageBox]) {
+        guard showsEditor else { return }
+        let drawingData = drawing.dataRepresentation()
+        editingHistory.record(
+            before: NoteHistorySnapshot(drawingData: drawingData, textBoxes: textBoxes, images: before),
+            after: NoteHistorySnapshot(drawingData: drawingData, textBoxes: textBoxes, images: after)
         )
     }
 
@@ -1359,7 +1403,8 @@ public struct LessonDrawingOverlayView: View {
         editingHistory.record(
             NoteHistorySnapshot(
                 drawingData: drawing.dataRepresentation(),
-                textBoxes: textBoxes
+                textBoxes: textBoxes,
+                images: imageBoxes
             )
         )
     }
@@ -1389,7 +1434,8 @@ public struct LessonDrawingOverlayView: View {
     private func currentHistorySnapshot() -> NoteHistorySnapshot {
         NoteHistorySnapshot(
             drawingData: drawing.dataRepresentation(),
-            textBoxes: textBoxes
+            textBoxes: textBoxes,
+            images: imageBoxes
         )
     }
 
@@ -1433,7 +1479,11 @@ public struct LessonDrawingOverlayView: View {
         for step in steps {
             drawing = step
             editingHistory.record(
-                NoteHistorySnapshot(drawingData: step.dataRepresentation(), textBoxes: textBoxes)
+                NoteHistorySnapshot(
+                    drawingData: step.dataRepresentation(),
+                    textBoxes: textBoxes,
+                    images: imageBoxes
+                )
             )
         }
     }
@@ -1902,7 +1952,8 @@ public struct LessonDrawingOverlayView: View {
         )
         // Alte oder hand-edited Speicherstände können doppelte IDs
         // enthalten. SwiftUI würde solche Elemente in einer ForEach als
-             // werden lassen. Beim Laden wird deshalb genau eine sichere Box je
+        // dasselbe View-Element behandeln und beim ersten Text-Tap instabil
+        // werden lassen. Beim Laden wird deshalb genau eine sichere Box je
         // UUID übernommen.
         var loadedIDs = Set<UUID>()
         textBoxes = note.textBoxes.compactMap { box in
@@ -2016,6 +2067,7 @@ public struct LessonDrawingOverlayView: View {
                 croppedImageData: croppedImage?.pngData(),
                 lineCount: calculatedLines,
                 textBoxes: cleanedTextBoxes,
+                imageBoxes: cleanedImageBoxes,
                 backgroundStyle: noteBackgroundStyle,
                 backgroundScale: backgroundScale,
                 tagID: tagID
@@ -2167,6 +2219,145 @@ public struct LessonDrawingOverlayView: View {
         }
     }
 
+    // MARK: - Bilder einfügen & zuschneiden
+
+    /// Fügt ein gewähltes Bild mittig auf der Zeichenfläche ein – halbe
+    /// Flächengröße, seitenrichtig, als **ein** Rückgängig-Schritt. Passt das
+    /// Bild nicht in eine Notiz (Höchstzahl) oder sind die Daten unlesbar,
+    /// passiert nichts außer einer kurzen Meldung.
+    private func insertImage(_ image: UIImage) {
+        activeImagePicker = nil
+        guard showsEditor else { return }
+
+        guard imageBoxes.count < NoteImageBox.maximumImagesPerNote else {
+            Haptics.warning()
+            showToast("Mehr als \(NoteImageBox.maximumImagesPerNote) Bilder passen nicht in eine Notiz.")
+            return
+        }
+        guard image.size.width > 0, image.size.height > 0,
+              let data = NoteImageBox.preparedData(from: image) else {
+            Haptics.warning()
+            showToast("Dieses Bild konnte nicht gelesen werden.")
+            return
+        }
+
+        let area = recognitionCanvasSize
+        let aspect = max(0.1, min(10, image.size.width / image.size.height))
+        // Halbe Fläche: Die längere Seite darf höchstens die halbe
+        // Zeichenfläche belegen, das Seitenverhältnis bleibt erhalten.
+        var width = area.width / 2
+        var height = width / aspect
+        if height > area.height / 2 {
+            height = area.height / 2
+            width = height * aspect
+        }
+
+        var box = NoteImageBox(
+            x: Double((area.width - width) / 2),
+            y: Double((area.height - height) / 2),
+            width: Double(width),
+            height: Double(height),
+            imageData: data
+        )
+        box.updatedAt = Date()
+
+        guard let placed = box.sanitized(in: area) else {
+            Haptics.warning()
+            showToast("Dieses Bild konnte nicht eingefügt werden.")
+            return
+        }
+
+        // Erst den offenen Strich veröffentlichen, dann einfügen: Der
+        // Rückgängig-Schritt davor ist damit vollständig.
+        flushPendingCanvasChange()
+        let before = imageBoxes
+        imageBoxes.append(placed)
+        selectedImageID = placed.id
+        selectedTextBoxID = nil
+        editingTextBoxID = nil
+        recordImageChange(from: before, to: imageBoxes)
+        Haptics.success()
+    }
+
+    /// Übernimmt das Ergebnis der eigenen Zuschneide-Ansicht: Die Bilddaten
+    /// werden ersetzt, der Rahmen behält seine Mitte und wird auf das neue
+    /// Seitenverhältnis eingepasst. Wieder ein einziger Rückgängig-Schritt.
+    private func applyCroppedImage(_ image: UIImage, for id: UUID) {
+        cropTarget = nil
+        guard showsEditor,
+              let index = imageBoxes.firstIndex(where: { $0.id == id }),
+              image.size.width > 0, image.size.height > 0,
+              let data = NoteImageBox.preparedData(from: image) else { return }
+
+        let area = recognitionCanvasSize
+        var updated = imageBoxes[index]
+        // Bewusst `Double`: Die Rahmenmaße sind Double, die Bildgrößen CGFloat.
+        let previousAspect = Double(max(0.1, updated.aspectRatio))
+        let centerX = updated.x + updated.width / 2
+        let centerY = updated.y + updated.height / 2
+        updated.imageData = data
+        updated.updatedAt = Date()
+
+        let newAspect = Double(max(0.1, min(10, image.size.width / image.size.height)))
+        if abs(newAspect - previousAspect) > 0.001 {
+            // Rahmen an das neue Seitenverhältnis anpassen (Mitte bleibt).
+            updated.height = updated.width / newAspect
+            if updated.height > Double(area.height) {
+                updated.height = Double(area.height)
+                updated.width = updated.height * newAspect
+            }
+            updated.x = centerX - updated.width / 2
+            updated.y = centerY - updated.height / 2
+        }
+
+        guard let sanitized = updated.sanitized(in: area), sanitized != imageBoxes[index] else {
+            return
+        }
+
+        flushPendingCanvasChange()
+        let before = imageBoxes
+        imageBoxes[index] = sanitized
+        selectedImageID = sanitized.id
+        recordImageChange(from: before, to: imageBoxes)
+        Haptics.select()
+    }
+
+    /// Auswahl der Bild-Quelle als eigene Ansicht: Die `.sheet`-Closure bleibt
+    /// dadurch klein (der Swift-Compiler kommt mit der Riesen-Ansicht des
+    /// Editors sonst an seine Typ-Schluss-Grenzen).
+    @ViewBuilder
+    private func imagePickerSheet(for kind: NoteImagePickerKind) -> some View {
+        switch kind {
+        case .file:
+            NoteImageFilePicker(
+                onPick: { insertImage($0) },
+                onCancel: { activeImagePicker = nil }
+            )
+        case .photos:
+            NoteImagePhotoPicker(
+                onPick: { insertImage($0) },
+                onCancel: { activeImagePicker = nil }
+            )
+        case .camera:
+            NoteImageCameraPicker(
+                onPick: { insertImage($0) },
+                onCancel: { activeImagePicker = nil }
+            )
+        }
+    }
+
+    /// Zuschneide-Ansicht als eigene Funktion – aus demselben Grund wie oben.
+    @ViewBuilder
+    private func cropSheet(for box: NoteImageBox) -> some View {
+        if let uiImage = box.uiImage {
+            NoteImageCropView(
+                image: uiImage,
+                onApply: { applyCroppedImage($0, for: box.id) },
+                onCancel: { cropTarget = nil }
+            )
+        }
+    }
+
     // MARK: - Notiz kopieren & einfügen
 
     /// Aktueller Editor-Zustand als speicherbare Notiz (zugeschnitten auf die
@@ -2263,6 +2454,16 @@ public struct LessonDrawingOverlayView: View {
             var copy = box
             copy.id = UUID()
             guard seenIDs.insert(copy.id).inserted else { return nil }
+            return copy.sanitized(in: canvasSize)
+        }
+
+        var seenImageIDs = Set<UUID>()
+        imageBoxes = copied.imageBoxes.compactMap { box in
+            // Auch Bilder bekommen neue IDs: Dieselbe Notiz kann mehrfach
+            // eingefügt werden, ohne dass sich Bild-IDs doppeln.
+            var copy = box
+            copy.id = UUID()
+            guard seenImageIDs.insert(copy.id).inserted else { return nil }
             return copy.sanitized(in: canvasSize)
         }
 

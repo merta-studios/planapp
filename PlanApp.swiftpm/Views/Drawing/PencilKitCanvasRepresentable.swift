@@ -971,7 +971,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             // dort endet, wo der Stift abgehoben wurde.
             rebuildStraightLine(force: true)
             guard let straight = straightSession?.straight else {
-                straightSession    }
+                straightSession = nil
+                return
+            }
 
             // Erster Schritt: die gezeichnete (schräge) Linie. Bevorzugt wird
             // der aus den Berührungs-Samples gebaute Strich – nur er stammt
