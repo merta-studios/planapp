@@ -801,7 +801,7 @@ public final class FileSyncService: ObservableObject {
     /// alle Fassungen einsammeln und zu einer zusammenführen. Schlägt das
     /// fehl, läuft die normale Zusammenführung weiter – es geht nie etwas still verloren.
     private func resolveVersionConflictsIfNeeded(at url: URL) {
-        guard let conflicts = try? NSFileVersion.unresolvedConflictVersionsOfItem(at: url),
+        guard let conflicts = NSFileVersion.unresolvedConflictVersionsOfItem(at: url),
               !conflicts.isEmpty,
               let local = makeLocalBackup?() else {
             return

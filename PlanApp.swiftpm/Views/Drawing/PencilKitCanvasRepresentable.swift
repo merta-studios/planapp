@@ -110,6 +110,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         self.onStraightLineSnap = onStraightLineSnap
         self.onCanvasCreated = onCanvasCreated
         self.onFingerPan = onFingerPan
+        self.onPinch = onPinch
         self.onDrawingChange = onDrawingChange
         self.onRequestUndo = onRequestUndo
         self.onPencilInputDetected = onPencilInputDetected
