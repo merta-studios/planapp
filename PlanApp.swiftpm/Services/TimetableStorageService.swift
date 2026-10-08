@@ -45,6 +45,8 @@ public final class TimetableStorageService {
         static let tagSettings = "planapp_note_tag_settings"
         static let applePencilStatus = "planapp_apple_pencil_status"
         static let noteUndoSessions = "planapp_note_undo_sessions"
+        static let fileSyncConfiguration = "planapp_file_sync_configuration"
+        static let fileSyncSafetyBackups = "planapp_file_sync_safety_backups"
     }
 
     private var documentsDirectory: URL {
@@ -167,6 +169,24 @@ public final class TimetableStorageService {
         restore(NoteUndoSessionStore.self, key: Keys.noteUndoSessions) ?? NoteUndoSessionStore()
     }
 
+    // MARK: - Datei-Synchronisation (iCloud Drive)
+
+    public func saveFileSyncConfiguration(_ configuration: FileSyncConfiguration) {
+        persist(configuration, key: Keys.fileSyncConfiguration)
+    }
+
+    public func loadFileSyncConfiguration() -> FileSyncConfiguration {
+        restore(FileSyncConfiguration.self, key: Keys.fileSyncConfiguration) ?? FileSyncConfiguration()
+    }
+
+    public func saveFileSyncSafetyBackups(_ backups: [FileSyncSafetyBackup]) {
+        persist(Array(backups.prefix(FileSyncService.maximumSafetyBackups)), key: Keys.fileSyncSafetyBackups)
+    }
+
+    public func loadFileSyncSafetyBackups() -> [FileSyncSafetyBackup] {
+        restore([FileSyncSafetyBackup].self, key: Keys.fileSyncSafetyBackups) ?? []
+    }
+
     // MARK: - Periods
 
     public func savePeriods(_ periods: [Period]) {
@@ -194,18 +214,28 @@ public final class TimetableStorageService {
         let noteFile = notesDirectory.appendingPathComponent("\(note.id).note")
         let imageFile = notesDirectory.appendingPathComponent("\(note.id).png")
         let textFile = notesDirectory.appendingPathComponent("\(note.id).text.json")
+        let boxesFile = notesDirectory.appendingPathComponent("\(note.id).images.json")
 
-        try? note.drawingData.write(to: noteFile)
+        try? note.drawingData.write(to: noteFile, options: .atomic)
         if let imgData = note.croppedImageData {
-            try? imgData.write(to: imageFile)
+            try? imgData.write(to: imageFile, options: .atomic)
         } else {
             try? fileManager.removeItem(at: imageFile)
         }
 
         if !note.textBoxes.isEmpty, let textData = try? JSONEncoder().encode(note.textBoxes) {
-            try? textData.write(to: textFile)
+            try? textData.write(to: textFile, options: .atomic)
         } else {
             try? fileManager.removeItem(at: textFile)
+        }
+
+        // Bilder (Rahmen + komprimierte Bilddaten) liegen in einer eigenen
+        // Datei, damit Textfelder und Zeichnung unabhängig davon lesbar
+        // bleiben – selbst wenn ein Bild einmal beschädigt wäre.
+        if !note.imageBoxes.isEmpty, let boxesData = try? JSONEncoder().encode(note.imageBoxes) {
+            try? boxesData.write(to: boxesFile, options: .atomic)
+        } else {
+            try? fileManager.removeItem(at: boxesFile)
         }
 
         var metadata = loadNotesMetadata()
@@ -235,6 +265,7 @@ public final class TimetableStorageService {
         let noteFile = notesDirectory.appendingPathComponent("\(noteKey).note")
         let imageFile = notesDirectory.appendingPathComponent("\(noteKey).png")
         let textFile = notesDirectory.appendingPathComponent("\(noteKey).text.json")
+        let boxesFile = notesDirectory.appendingPathComponent("\(noteKey).images.json")
 
         guard fileManager.fileExists(atPath: noteFile.path),
               let drawingData = try? Data(contentsOf: noteFile) else {
@@ -247,6 +278,14 @@ public final class TimetableStorageService {
         if let textData = try? Data(contentsOf: textFile),
            let decoded = try? JSONDecoder().decode([NoteTextBox].self, from: textData) {
             textBoxes = decoded
+        }
+
+        // Bilder werden defensiv geladen: Unlesbare Rahmen fallen heraus,
+        // der Rest der Notiz bleibt in jedem Fall erhalten.
+        var imageBoxes: [NoteImageBox] = []
+        if let boxesData = try? Data(contentsOf: boxesFile),
+           let decoded = try? JSONDecoder().decode([NoteImageBox].self, from: boxesData) {
+            imageBoxes = decoded.compactMap { $0.sanitized() }
         }
 
         let metadata = loadNotesMetadata()[noteKey] as? [String: Any]
@@ -264,6 +303,7 @@ public final class TimetableStorageService {
             croppedImageData: imageData,
             lineCount: lineCount,
             textBoxes: textBoxes,
+            imageBoxes: imageBoxes,
             backgroundStyle: backgroundStyle,
             backgroundScale: backgroundScale,
             tagID: tagID,
@@ -286,9 +326,11 @@ public final class TimetableStorageService {
         let noteFile = notesDirectory.appendingPathComponent("\(noteKey).note")
         let imageFile = notesDirectory.appendingPathComponent("\(noteKey).png")
         let textFile = notesDirectory.appendingPathComponent("\(noteKey).text.json")
+        let boxesFile = notesDirectory.appendingPathComponent("\(noteKey).images.json")
         try? fileManager.removeItem(at: noteFile)
         try? fileManager.removeItem(at: imageFile)
         try? fileManager.removeItem(at: textFile)
+        try? fileManager.removeItem(at: boxesFile)
 
         var metadata = loadNotesMetadata()
         metadata.removeValue(forKey: noteKey)

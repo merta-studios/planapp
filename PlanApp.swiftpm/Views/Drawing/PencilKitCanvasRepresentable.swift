@@ -11,8 +11,9 @@ private final class UndoDisabledPKCanvasView: PKCanvasView {
 
 /// SwiftUI wrapper for `PKCanvasView` with Apple-Pencil-only drawing.
 /// Direct finger touches never draw; two fingers are forwarded to the surrounding
-/// note as incremental pan updates. Zooming is deliberately not supported – the
-/// note is moved and resized only.
+/// note as incremental pan updates, and a two-finger pinch is forwarded as an
+/// incremental zoom (both recognizers run simultaneously, so zooming and moving
+/// at once works). Only fingers zoom – never the Apple Pencil.
 public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     @Binding public var drawing: PKDrawing
     public let toolSelection: DrawingToolSelection
@@ -25,6 +26,10 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     public let dynamicPenWidth: Bool
     public let onCanvasCreated: (PKCanvasView) -> Void
     public let onFingerPan: (CGSize) -> Void
+    /// Zwei-Finger-Zoom auf der Zeichenfläche: inkrementeller Faktor
+    /// (1 = keine Änderung, > 1 = aufziehen) plus Ankerpunkt der Geste in
+    /// **Fenster-Koordinaten**. Nur Finger lösen aus, kein Apple Pencil.
+    public let onPinch: (CGFloat, CGPoint) -> Void
     /// Meldet einen **fertigen** Schritt der Zeichenfläche: den Zustand
     /// **vor** und **nach** der Änderung. Beides kommt vom Canvas – so legt
     /// die Notiz-Historie genau einen Schritt „von – nach“ ab und kann nie
@@ -80,6 +85,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         dynamicPenWidth: Bool = true,
         onCanvasCreated: @escaping (PKCanvasView) -> Void = { _ in },
         onFingerPan: @escaping (CGSize) -> Void = { _ in },
+        onPinch: @escaping (CGFloat, CGPoint) -> Void = { _, _ in },
         onDrawingChange: @escaping (PKDrawing, PKDrawing) -> Void = { _, _ in },
         onRequestUndo: @escaping () -> Void = {},
         onPencilInputDetected: @escaping () -> Void = {},
@@ -155,6 +161,19 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         fingerPan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         fingerPan.delegate = context.coordinator
         canvasView.addGestureRecognizer(fingerPan)
+
+        // 2-Finger-Zoom (nur Finger, kein Apple Pencil): läuft gleichzeitig
+        // mit dem Verschieben oben, sodass man zoomen und bewegen kann, ohne
+        // die Finger abzusetzen. Der Faktor wird inkrementell gemeldet und
+        // nach jeder Meldung zurückgesetzt.
+        let fingerPinch = UIPinchGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handlePinch(_:))
+        )
+        fingerPinch.cancelsTouchesInView = false
+        fingerPinch.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        fingerPinch.delegate = context.coordinator
+        canvasView.addGestureRecognizer(fingerPinch)
 
         // Nur Apple-Pencil-Berührungen beobachten: Damit erkennt die App
         // zuverlässig, dass ein echter Apple Pencil benutzt wird. Der Erkenner
@@ -952,9 +971,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             // dort endet, wo der Stift abgehoben wurde.
             rebuildStraightLine(force: true)
             guard let straight = straightSession?.straight else {
-                straightSession = nil
-                return
-            }
+                straightSession    }
 
             // Erster Schritt: die gezeichnete (schräge) Linie. Bevorzugt wird
             // der aus den Berührungs-Samples gebaute Strich – nur er stammt
@@ -1221,6 +1238,31 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             if translation != .zero {
                 parent.onFingerPan(CGSize(width: translation.x, height: translation.y))
                 recognizer.setTranslation(.zero, in: coordinateView)
+            }
+        }
+
+        /// Zwei-Finger-Pinch des Fingers auf der Zeichenfläche: meldet
+        /// inkrementelle Zoom-Faktoren mit Anker in Fenster-Koordinaten.
+        /// Läuft parallel zum Finger-Pan (`cancelsTouchesInView = false`,
+        /// simultane Erkennung) – Zoomen und Verschieben gleichzeitig.
+        @objc func handlePinch(_ recognizer: UIPinchGestureRecognizer) {
+            guard recognizer.view != nil else { return }
+            parent.onCanvasActivity()
+
+            switch recognizer.state {
+            case .began, .cancelled, .ended, .failed:
+                recognizer.scale = 1
+            case .changed:
+                let factor = recognizer.scale
+                recognizer.scale = 1
+                guard factor.isFinite, factor > 0, factor != 1 else { return }
+                let anchor = recognizer.location(in: nil)
+                guard anchor.x.isFinite, anchor.y.isFinite else { return }
+                parent.onPinch(factor, anchor)
+            case .possible:
+                break
+            @unknown default:
+                break
             }
         }
 
@@ -1600,12 +1642,13 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     // MARK: - Notiz-Vorschau (Zeichnung + Textfelder)
 
     /// Rendert die Vorschau einer Notiz, zugeschnitten auf den Inhalt.
-    /// Sowohl Pencil-Striche als auch Textfelder werden berücksichtigt.
+    /// Pencil-Striche, Textfelder und Bilder werden berücksichtigt.
     /// Mit `clipRect` (z. B. Grenzen der Zeichenfläche) werden Inhalte hart
     /// auf diesen Bereich begrenzt – nichts außerhalb landet in der Vorschau.
     public static func renderNotePreview(
         drawing: PKDrawing,
         textBoxes: [NoteTextBox],
+        images: [NoteImageBox] = [],
         backgroundStyle: NoteBackgroundStyle = .blank,
         backgroundScale: Double = NoteBackgroundMetrics.defaultScale,
         clipRect: CGRect? = nil,
@@ -1624,6 +1667,17 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 y: CGFloat(box.y),
                 width: CGFloat(box.width),
                 height: boxHeight
+            )
+            contentRect = contentRect.isNull ? boxRect : contentRect.union(boxRect)
+        }
+
+        for box in images {
+            guard box.uiImage != nil else { continue }
+            let boxRect = CGRect(
+                x: CGFloat(box.x),
+                y: CGFloat(box.y),
+                width: CGFloat(box.width),
+                height: CGFloat(box.height)
             )
             contentRect = contentRect.isNull ? boxRect : contentRect.union(boxRect)
         }
@@ -1672,6 +1726,8 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 drawingImage.draw(in: renderBounds)
             }
 
+            // Reihenfolge wie im Editor (Bild-Ebene über der Text-Ebene):
+            // zuerst die Texte, danach die Bilder.
             for box in textBoxes {
                 guard !box.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     continue
@@ -1696,6 +1752,18 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                     attributes: attributes,
                     context: nil
                 )
+            }
+
+            for box in images {
+                guard let uiImage = box.uiImage else { continue }
+                let imageRect = CGRect(
+                    x: CGFloat(box.x),
+                    y: CGFloat(box.y),
+                    width: CGFloat(box.width),
+                    height: CGFloat(box.height)
+                )
+                guard imageRect.width > 0, imageRect.height > 0 else { continue }
+                uiImage.draw(in: imageRect)
             }
 
             cgContext.restoreGState()
@@ -1918,6 +1986,14 @@ final class StrokeHoldGestureRecognizer: UIGestureRecognizer {
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesCancelled(touches, with: event)
+        state = .cancelled
+    }
+}
+touches, with: event)
+        state = .cancelled
+    }
+}
+t)
         state = .cancelled
     }
 }

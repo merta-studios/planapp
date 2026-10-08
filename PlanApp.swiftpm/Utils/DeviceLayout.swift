@@ -36,6 +36,23 @@ public enum DeviceLayout {
         compact ? 58 : 80
     }
 
+    // MARK: - Kompakte Abstände & Radien (iPhone)
+
+    /// Auf dem iPhone ist alles bewusst kleiner und enger, damit wirklich
+    /// Platz für alles ist: kleinere Karten-Abstände und kleinere Rundungen.
+    public static var settingsOuterPadding: CGFloat { isPhone ? 12 : 16 }
+    public static var settingsInnerPadding: CGFloat { isPhone ? 10 : 14 }
+
+    /// Karten-Rundung: auf dem iPhone 4 pt kleiner (mindestens 8).
+    public static func cardCornerRadius(_ regular: CGFloat) -> CGFloat {
+        isPhone ? max(8, regular - 4) : regular
+    }
+
+    /// Button-Rundung: auf dem iPhone 3 pt kleiner (mindestens 6).
+    public static func buttonCornerRadius(_ regular: CGFloat) -> CGFloat {
+        isPhone ? max(6, regular - 3) : regular
+    }
+
     /// Breite einer Tagesspalte. Kompakt füllen die fünf Tage die verfügbare
     /// Breite immer vollständig aus (kein horizontales Abschneiden mehr).
     public static func dayColumnWidth(availableWidth: CGFloat, compact: Bool) -> CGFloat {

@@ -122,7 +122,7 @@ public struct SubjectCustomizationSection: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
                     }
-                    .lightButton(cornerRadius: 10, tint: .blue, isFilled: true)
+                    .liquidGlassButton(cornerRadius: 10, tint: .blue, isFilled: true)
                     .foregroundColor(.white)
                     .disabled(
                         originalSubjectInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -141,8 +141,8 @@ public struct SubjectCustomizationSection: View {
                     .foregroundColor(.orange)
                 }
             }
-            .padding(14)
-            .lightCard(cornerRadius: 14, strokeOpacity: 0.2)
+            .padding(DeviceLayout.settingsInnerPadding)
+            .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.2)
 
             // 2. IMPORT & ALLE LÖSCHEN BUTTONS MIT BESTÄTIGUNG
             HStack(spacing: 10) {
@@ -161,7 +161,7 @@ public struct SubjectCustomizationSection: View {
                     .padding(.vertical, 9)
                     .padding(.horizontal, 10)
                 }
-                .lightButton(cornerRadius: 10, tint: .blue)
+                .liquidGlassButton(cornerRadius: 10, tint: .blue)
                 .foregroundColor(.blue)
 
                 // Alle löschen Button
@@ -178,7 +178,7 @@ public struct SubjectCustomizationSection: View {
                     .padding(.vertical, 9)
                     .padding(.horizontal, 12)
                 }
-                .lightButton(cornerRadius: 10, tint: .red)
+                .liquidGlassButton(cornerRadius: 10, tint: .red)
                 .foregroundColor(.red)
                 .disabled(viewModel.subjectCustomizations.isEmpty)
                 .opacity(viewModel.subjectCustomizations.isEmpty ? 0.45 : 1.0)
@@ -208,7 +208,7 @@ public struct SubjectCustomizationSection: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 16)
-                .lightCard(cornerRadius: 12, strokeOpacity: 0.15)
+                .liquidGlassCard(cornerRadius: 12, strokeOpacity: 0.15)
             } else {
                 LazyVStack(spacing: 8) {
                     ForEach(viewModel.subjectCustomizations) { item in
@@ -252,7 +252,7 @@ public struct SubjectCustomizationSection: View {
                                     .foregroundColor(.blue)
                                     .frame(width: 32, height: 32)
                             }
-                            .lightButton(cornerRadius: 16, tint: .blue)
+                            .liquidGlassButton(cornerRadius: 16, tint: .blue)
 
                             // Löschen Button
                             Button(action: {
@@ -266,17 +266,17 @@ public struct SubjectCustomizationSection: View {
                                     .foregroundColor(.red)
                                     .frame(width: 32, height: 32)
                             }
-                            .lightButton(cornerRadius: 16, tint: .red)
+                            .liquidGlassButton(cornerRadius: 16, tint: .red)
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .lightCard(cornerRadius: 12, strokeOpacity: 0.18)
+                        .liquidGlassCard(cornerRadius: 12, strokeOpacity: 0.18)
                     }
                 }
             }
         }
-        .padding(16)
-        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
+        .padding(DeviceLayout.settingsOuterPadding)
+        .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
         // Bestätigung für Import
         .alert("Stundenplan-Fächer importieren", isPresented: $showImportAlert) {
             Button("Abbrechen", role: .cancel) {}
@@ -442,8 +442,8 @@ struct EditSubjectSheet: View {
                                     )
                             }
                         }
-                        .padding(16)
-                        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
+                        .padding(DeviceLayout.settingsOuterPadding)
+                        .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
 
                         HStack(spacing: 12) {
                             Button(action: {
@@ -455,7 +455,7 @@ struct EditSubjectSheet: View {
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 12)
                             }
-                            .lightButton(cornerRadius: 12)
+                            .liquidGlassButton(cornerRadius: 12)
                             .foregroundColor(.secondary)
 
                             Button(action: {
@@ -467,7 +467,7 @@ struct EditSubjectSheet: View {
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 12)
                             }
-                            .lightButton(cornerRadius: 12, tint: .blue, isFilled: true)
+                            .liquidGlassButton(cornerRadius: 12, tint: .blue, isFilled: true)
                             .foregroundColor(.white)
                             .disabled(originalSubject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }

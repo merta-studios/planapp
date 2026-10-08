@@ -75,9 +75,19 @@ public final class TimetableViewModel: ObservableObject {
     @Published public var activeTagFilter: Set<UUID> = []
 
     /// Interne „Zwischenablage“ für Notizen (Kontextmenü → Kopieren/Einfügen).
-    /// Enthält die komplette Notiz inkl. Zeichnung, Textfeldern, Hintergrund
-    /// und Tag. Bleibt für die Dauer der Sitzung erhalten.
+    /// Enthält die komplette Notiz inkl. Zeichnung, Textfeldern, Bildern,
+    /// Hintergrund und Tag. Bleibt für die Dauer der Sitzung erhalten.
     @Published public private(set) var copiedNote: LessonNote? = nil
+
+    /// Datei-Synchronisation über iCloud Drive (Einstellungen → Daten).
+    /// Standardmäßig aus; bei aktivem Sync werden lokale Änderungen
+    /// automatisch in die gewählte Datei geschrieben und fremde Stände
+    /// zusammengeführt.
+    public let fileSyncService = FileSyncService()
+    /// Ob gerade ein Sync-Stand übernommen wird – dann lösen die eigenen
+    /// Änderungen kein erneutes Schreiben aus.
+    private var isApplyingFileSyncRemote = false
+    private var fileSyncSubscriptions = Set<AnyCancellable>()
 
     /// Höchstzahl manuell angelegter Fächer bzw. Lehrkräfte.
     public static let maximumSubjectCustomizations = 50
@@ -172,6 +182,74 @@ public final class TimetableViewModel: ObservableObject {
         }
 
         setupAutoRefresh()
+        setupFileSync()
+    }
+
+    /// Verdrahtet die Datei-Synchronisation: Jede relevante lokale Änderung
+    /// meldet sich beim Sync-Service (entprelltes Schreiben), und beim Start
+    /// mit aktivem Sync wird die Datei sofort zusammengeführt.
+    private func setupFileSync() {
+        fileSyncService.makeLocalBackup = { [weak self] in
+            self?.makeFileSyncBackup()
+        }
+        fileSyncService.applyBackup = { [weak self] backup in
+            self?.applyFileSyncBackup(backup)
+        }
+
+        let dirtySinks: [AnyPublisher<Void, Never>] = [
+            $lessonNotes.map { _ in () }.eraseToAnyPublisher(),
+            $lessons.map { _ in () }.eraseToAnyPublisher(),
+            $periods.map { _ in () }.eraseToAnyPublisher(),
+            $subjectCustomizations.map { _ in () }.eraseToAnyPublisher(),
+            $teacherNameCustomizations.map { _ in () }.eraseToAnyPublisher(),
+            $displaySettings.map { _ in () }.eraseToAnyPublisher(),
+            $drawingSettings.map { _ in () }.eraseToAnyPublisher(),
+            $untisCredentials.map { _ in () }.eraseToAnyPublisher(),
+            $viewMode.map { _ in () }.eraseToAnyPublisher(),
+            $appearance.map { _ in () }.eraseToAnyPublisher(),
+            $tagSettings.map { _ in () }.eraseToAnyPublisher()
+        ]
+        for publisher in dirtySinks {
+            publisher
+                .dropFirst()
+                .sink { [weak self] in
+                    guard let self, !self.isApplyingFileSyncRemote else { return }
+                    self.fileSyncService.markLocalDirty()
+                }
+                .store(in: &fileSyncSubscriptions)
+        }
+
+        if fileSyncService.isEnabled {
+            Task {
+                await fileSyncService.pullNow()
+            }
+        }
+    }
+
+    /// Baut die lokale Sicherung für die Datei-Synchronisation (ohne Text).
+    private func makeFileSyncBackup() -> AppBackup? {
+        AppBackup(
+            createdAt: Date(),
+            credentials: untisCredentials,
+            subjectCustomizations: subjectCustomizations,
+            teacherNameCustomizations: teacherNameCustomizations,
+            displaySettings: displaySettings,
+            drawingSettings: drawingSettings,
+            periods: periods,
+            lessons: lessons,
+            notes: Array(lessonNotes.values).sorted { $0.id < $1.id },
+            viewMode: viewMode.rawValue,
+            appearance: appearance.rawValue,
+            tagSettings: tagSettings
+        )
+    }
+
+    /// Übernimmt einen zusammengeführten Sync-Stand – still (keine Banner bei
+    /// jedem automatischen Abgleich) und ohne die Grabsteine zu verwerfen.
+    private func applyFileSyncBackup(_ backup: AppBackup) {
+        isApplyingFileSyncRemote = true
+        defer { isApplyingFileSyncRemote = false }
+        applyBackup(backup, silent: true, resetFileSyncTombstones: false)
     }
 
     /// Ende der letzten Unterrichtsstunde als Minute des Tages. Grundlage für
@@ -697,6 +775,7 @@ public final class TimetableViewModel: ObservableObject {
         croppedImageData: Data?,
         lineCount: Int,
         textBoxes: [NoteTextBox] = [],
+        imageBoxes: [NoteImageBox] = [],
         backgroundStyle: NoteBackgroundStyle = .blank,
         backgroundScale: Double = NoteBackgroundMetrics.defaultScale,
         tagID: UUID? = nil
@@ -710,6 +789,7 @@ public final class TimetableViewModel: ObservableObject {
             croppedImageData: croppedImageData,
             lineCount: lineCount,
             textBoxes: textBoxes,
+            imageBoxes: imageBoxes,
             backgroundStyle: backgroundStyle,
             backgroundScale: backgroundScale,
             tagID: resolvedTagID,
@@ -728,6 +808,9 @@ public final class TimetableViewModel: ObservableObject {
             visibleNoteKeys.remove(key)
             storage.deleteLessonNote(for: key)
             discardUndoSession(for: key)
+            // Auch das Leeren ist eine Löschung für den Sync: Sonst stünde
+            // die alte Notiz beim Zusammenführen wieder auf.
+            fileSyncService.recordDeletedNote(id: key)
         }
 
         withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
@@ -748,6 +831,7 @@ public final class TimetableViewModel: ObservableObject {
         visibleNoteKeys.remove(key)
         storage.deleteLessonNote(for: key)
         discardUndoSession(for: key)
+        fileSyncService.recordDeletedNote(id: key)
         successMessage = "Notiz gelöscht."
     }
 
@@ -973,11 +1057,13 @@ public final class TimetableViewModel: ObservableObject {
 
     /// Löscht ALLE gespeicherten Notizen zu Stunden-Blöcken.
     public func deleteAllNotes() {
+        let removedIDs = Array(lessonNotes.keys)
         lessonNotes.removeAll()
         visibleNoteKeys.removeAll()
         storage.deleteAllLessonNotes()
         noteUndoSessions = NoteUndoSessionStore()
         storage.saveNoteUndoSessions(noteUndoSessions)
+        fileSyncService.recordDeletedNotes(ids: removedIDs)
         successMessage = "Alle Notizen wurden gelöscht."
     }
 
@@ -1206,7 +1292,15 @@ public final class TimetableViewModel: ObservableObject {
     }
 
     /// Ersetzt sämtliche Daten der App durch die Sicherung.
-    public func applyBackup(_ backup: AppBackup) {
+    ///
+    /// - Parameters:
+    ///   - backup: Die zu übernehmende Sicherung.
+    ///   - silent: `true` unterdrückt die Erfolgsmeldung (für automatische
+    ///     Sync-Übernahmen, die sonst bei jedem Abgleich ein Banner zeigen würden).
+    ///   - resetFileSyncTombstones: Ob vergessene Löschungen zurückgesetzt
+    ///     werden. Beim manuellen Import `true` (der Import ist die neue
+    ///     Wahrheit), beim Sync `false` (Löschungen müssen weiter gelten).
+    public func applyBackup(_ backup: AppBackup, silent: Bool = false, resetFileSyncTombstones: Bool = true) {
         untisCredentials = backup.credentials
         subjectCustomizations = Array(backup.subjectCustomizations.prefix(TimetableViewModel.maximumSubjectCustomizations))
         teacherNameCustomizations = Array(backup.teacherNameCustomizations.prefix(TimetableViewModel.maximumTeacherNameCustomizations))
@@ -1245,7 +1339,12 @@ public final class TimetableViewModel: ObservableObject {
         storage.saveTagSettings(tagSettings)
         storage.replaceAllLessonNotes(with: Array(restoredNotes.values))
 
-        successMessage = "Import abgeschlossen: \(restoredNotes.count) Notizen, \(lessons.count) Stunden."
+        if resetFileSyncTombstones {
+            fileSyncService.clearTombstones()
+        }
+        if !silent {
+            successMessage = "Import abgeschlossen: \(restoredNotes.count) Notizen, \(lessons.count) Stunden."
+        }
     }
 
     // MARK: - Untis API Sync & Demo Data

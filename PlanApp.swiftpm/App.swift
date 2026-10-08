@@ -19,6 +19,22 @@ struct PlanApp: App {
                         await viewModel.refreshTimetableIfNeeded()
                     }
                 }
+                .onChange(of: scenePhase) { _, phase in
+                    // Datei-Sync (iCloud Drive): Beim Öffnen fremde Stände
+                    // holen, beim Verlassen eigene Änderungen sichern.
+                    switch phase {
+                    case .active:
+                        Task(priority: .utility) {
+                            await viewModel.fileSyncService.pullNow()
+                        }
+                    case .background:
+                        Task(priority: .utility) {
+                            await viewModel.fileSyncService.pushNow()
+                        }
+                    default:
+                        break
+                    }
+                }
         }
     }
 }

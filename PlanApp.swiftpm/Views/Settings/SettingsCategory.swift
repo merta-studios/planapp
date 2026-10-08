@@ -77,7 +77,7 @@ struct SettingsCategoryDetailView: View {
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
-            VStack(spacing: 20) {
+            VStack(spacing: DeviceLayout.isPhone ? 14 : 20) {
                 switch category {
                 case .timetable:
                     PeriodConfigSection()
@@ -109,7 +109,7 @@ struct SettingsCategoryDetailView: View {
                     clearTimetableCard
                 }
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, DeviceLayout.isPhone ? 12 : 20)
             .padding(.vertical, 16)
         }
         .background(Color(UIColor.systemBackground).ignoresSafeArea())
@@ -129,7 +129,7 @@ struct SettingsCategoryDetailView: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 6)
                 }
-                .lightButton(cornerRadius: 10, tint: .blue, isFilled: true)
+                .liquidGlassButton(cornerRadius: 10, tint: .blue, isFilled: true)
                 .foregroundColor(.white)
             }
         }
@@ -164,10 +164,10 @@ struct SettingsCategoryDetailView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
             }
-            .lightButton(cornerRadius: 14, tint: .red)
+            .liquidGlassButton(cornerRadius: 14, tint: .red)
             .foregroundColor(.red)
         }
-        .padding(16)
-        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
+        .padding(DeviceLayout.settingsOuterPadding)
+        .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
     }
 }

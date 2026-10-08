@@ -55,8 +55,8 @@ public struct DrawingSettingsSection: View {
                     range: 4...60
                 )
             }
-            .padding(14)
-            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
+            .padding(DeviceLayout.settingsInnerPadding)
+            .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
 
             // 2. STANDARD-GRÖSSE DER ZEICHENFLÄCHE
             VStack(alignment: .leading, spacing: 8) {
@@ -83,8 +83,8 @@ public struct DrawingSettingsSection: View {
                     .font(.system(size: 12, weight: .regular, design: .default))
                     .foregroundColor(.secondary)
             }
-            .padding(14)
-            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
+            .padding(DeviceLayout.settingsInnerPadding)
+            .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
 
             // 3. STANDARD-SCHRIFTGRÖSSE NEUER TEXTFELDER
             VStack(alignment: .leading, spacing: 8) {
@@ -117,8 +117,8 @@ public struct DrawingSettingsSection: View {
                     .foregroundColor(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(14)
-            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
+            .padding(DeviceLayout.settingsInnerPadding)
+            .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
 
             // 3b. SCHRIFTART DER TEXTFELDER
             VStack(alignment: .leading, spacing: 12) {
@@ -168,8 +168,8 @@ public struct DrawingSettingsSection: View {
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(14)
-            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
+            .padding(DeviceLayout.settingsInnerPadding)
+            .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
 
             // 4. STANDARD-HINTERGRUND
             VStack(alignment: .leading, spacing: 10) {
@@ -249,8 +249,8 @@ public struct DrawingSettingsSection: View {
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(14)
-            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
+            .padding(DeviceLayout.settingsInnerPadding)
+            .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
 
             // 5. EINGABE & RADIERER
             VStack(alignment: .leading, spacing: 12) {
@@ -269,7 +269,7 @@ public struct DrawingSettingsSection: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Apple Pencil")
                                     .font(.system(size: 14, weight: .regular, design: .default))
-                                Text("Aus: Zeichnen mit Finger und Apple Pencil. An: Nur mit dem Apple Pencil zeichnen. Schaltet sich automatisch ein, sobald ein Apple Pencil erkannt wird.")
+                                Text("Aus: Zeichnen mit Finger und Apple Pencil. An: Nur mit dem Apple Pencil zeichnen – der Finger fasst dafür Text und Bilder an (auswählen, verschieben, bearbeiten), egal welches Werkzeug gewählt ist. Schaltet sich automatisch ein, sobald ein Apple Pencil erkannt wird.")
                                     .font(.system(size: 12, weight: .regular, design: .default))
                                     .foregroundColor(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -325,8 +325,8 @@ public struct DrawingSettingsSection: View {
                     }
                 }
             }
-            .padding(14)
-            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
+            .padding(DeviceLayout.settingsInnerPadding)
+            .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
 
             // 6. AUTOMATISCHES AUFRÄUMEN & ALLES LÖSCHEN
             VStack(alignment: .leading, spacing: 12) {
@@ -369,14 +369,14 @@ public struct DrawingSettingsSection: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 11)
                 }
-                .lightButton(cornerRadius: 12, tint: .red)
+                .liquidGlassButton(cornerRadius: 12, tint: .red)
                 .foregroundColor(.red)
             }
-            .padding(14)
-            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
+            .padding(DeviceLayout.settingsInnerPadding)
+            .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
         }
-        .padding(16)
-        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
+        .padding(DeviceLayout.settingsOuterPadding)
+        .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
         .onAppear(perform: loadDraftIfNeeded)
         .onDisappear(perform: commitDraftSettings)
         .alert("Alle Notizen löschen", isPresented: $showDeleteAllNotesAlert) {
