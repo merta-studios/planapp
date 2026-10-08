@@ -186,14 +186,18 @@ public enum FileSyncMerge {
 /// - Zugriffsprobleme melden sich als Fehler; lokale Daten bleiben immer unangetastet.
 @MainActor
 public final class FileSyncService: ObservableObject {
-    public static let defaultFileName = "PlanApp-Sync.txt"
-    public static let maximumSafetyBackups = 3
+    // Diese Konstanten sind bewusst `nonisolated`: Sie werden auch aus
+    // nicht-isolierten Zusammenhängen gelesen (Standardwerte im Decoder von
+    // `FileSyncConfiguration` und der Speicher-Service). Ohne das wären sie
+    // im Swift-6-Sprachmodus von Swift Playgrounds nicht erreichbar.
+    nonisolated public static let defaultFileName = "PlanApp-Sync.txt"
+    nonisolated public static let maximumSafetyBackups = 3
     /// Wartezeit nach der letzten lokalen Änderung, bevor geschrieben wird.
-    public static let pushDebounceInterval: TimeInterval = 2.5
+    nonisolated public static let pushDebounceInterval: TimeInterval = 2.5
     /// Wie oft die Datei auf fremde Änderungen geprüft wird.
-    public static let pullInterval: TimeInterval = 15
+    nonisolated public static let pullInterval: TimeInterval = 15
     /// Grabsteine älter als 30 Tage werden entsorgt.
-    private static let tombstoneLifetime: TimeInterval = 30 * 24 * 3600
+    nonisolated private static let tombstoneLifetime: TimeInterval = 30 * 24 * 3600
 
     @Published public private(set) var configuration = FileSyncConfiguration()
     /// Kurze Erfolgs-/Statusmeldung für die Einstellungen.
@@ -305,7 +309,7 @@ public final class FileSyncService: ObservableObject {
         guard Self.isICloudDriveURL(folderURL) else {
             return .failed(message: "Bitte wähle einen Ordner in iCloud Drive (z. B. unter „iCloud Drive“ in der Dateien-App), damit alle Geräte dieselbe Datei sehen.")
         }
-        guard let local = makeLocalBackup() else {
+        guard let local = makeLocalBackup?() else {
             return .failed(message: "Die lokalen Daten konnten nicht gelesen werden.")
         }
         isWorking = true
@@ -315,11 +319,7 @@ public final class FileSyncService: ObservableObject {
         defer { if accessing { folderURL.stopAccessingSecurityScopedResource() } }
 
         do {
-            guard let bookmark = try? folderURL.bookmarkData(
-                options: .withSecurityScope,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            ) else {
+            guard let bookmark = try? folderURL.bookmarkData() else {
                 return .failed(message: "Auf diesen Ordner konnte kein dauerhafter Zugriff gespeichert werden. Bitte wähle ihn erneut.")
             }
 
@@ -355,7 +355,7 @@ public final class FileSyncService: ObservableObject {
         guard Self.isICloudDriveURL(fileURL) else {
             return .failed(message: "Bitte wähle eine Textdatei in iCloud Drive (z. B. unter „iCloud Drive“ in der Dateien-App), damit alle Geräte dieselbe Datei sehen.")
         }
-        guard let local = makeLocalBackup() else {
+        guard let local = makeLocalBackup?() else {
             return .failed(message: "Die lokalen Daten konnten nicht gelesen werden.")
         }
         isWorking = true
@@ -365,11 +365,7 @@ public final class FileSyncService: ObservableObject {
         defer { if accessing { fileURL.stopAccessingSecurityScopedResource() } }
 
         do {
-            guard let bookmark = try? fileURL.bookmarkData(
-                options: .withSecurityScope,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            ) else {
+            guard let bookmark = try? fileURL.bookmarkData() else {
                 return .failed(message: "Auf diese Datei konnte kein dauerhafter Zugriff gespeichert werden. Bitte wähle sie erneut.")
             }
 
@@ -467,7 +463,7 @@ public final class FileSyncService: ObservableObject {
     public func pushNow() async {
         guard configuration.isEnabled, !isWorking else { return }
         guard hasUnpushedLocalChanges else { return }
-        guard let local = makeLocalBackup() else { return }
+        guard let local = makeLocalBackup?() else { return }
 
         let hash = FileSyncMerge.semanticHash(local)
         if hash == configuration.lastSyncedHash {
@@ -502,7 +498,7 @@ public final class FileSyncService: ObservableObject {
     /// aufgerufen.
     public func pullNow() async {
         guard configuration.isEnabled, !isWorking else { return }
-        guard let local = makeLocalBackup() else { return }
+        guard let local = makeLocalBackup?() else { return }
 
         isWorking = true
         defer { isWorking = false }
@@ -651,7 +647,7 @@ public final class FileSyncService: ObservableObject {
         }
         // Vor dem Wiederherstellen den aktuellen Stand sichern – auch das
         // Zurückholen darf nichts vernichten.
-        if let local = makeLocalBackup() {
+        if let local = makeLocalBackup?() {
             storeSafetyBackup(for: local)
         }
         applyBackup?(decoded)
@@ -686,9 +682,10 @@ public final class FileSyncService: ObservableObject {
             throw FileSyncAccessError.noBookmark
         }
         var isStale = false
+        // iOS liefert den Sicherheits-Zugriff bereits über das Bookmark selbst;
+        // die Option `.withSecurityScope` ist nur auf dem Mac verfügbar.
         guard let url = try? URL(
             resolvingBookmarkData: bookmark,
-            options: .withSecurityScope,
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         ) else {
@@ -698,11 +695,7 @@ public final class FileSyncService: ObservableObject {
             // Abgelaufenes Bookmark auffrischen, damit der Zugriff erhalten bleibt.
             let accessing = url.startAccessingSecurityScopedResource()
             defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-            if let fresh = try? url.bookmarkData(
-                options: .withSecurityScope,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            ) {
+            if let fresh = try? url.bookmarkData() {
                 configuration.locationBookmark = fresh
                 saveConfiguration()
             }
@@ -810,7 +803,7 @@ public final class FileSyncService: ObservableObject {
     private func resolveVersionConflictsIfNeeded(at url: URL) {
         guard let conflicts = try? NSFileVersion.unresolvedConflictVersionsOfItem(at: url),
               !conflicts.isEmpty,
-              let local = makeLocalBackup() else {
+              let local = makeLocalBackup?() else {
             return
         }
         var merged = local
@@ -844,7 +837,10 @@ public final class FileSyncService: ObservableObject {
         saveConfiguration()
     }
 
-    private func performIO<T>(_ work: @escaping () throws -> T) async throws -> T {
+    /// Führt Datei-Arbeit nebenläufig aus. Die Abschluss-Bedingungen
+    /// (`Sendable`) sind nötig, weil `Task.detached` eine `@Sendable`-Closure
+    /// verlangt – ohne sie würde der Swift-6-Sprachmodus den Aufruf ablehnen.
+    private func performIO<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
         try await Task.detached(priority: .userInitiated) {
             try work()
         }.value

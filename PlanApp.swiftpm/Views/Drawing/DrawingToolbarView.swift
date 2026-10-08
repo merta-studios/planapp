@@ -56,6 +56,8 @@ public struct DrawingToolbarView: View {
     public let canPasteNote: Bool
     public let onCopyNote: () -> Void
     public let onPasteNote: () -> Void
+    /// „Bild hinzufügen“ (Datei / Fotos / Kamera) aus dem Mehr-Optionen-Menü.
+    public let onAddImage: (NoteImageSource) -> Void
 
     @State private var showThicknessSlider = false
     @State private var showBackgroundScalePanel = false
@@ -222,6 +224,7 @@ public struct DrawingToolbarView: View {
         self.canPasteNote = canPasteNote
         self.onCopyNote = onCopyNote
         self.onPasteNote = onPasteNote
+        self.onAddImage = onAddImage
     }
 
     public var body: some View {

@@ -43,7 +43,8 @@ public struct LessonNote: Identifiable, Codable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, drawingData, croppedImageData, lineCount, textBoxes, backgroundStyle, backgroundScale, tagID, updatedAt
+        case id, drawingData, croppedImageData, lineCount, textBoxes, imageBoxes
+        case backgroundStyle, backgroundScale, tagID, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -71,6 +72,7 @@ public struct LessonNote: Identifiable, Codable, Equatable {
         try container.encodeIfPresent(croppedImageData, forKey: .croppedImageData)
         try container.encode(lineCount, forKey: .lineCount)
         try container.encode(textBoxes, forKey: .textBoxes)
+        try container.encode(imageBoxes, forKey: .imageBoxes)
         try container.encode(backgroundStyle, forKey: .backgroundStyle)
         try container.encode(backgroundScale, forKey: .backgroundScale)
         try container.encodeIfPresent(tagID, forKey: .tagID)
