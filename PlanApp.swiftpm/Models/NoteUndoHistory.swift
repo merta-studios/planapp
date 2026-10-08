@@ -5,10 +5,26 @@ import PencilKit
 public struct NoteHistorySnapshot: Codable, Equatable {
     public var drawingData: Data
     public var textBoxes: [NoteTextBox]
+    /// Bilder der Notiz. Ältere Sitzungen kennen sie noch nicht – beim
+    /// Laden fallen sie dann einfach auf „keine Bilder“ zurück, statt die
+    /// Sitzung zu verwerfen.
+    public var images: [NoteImageBox]
 
-    public init(drawingData: Data, textBoxes: [NoteTextBox]) {
+    public init(drawingData: Data, textBoxes: [NoteTextBox], images: [NoteImageBox] = []) {
         self.drawingData = drawingData
         self.textBoxes = textBoxes
+        self.images = images
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case drawingData, textBoxes, images
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        drawingData = try container.decodeIfPresent(Data.self, forKey: .drawingData) ?? Data()
+        textBoxes = try container.decodeIfPresent([NoteTextBox].self, forKey: .textBoxes) ?? []
+        images = try container.decodeIfPresent([NoteImageBox].self, forKey: .images) ?? []
     }
 
     /// Die gespeicherte Zeichnung – `nil`, wenn kein gültiger Stand vorliegt.
@@ -60,7 +76,7 @@ extension NoteUndoSessionPolicy {
     }
 }
 
-/// In-Memory-Undo/Redo für eine geöffnete Notiz (Zeichnung + Textfelder).
+/// In-Memory-Undo/Redo für eine geöffnete Notiz (Zeichnung + Textfelder + Bilder).
 public final class NoteEditingHistory {
     public private(set) var undoStack: [NoteHistorySnapshot] = []
     public private(set) var redoStack: [NoteHistorySnapshot] = []

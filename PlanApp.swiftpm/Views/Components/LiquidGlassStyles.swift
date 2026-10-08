@@ -6,13 +6,15 @@ public struct LiquidGlassCardModifier: ViewModifier {
     public var strokeOpacity: Double = 0.25
 
     public func body(content: Content) -> some View {
+        // Auf dem iPhone automatisch kleinere Rundung (siehe DeviceLayout).
+        let radius = DeviceLayout.cardCornerRadius(cornerRadius)
         content
             .background(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .fill(.ultraThinMaterial)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(
                         LinearGradient(
                             colors: [
@@ -100,13 +102,14 @@ public struct LightCardModifier: ViewModifier {
     public var strokeOpacity: Double = 0.12
 
     public func body(content: Content) -> some View {
+        let radius = DeviceLayout.cardCornerRadius(cornerRadius)
         content
             .background(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .fill(Color(UIColor.secondarySystemBackground))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(Color.primary.opacity(strokeOpacity), lineWidth: 1)
             )
     }
@@ -119,9 +122,10 @@ public struct LightButtonModifier: ViewModifier {
     public var isFilled: Bool = false
 
     public func body(content: Content) -> some View {
+        let radius = DeviceLayout.buttonCornerRadius(cornerRadius)
         content
             .background(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .fill(
                         isFilled
                             ? (tintColor ?? .blue)
@@ -129,7 +133,7 @@ public struct LightButtonModifier: ViewModifier {
                     )
             )
             .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(
                         (tintColor ?? Color.primary).opacity(isFilled ? 0 : 0.18),
                         lineWidth: 1

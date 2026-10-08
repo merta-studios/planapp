@@ -77,7 +77,7 @@ public struct LessonBlockView: View {
         ZStack(alignment: .topLeading) {
             // The active card turns grey before matched geometry grows and moves
             // it into the center of the drawing overlay.
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: isCompact ? 8 : 12, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: cardColors,
@@ -88,7 +88,7 @@ public struct LessonBlockView: View {
                     )
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: isCompact ? 8 : 12, style: .continuous)
                         .strokeBorder(
                             lesson.isCancelled
                                 ? Color.red.opacity(0.6)
@@ -220,7 +220,7 @@ public struct LessonBlockView: View {
         // damit die Stunden mit Notizen sofort ins Auge springen.
         .overlay {
             if dimmedForNotesHighlight {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: isCompact ? 8 : 12, style: .continuous)
                     .fill(Color(UIColor.systemBackground).opacity(0.78))
                     .allowsHitTesting(false)
             }
@@ -274,7 +274,7 @@ public struct LessonBlockView: View {
                     }
             }
         )
-        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: isCompact ? 8 : 12, style: .continuous))
         .hoverEffect(.lift)
         .onHover { hovering in
             isHovered = hovering

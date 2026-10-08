@@ -6,6 +6,15 @@ enum DrawingOverlaySpace {
     static let name = "planapp.drawingOverlay"
 }
 
+/// Gerade offene Bild-Quelle beim Einfügen („Bild hinzufügen“).
+private enum NoteImagePickerKind: Identifiable {
+    case file
+    case photos
+    case camera
+
+    var id: Self { self }
+}
+
 /// Anker der Tag-Pille. Der Anker liefert den Rahmen der Pille **immer
 /// aktuell** in der Koordinatenwelt des Notiz-Overlays – auch wenn die Notiz
 /// verschoben, skaliert oder in der Größe verändert wurde. Früher wurde der
@@ -134,8 +143,9 @@ private struct DrawingViewport {
 }
 
 /// Full-screen editor which expands the selected lesson card into a centered,
-/// grey note. Drawing is Apple-Pencil-only; two fingers move the note, the round handle
-/// below resizes it. Zooming is intentionally not supported.
+/// grey note. Two fingers move the note and pinch to zoom at the same time
+/// (the drawing area grows; the header on top keeps its size), the round
+/// handle below resizes it.
 public struct LessonDrawingOverlayView: View {
     @EnvironmentObject private var viewModel: TimetableViewModel
     @Environment(\.colorScheme) private var colorScheme
@@ -226,8 +236,16 @@ public struct LessonDrawingOverlayView: View {
 
     // Live transform state. Updates come incrementally from the UIKit canvas so
     // there is no jump when the fingers are released.
+    /// Grund-Skalierung, mit der die Notiz auf den Bildschirm passt (≤ 1).
     @State private var scale: CGFloat = 1
+    /// Zwei-Finger-Zoom der Zeichenfläche (1 = aktuelle Größe = Minimum).
+    /// Nur die Zeichenfläche wächst – die Kopfzeile oben behält ihre Größe.
+    @State private var zoomScale: CGFloat = 1
     @State private var offset: CGSize = .zero
+    /// Letzter gemeldeter Wert der Kopfzeilen-Pinch-Geste (inkrementell).
+    @State private var headerMagnificationLast: CGFloat? = nil
+    /// Letzter gemeldeter Wert der Text-/Bild-Ebenen-Pinch-Geste.
+    @State private var layerMagnificationLast: CGFloat? = nil
 
     // Hero (zoom-in / zoom-out) transition state. The note visibly grows out
     // of the tapped lesson card and shrinks back into it on close, instead of
@@ -553,11 +571,14 @@ public struct LessonDrawingOverlayView: View {
                 }
             }
             .onChange(of: isTextToolActive) { _, nowActive in
-                if !nowActive {
+                if !nowActive, !fingerManipulationEnabled {
                     // Werkzeugwechsel: Auswahl und Bearbeitung beenden; leere
-                    // Felder verschwinden dabei sofort.
+                    // Felder verschwinden dabei sofort. Ist „Apple Pencil“
+                    // an, bleibt die Auswahl bestehen – der Finger fasst Text
+                    // und Bilder weiterhin an, egal welches Werkzeug gilt.
                     selectedTextBoxID = nil
                     editingTextBoxID = nil
+                    selectedImageID = nil
                     textBoxes = textBoxes.filter {
                         !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     }
@@ -580,6 +601,36 @@ public struct LessonDrawingOverlayView: View {
             }
             .sheet(item: $shareImageItem) { item in
                 ShareSheet(activityItems: [item.image])
+            }
+            .sheet(item: $activeImagePicker) { kind in
+                Group {
+                    switch kind {
+                    case .file:
+                        NoteImageFilePicker(
+                            onPick: { insertImage($0) },
+                            onCancel: { activeImagePicker = nil }
+                        )
+                    case .photos:
+                        NoteImagePhotoPicker(
+                            onPick: { insertImage($0) },
+                            onCancel: { activeImagePicker = nil }
+                        )
+                    case .camera:
+                        NoteImageCameraPicker(
+                            onPick: { insertImage($0) },
+                            onCancel: { activeImagePicker = nil }
+                        )
+                    }
+                }
+            }
+            .sheet(item: $cropTarget) { box in
+                if let uiImage = box.uiImage {
+                    NoteImageCropView(
+                        image: uiImage,
+                        onApply: { applyCroppedImage($0, for: box.id) },
+                        onCancel: { cropTarget = nil }
+                    )
+                }
             }
             .alert("Handschrift umwandeln", isPresented: Binding(
                 get: { recognitionAlertMessage != nil },
@@ -613,6 +664,11 @@ public struct LessonDrawingOverlayView: View {
 
     // MARK: - Editor panel
 
+    /// Die Karte besteht aus zwei Teilen: der **fixen** Kopfzeile oben
+    /// (Höhe und Schriftgrößen ändern sich nie) und der **zoombaren**
+    /// Zeichenfläche darunter (Hintergrund, Stift-Canvas, Textfelder und
+    /// Bilder). Nur die Zeichenfläche wächst beim Zwei-Finger-Zoom – plus
+    /// die Länge der gesamten Karte.
     private func editorPanel(
         display: SubjectDisplay,
         viewport: DrawingViewport
@@ -636,141 +692,202 @@ public struct LessonDrawingOverlayView: View {
                     )
                     .shadow(color: Color.black.opacity(0.24), radius: 20, x: 0, y: 10)
 
-                // A lightly separated writing surface keeps all Pencil colors
-                // readable while the selected lesson itself visibly turns grey.
-                DrawingCanvasBackgroundView(style: noteBackgroundStyle, scale: noteBackgroundScale)
-                    .frame(
-                        width: paperWidth - 16,
-                        height: max(180, canvasHeight - headerHeight - 8)
-                    )
-                    .offset(x: 8, y: headerHeight)
-                    .opacity(showsEditor ? 1 : 0)
-
-                PencilKitCanvasRepresentable(
-                    drawing: $drawing,
-                    toolSelection: toolSelection,
-                    penWidth: penWidth,
-                    markerWidth: markerWidth,
-                    eraserWidth: eraserWidth,
-                    colorScheme: colorScheme,
-                    // iPhone: Es wird mit dem Finger radiert/ausgewählt – die
-                    // Pencil-Beschränkung ist dort nie aktiv.
-                    pencilOnlyDrawing: isPhoneLayout ? false : viewModel.drawingSettings.applePencilOnly,
-                    dynamicPenWidth: viewModel.drawingSettings.dynamicPenWidth,
-                    onCanvasCreated: { createdCanvas in
-                        canvasView = createdCanvas
-                    },
-                    onFingerPan: { delta in
-                        applyFingerPan(delta, in: viewport)
-                    },
-                    onDrawingChange: { previous, current in
-                        recordDrawingChange(from: previous, to: current)
-                    },
-                    onRequestUndo: {
-                        performPencilGesture(viewModel.drawingSettings.doubleTapAction)
-                    },
-                    onPencilInputDetected: {
-                        // Sobald echter Pencil-Input ankommt, wird die allgemeine
-                        // Bezeichnung gemerkt und „Nur Apple Pencil“ aktiviert.
-                        // (Auf dem iPhone gibt es keinen Apple Pencil.)
-                        guard !isPhoneLayout else { return }
-                        viewModel.registerObservedApplePencilInput()
-                    },
-                    onPencilSqueeze: { anchor, direction in
-                        viewModel.registerApplePencilSqueeze()
-                        performPencilGesture(
-                            viewModel.drawingSettings.squeezeAction,
-                            paletteAnchor: anchor,
-                            paletteDirection: direction
-                        )
-                    },
-                    onCanvasActivity: {
-                        drawingInputActivity.record()
-                    },
-                    onCanvasGestureBegan: {
-                        // Sobald wieder geschrieben wird, verschwindet die
-                        // Palette – wie bei Apples eigener Kontext-Palette.
-                        if isSqueezePaletteVisible {
-                            dismissSqueezePalette()
-                        }
-                    },
-                    onCanvasGestureEnded: {
-                        handleCanvasGestureEnded()
-                    },
-                    onCommitDrawingSteps: { steps in
-                        commitDrawingSteps(steps)
-                    },
-                    onPendingDrawingChange: { pending in
-                        hasPendingCanvasChange = pending
-                    }
-                )
-                .frame(
-                    width: paperWidth,
-                    height: max(180, canvasHeight - headerHeight)
-                )
-                .offset(y: headerHeight)
-                .opacity(showsEditor ? 1 : 0)
-                .allowsHitTesting(showsEditor && !isTextToolActive)
-
-                // Frei bewegliche Textfelder über der Zeichenfläche.
-                NoteTextBoxesLayer(
-                    textBoxes: $textBoxes,
-                    selectedID: $selectedTextBoxID,
-                    editingID: $editingTextBoxID,
-                    isTextToolActive: isTextToolActive,
-                    areaSize: CGSize(
-                        width: paperWidth,
-                        height: max(180, canvasHeight - headerHeight)
-                    ),
-                    registerUndo: { before, after in
-                        recordTextChange(from: before, to: after)
-                    },
-                    newTextColorHex: preferredTextColorHex,
-                    newTextFontSize: viewModel.drawingSettings.defaultTextFontSize,
-                    textFontStyle: viewModel.drawingSettings.textFontStyle
-                )
-                .frame(
-                    width: paperWidth,
-                    height: max(180, canvasHeight - headerHeight),
-                    alignment: .topLeading
-                )
-                .offset(y: headerHeight)
-                .opacity(showsEditor ? 1 : 0)
-                .allowsHitTesting(showsEditor && (isTextToolActive || selectedTextBoxID != nil || editingTextBoxID != nil))
-
                 noteHeader(
                     display: display,
                     viewport: viewport
                 )
+
+                canvasBlock(viewport: viewport)
+                    .offset(y: headerHeight)
             }
-            .frame(width: paperWidth, height: canvasHeight)
+            .frame(width: scaledPaperWidth, height: cardHeight)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
             resizeHandle(viewport: viewport)
                 .opacity(showsEditor ? 1 : 0)
                 .allowsHitTesting(showsEditor)
         }
-        .frame(width: paperWidth, height: panelHeight, alignment: .top)
+        .frame(width: scaledPaperWidth, height: panelHeight, alignment: .top)
         .scaleEffect(
-            x: renderScale(in: viewport).width,
-            y: renderScale(in: viewport).height,
+            x: heroScale(in: viewport).width,
+            y: heroScale(in: viewport).height,
             anchor: .center
         )
         .position(renderCenter(in: viewport))
     }
 
-    /// Non-uniform scale used while the note morphs from the small lesson
-    /// card into its expanded, centered shape (and back on close). Once the
-    /// hero transition has settled this simply equals the fixed fitting scale.
-    private func renderScale(in viewport: DrawingViewport) -> CGSize {
-        let target = CGSize(width: scale, height: scale)
-        guard heroBlend < 0.999, isPlausibleHeroFrame(heroSourceFrame), panelHeight > 0 else {
-            return target
+    /// Die zoombare Zeichenfläche: Hintergrund, Stift-Canvas sowie Text- und
+    /// Bild-Ebene liegen in unskalierten Koordinaten vor und werden als
+    /// Block skaliert. Dadurch wachsen Striche, Text und Bilder gemeinsam,
+    /// während die Kopfzeile oben ihre Größe behält.
+    private func canvasBlock(viewport: DrawingViewport) -> some View {
+        ZStack(alignment: .topLeading) {
+            // A lightly separated writing surface keeps all Pencil colors
+            // readable while the selected lesson itself visibly turns grey.
+            DrawingCanvasBackgroundView(style: noteBackgroundStyle, scale: noteBackgroundScale)
+                .frame(
+                    width: paperWidth - 16,
+                    height: max(180, canvasContentHeight - 8)
+                )
+                .offset(x: 8, y: 0)
+                .opacity(showsEditor ? 1 : 0)
+
+            PencilKitCanvasRepresentable(
+                drawing: $drawing,
+                toolSelection: toolSelection,
+                penWidth: penWidth,
+                markerWidth: markerWidth,
+                eraserWidth: eraserWidth,
+                colorScheme: colorScheme,
+                // iPhone: Es wird mit dem Finger radiert/ausgewählt – die
+                // Pencil-Beschränkung ist dort nie aktiv.
+                pencilOnlyDrawing: isPhoneLayout ? false : viewModel.drawingSettings.applePencilOnly,
+                dynamicPenWidth: viewModel.drawingSettings.dynamicPenWidth,
+                onCanvasCreated: { createdCanvas in
+                    canvasView = createdCanvas
+                },
+                onFingerPan: { delta in
+                    applyFingerPan(delta, in: viewport)
+                },
+                onPinch: { factor, windowAnchor in
+                    applyCanvasPinch(factor: factor, windowAnchor: windowAnchor, in: viewport)
+                },
+                onDrawingChange: { previous, current in
+                    recordDrawingChange(from: previous, to: current)
+                },
+                onRequestUndo: {
+                    performPencilGesture(viewModel.drawingSettings.doubleTapAction)
+                },
+                onPencilInputDetected: {
+                    // Sobald echter Pencil-Input ankommt, wird die allgemeine
+                    // Bezeichnung gemerkt und „Nur Apple Pencil“ aktiviert.
+                    // (Auf dem iPhone gibt es keinen Apple Pencil.)
+                    guard !isPhoneLayout else { return }
+                    viewModel.registerObservedApplePencilInput()
+                },
+                onPencilSqueeze: { anchor, direction in
+                    viewModel.registerApplePencilSqueeze()
+                    performPencilGesture(
+                        viewModel.drawingSettings.squeezeAction,
+                        paletteAnchor: anchor,
+                        paletteDirection: direction
+                    )
+                },
+                onCanvasActivity: {
+                    drawingInputActivity.record()
+                },
+                onCanvasGestureBegan: {
+                    // Sobald wieder geschrieben wird, verschwindet die
+                    // Palette – wie bei Apples eigener Kontext-Palette.
+                    if isSqueezePaletteVisible {
+                        dismissSqueezePalette()
+                    }
+                },
+                onCanvasGestureEnded: {
+                    handleCanvasGestureEnded()
+                },
+                onCommitDrawingSteps: { steps in
+                    commitDrawingSteps(steps)
+                },
+                onPendingDrawingChange: { pending in
+                    hasPendingCanvasChange = pending
+                }
+            )
+            .frame(
+                width: paperWidth,
+                height: canvasContentHeight
+            )
+            .opacity(showsEditor ? 1 : 0)
+            .allowsHitTesting(showsEditor && !isTextToolActive)
+
+            // Frei bewegliche Textfelder und Bilder über der Zeichenfläche.
+            // Ist „Apple Pencil“ an, fasst der Finger sie über eine eigene
+            // Hülle an (egal welches Werkzeug gewählt ist); der Stift fällt
+            // durch die Hülle und zeichnet unbehelligt weiter.
+            Group {
+                if fingerManipulationEnabled {
+                    FingerOnlyContent(content: manipulableLayer)
+                } else {
+                    manipulableLayer
+                }
+            }
+            .frame(
+                width: paperWidth,
+                height: canvasContentHeight,
+                alignment: .topLeading
+            )
+            .opacity(showsEditor ? 1 : 0)
+            .allowsHitTesting(manipulableLayerHitTesting)
+            .simultaneousGesture(layerMagnificationGesture(in: viewport))
         }
-        let sourceScaleX = heroSourceFrame.width / paperWidth
+        .frame(width: paperWidth, height: canvasContentHeight, alignment: .topLeading)
+        .scaleEffect(canvasScale, anchor: .topLeading)
+        .frame(width: scaledPaperWidth, height: scaledCanvasHeight, alignment: .topLeading)
+    }
+
+    /// Text- und Bild-Ebene in unskalierten Zeichenflächen-Koordinaten.
+    private var manipulableLayer: some View {
+        ZStack(alignment: .topLeading) {
+            NoteTextBoxesLayer(
+                textBoxes: $textBoxes,
+                selectedID: $selectedTextBoxID,
+                editingID: $editingTextBoxID,
+                isTextToolActive: isTextToolActive,
+                areaSize: CGSize(
+                    width: paperWidth,
+                    height: canvasContentHeight
+                ),
+                registerUndo: { before, after in
+                    recordTextChange(from: before, to: after)
+                },
+                newTextColorHex: preferredTextColorHex,
+                newTextFontSize: viewModel.drawingSettings.defaultTextFontSize,
+                textFontStyle: viewModel.drawingSettings.textFontStyle
+            )
+
+            NoteImagesLayer(
+                images: $imageBoxes,
+                selectedID: $selectedImageID,
+                isManipulationActive: isTextToolActive || fingerManipulationEnabled,
+                areaSize: CGSize(
+                    width: paperWidth,
+                    height: canvasContentHeight
+                ),
+                registerUndo: { before, after in
+                    recordImageChange(from: before, to: after)
+                },
+                onCrop: { id in
+                    if let box = imageBoxes.first(where: { $0.id == id }) {
+                        cropTarget = box
+                    }
+                }
+            )
+        }
+    }
+
+    private var manipulableLayerHitTesting: Bool {
+        showsEditor && (
+            fingerManipulationEnabled
+                || isTextToolActive
+                || selectedTextBoxID != nil
+                || editingTextBoxID != nil
+                || selectedImageID != nil
+        )
+    }
+
+    /// Non-uniform scale used only while the note morphs from the small
+    /// lesson card into its expanded, centered shape (and back on close).
+    /// Once the hero transition has settled this is exactly 1 – the note's
+    /// own size comes from the zoom layout (`canvasScale`), never from here.
+    private func heroScale(in viewport: DrawingViewport) -> CGSize {
+        guard heroBlend < 0.999, isPlausibleHeroFrame(heroSourceFrame),
+              panelHeight > 0, scaledPaperWidth > 0 else {
+            return CGSize(width: 1, height: 1)
+        }
+        let sourceScaleX = heroSourceFrame.width / scaledPaperWidth
         let sourceScaleY = heroSourceFrame.height / panelHeight
-        let x = sourceScaleX + (target.width - sourceScaleX) * heroBlend
-        let y = sourceScaleY + (target.height - sourceScaleY) * heroBlend
+        let x = sourceScaleX + (1 - sourceScaleX) * heroBlend
+        let y = sourceScaleY + (1 - sourceScaleY) * heroBlend
         return CGSize(width: max(0.01, x), height: max(0.01, y))
     }
 
@@ -804,6 +921,7 @@ public struct LessonDrawingOverlayView: View {
             // weißer Text im Dark Mode, schwarzer im Light Mode. Während der
             // Karten-Animation bleibt der Text auf der Fach-Farbe schwarz.
             primaryColor: isExpanded ? .primary : display.color.contrastingTextColor,
+            isCompact: isPhoneLayout,
             teacherDisplayName: viewModel.resolveTeacherName(lesson.teacherRaw),
             originalTeacherDisplayName: lesson.originalTeacher.map { viewModel.resolveTeacherName($0) },
             accessory: {
@@ -812,8 +930,8 @@ public struct LessonDrawingOverlayView: View {
                 }
             }
         )
-        .padding(.horizontal, 20)
-        .frame(width: paperWidth, height: headerHeight)
+        .padding(.horizontal, isPhoneLayout ? 12 : 20)
+        .frame(width: scaledPaperWidth, height: headerHeight)
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 1, coordinateSpace: .global)
@@ -827,13 +945,16 @@ public struct LessonDrawingOverlayView: View {
                         width: headerDragStartOffset.width + value.translation.width,
                         height: headerDragStartOffset.height + value.translation.height
                     )
-                    offset = clampedOffset(candidate, scale: scale, height: canvasHeight, in: viewport)
+                    offset = clampedOffset(candidate, in: viewport)
                 }
                 .onEnded { _ in
                     isMovingFromHeader = false
                     headerDragStartOffset = offset
                 }
         )
+        // Die Leiste oben lässt sich mit zwei Fingern auf- und zuziehen:
+        // zoomen und verschieben gleichzeitig.
+        .simultaneousGesture(headerMagnificationGesture(in: viewport))
     }
 
     private func resizeHandle(viewport: DrawingViewport) -> some View {
@@ -859,15 +980,16 @@ public struct LessonDrawingOverlayView: View {
                         if !isResizing {
                             isResizing = true
                             resizeStartHeight = canvasHeight
-                            resizeTopY = viewport.screenCenter.y
-                                + offset.height
-                                - (panelHeight * scale / 2)
+                            // Die Oberkante bleibt in Bildschirm-Koordinaten
+                            // stehen; nur die Unterkante wandert.
+                            resizeTopY = renderCenter(in: viewport).y - (panelHeight / 2)
                         }
 
-                        let requestedHeight = resizeStartHeight + (value.translation.height / max(scale, 0.01))
+                        let requestedHeight = resizeStartHeight + (value.translation.height / max(canvasScale, 0.01))
                         let maximumHeightAtCurrentTop = (
-                            (viewport.bounds.maxY - resizeTopY) / max(scale, 0.01)
-                        ) - handleExtent
+                            (viewport.bounds.maxY - resizeTopY - headerHeight - handleExtent)
+                                / max(canvasScale, 0.01)
+                        ) + headerHeight
                         let upperLimit = max(
                             canvasHeight,
                             min(maximumCanvasHeight, maximumHeightAtCurrentTop)
@@ -878,17 +1000,15 @@ public struct LessonDrawingOverlayView: View {
                         )
 
                         canvasHeight = newHeight
+                        // Nach dem Wachsen passt evtl. weniger Zoom auf den
+                        // Bildschirm – der Zoom wird dann eingeklemmt.
+                        zoomScale = min(zoomScale, maximumZoomScale(for: newHeight, in: viewport))
 
                         var candidate = offset
                         candidate.height = resizeTopY
-                            + (panelHeight(for: newHeight) * scale / 2)
+                            + (panelHeight / 2)
                             - viewport.screenCenter.y
-                        offset = clampedOffset(
-                            candidate,
-                            scale: scale,
-                            height: newHeight,
-                            in: viewport
-                        )
+                        offset = clampedOffset(candidate, in: viewport)
                     }
                     .onEnded { _ in
                         isResizing = false
@@ -963,45 +1083,82 @@ public struct LessonDrawingOverlayView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    // MARK: - Live pan and constraints
+    // MARK: - Live pan, zoom and constraints
 
     private var handleExtent: CGFloat {
         handleSpacing + handleSize
     }
 
+    /// Höhe der Zeichenfläche in unskalierten Punkten (ohne Kopfzeile).
+    private func contentHeight(for height: CGFloat) -> CGFloat {
+        max(180, height - headerHeight)
+    }
+
+    private var canvasContentHeight: CGFloat {
+        contentHeight(for: canvasHeight)
+    }
+
+    /// Wirksame Skalierung der Zeichenfläche: Anpassung mal Zoom.
+    private var canvasScale: CGFloat {
+        max(0.01, scale * zoomScale)
+    }
+
+    private var scaledPaperWidth: CGFloat {
+        paperWidth * canvasScale
+    }
+
+    private var scaledCanvasHeight: CGFloat {
+        canvasContentHeight * canvasScale
+    }
+
+    /// Höhe der Karte: fixe Kopfzeile plus skalierte Zeichenfläche.
+    private var cardHeight: CGFloat {
+        headerHeight + scaledCanvasHeight
+    }
+
     private var panelHeight: CGFloat {
-        panelHeight(for: canvasHeight)
+        cardHeight + handleExtent
     }
 
-    private func panelHeight(for height: CGFloat) -> CGFloat {
-        height + handleExtent
-    }
-
-    private func maximumScale(for height: CGFloat, in viewport: DrawingViewport) -> CGFloat {
+    /// Grund-Anpassung, mit der die Notiz auf den Bildschirm passt (≤ 1).
+    /// Die Kopfzeile ist darin fix eingerechnet – nur die Zeichenfläche
+    /// wird angepasst.
+    private func baseFitScale(for height: CGFloat, in viewport: DrawingViewport) -> CGFloat {
+        let content = contentHeight(for: height)
         let widthLimit = viewport.bounds.width / paperWidth
-        let heightLimit = viewport.bounds.height / panelHeight(for: height)
-        return max(0.2, min(3.0, min(widthLimit, heightLimit)))
+        let heightLimit = (viewport.bounds.height - headerHeight - handleExtent) / max(1, content)
+        return max(0.2, min(1, min(widthLimit, heightLimit)))
+    }
+
+    /// Größter Zoom, bei dem noch nichts aus dem Bildschirm geht.
+    /// Die aktuelle Größe (Zoom 1) ist das Minimum.
+    private func maximumZoomScale(for height: CGFloat, in viewport: DrawingViewport) -> CGFloat {
+        let content = contentHeight(for: height)
+        let widthLimit = viewport.bounds.width / paperWidth
+        let heightLimit = (viewport.bounds.height - headerHeight - handleExtent) / max(1, content)
+        let fitLimit = min(widthLimit, heightLimit)
+        guard fitLimit.isFinite, scale > 0 else { return 1 }
+        return max(1, min(4, fitLimit / scale))
     }
 
     private func initializeTransform(in viewport: DrawingViewport) {
-        scale = min(1, maximumScale(for: canvasHeight, in: viewport))
-        offset = clampedOffset(.zero, scale: scale, height: canvasHeight, in: viewport)
+        scale = baseFitScale(for: canvasHeight, in: viewport)
+        zoomScale = 1
+        offset = clampedOffset(.zero, in: viewport)
     }
 
     private func normalizeTransform(in viewport: DrawingViewport) {
-        let normalizedScale = min(1, maximumScale(for: canvasHeight, in: viewport))
-        scale = normalizedScale
-        offset = clampedOffset(offset, scale: normalizedScale, height: canvasHeight, in: viewport)
+        scale = baseFitScale(for: canvasHeight, in: viewport)
+        zoomScale = min(max(1, zoomScale), maximumZoomScale(for: canvasHeight, in: viewport))
+        offset = clampedOffset(offset, in: viewport)
     }
 
     private func clampedOffset(
         _ proposedOffset: CGSize,
-        scale: CGFloat,
-        height: CGFloat,
         in viewport: DrawingViewport
     ) -> CGSize {
-        let halfWidth = paperWidth * scale / 2
-        let halfHeight = panelHeight(for: height) * scale / 2
+        let halfWidth = scaledPaperWidth / 2
+        let halfHeight = panelHeight / 2
 
         let minCenterX = viewport.bounds.minX + halfWidth
         let maxCenterX = viewport.bounds.maxX - halfWidth
@@ -1026,7 +1183,89 @@ public struct LessonDrawingOverlayView: View {
             width: offset.width + delta.width,
             height: offset.height + delta.height
         )
-        offset = clampedOffset(candidate, scale: scale, height: canvasHeight, in: viewport)
+        offset = clampedOffset(candidate, in: viewport)
+    }
+
+    // MARK: - Zwei-Finger-Zoom
+
+    /// Zoomt die Zeichenfläche um den inkrementellen Faktor und hält dabei
+    /// den Inhalt unter `anchor` (Overlay-Koordinaten) stabil. Stößt die Lage
+    /// an den Rand, rutscht sie automatisch zur Mitte – der Zoom läuft
+    /// weiter, statt zu blockieren. Minimum ist die aktuelle Größe (1),
+    /// Maximum so groß, dass nichts aus dem Bildschirm geht.
+    private func applyPinchZoom(factor: CGFloat, anchor: CGPoint, in viewport: DrawingViewport) {
+        guard showsEditor, factor.isFinite, factor > 0, factor != 1 else { return }
+        guard anchor.x.isFinite, anchor.y.isFinite else { return }
+        let maxZoom = maximumZoomScale(for: canvasHeight, in: viewport)
+        let newZoom = min(max(1, zoomScale * factor), maxZoom)
+        guard newZoom != zoomScale else { return }
+
+        let oldEffective = canvasScale
+        let newEffective = max(0.01, scale * newZoom)
+        let center = renderCenter(in: viewport)
+        let ratio = newEffective / oldEffective
+        let newCenter = CGPoint(
+            x: anchor.x + (center.x - anchor.x) * ratio,
+            y: anchor.y + (center.y - anchor.y) * ratio
+        )
+
+        zoomScale = newZoom
+        offset = clampedOffset(
+            CGSize(
+                width: newCenter.x - viewport.screenCenter.x,
+                height: newCenter.y - viewport.screenCenter.y
+            ),
+            in: viewport
+        )
+    }
+
+    /// Pinch von der Zeichenfläche (UIKit): Der Anker kommt in
+    /// Fenster-Koordinaten und wird in Overlay-Koordinaten umgerechnet.
+    private func applyCanvasPinch(factor: CGFloat, windowAnchor: CGPoint, in viewport: DrawingViewport) {
+        applyPinchZoom(
+            factor: factor,
+            anchor: CGPoint(
+                x: windowAnchor.x - overlayWindowOrigin.x,
+                y: windowAnchor.y - overlayWindowOrigin.y
+            ),
+            in: viewport
+        )
+    }
+
+    /// Pinch auf der Kopfzeile: Die Leiste oben lässt sich mit zwei Fingern
+    /// auf- und zuziehen – gleichzeitig zum Verschieben per Ziehen.
+    /// Der Anker ist die Kartenmitte (ruhig und vorhersagbar).
+    private func headerMagnificationGesture(in viewport: DrawingViewport) -> some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                guard showsEditor, value.isFinite, value > 0 else { return }
+                let last = headerMagnificationLast ?? 1
+                headerMagnificationLast = value
+                let factor = value / max(0.01, last)
+                guard factor.isFinite, factor > 0, factor != 1 else { return }
+                applyPinchZoom(factor: factor, anchor: renderCenter(in: viewport), in: viewport)
+            }
+            .onEnded { _ in
+                headerMagnificationLast = nil
+            }
+    }
+
+    /// Pinch auf der Text-/Bild-Ebene (z. B. im Text-Modus, in dem der Canvas
+    /// selbst keine Gesten sieht). Läuft parallel zu den Zieh-Gesten der
+    /// Felder: zoomen und verschieben gleichzeitig.
+    private func layerMagnificationGesture(in viewport: DrawingViewport) -> some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                guard showsEditor, value.isFinite, value > 0 else { return }
+                let last = layerMagnificationLast ?? 1
+                layerMagnificationLast = value
+                let factor = value / max(0.01, last)
+                guard factor.isFinite, factor > 0, factor != 1 else { return }
+                applyPinchZoom(factor: factor, anchor: renderCenter(in: viewport), in: viewport)
+            }
+            .onEnded { _ in
+                layerMagnificationLast = nil
+            }
     }
 
     // MARK: - Textfeld über der Systemtastatur sichtbar halten
@@ -1068,16 +1307,16 @@ public struct LessonDrawingOverlayView: View {
         guard covered > 0 else { return }
 
         let keyboardTop = viewport.size.height - covered
-        let panelTop = renderCenter(in: viewport).y - (panelHeight * scale / 2)
-        let canvasTop = panelTop + headerHeight * scale
-        let boxBottom = canvasTop + (CGFloat(box.y) + estimatedTextBoxHeight(box, fontStyle: viewModel.drawingSettings.textFontStyle)) * scale
+        let panelTop = renderCenter(in: viewport).y - (panelHeight / 2)
+        let canvasTop = panelTop + headerHeight
+        let boxBottom = canvasTop + (CGFloat(box.y) + estimatedTextBoxHeight(box, fontStyle: viewModel.drawingSettings.textFontStyle)) * canvasScale
 
         let limit = keyboardTop - 16
         guard boxBottom > limit else { return }
 
         var candidate = offset
         candidate.height = offset.height - (boxBottom - limit)
-        offset = clampedOffset(candidate, scale: scale, height: canvasHeight, in: viewport)
+        offset = clampedOffset(candidate, in: viewport)
     }
 
     // MARK: - Rückgängig / Wiederholen (Zeichnung + Textfelder)
@@ -1090,11 +1329,13 @@ public struct LessonDrawingOverlayView: View {
         drawing = current
         let before = NoteHistorySnapshot(
             drawingData: previous.dataRepresentation(),
-            textBoxes: textBoxes
+            textBoxes: textBoxes,
+            images: imageBoxes
         )
         let after = NoteHistorySnapshot(
             drawingData: current.dataRepresentation(),
-            textBoxes: textBoxes
+            textBoxes: textBoxes,
+            images: imageBoxes
         )
         guard before != after else { return }
         editingHistory.record(before: before, after: after)
@@ -1161,11 +1402,15 @@ public struct LessonDrawingOverlayView: View {
             setCanvasDrawing(restoredDrawing)
         }
         textBoxes = snapshot.textBoxes
+        imageBoxes = snapshot.images
         if let sel = selectedTextBoxID, !snapshot.textBoxes.contains(where: { $0.id == sel }) {
             selectedTextBoxID = nil
         }
         if let edit = editingTextBoxID, !snapshot.textBoxes.contains(where: { $0.id == edit }) {
             editingTextBoxID = nil
+        }
+        if let sel = selectedImageID, !snapshot.images.contains(where: { $0.id == sel }) {
+            selectedImageID = nil
         }
     }
 
@@ -1211,6 +1456,8 @@ public struct LessonDrawingOverlayView: View {
         selectedTextBoxID = nil
         editingTextBoxID = nil
         textBoxes = []
+        selectedImageID = nil
+        imageBoxes = []
 
         let emptyDrawing = PKDrawing()
         drawing = emptyDrawing
@@ -1263,17 +1510,20 @@ public struct LessonDrawingOverlayView: View {
     private func shareNoteAsImage() {
         selectedTextBoxID = nil
         editingTextBoxID = nil
+        selectedImageID = nil
 
         let currentDrawing = canvasView?.drawing ?? drawing
         let canvasRect = CGRect(origin: .zero, size: recognitionCanvasSize)
         let visibleBoxes = textBoxes.filter {
             !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
+        let visibleImages = imageBoxes.filter { $0.uiImage != nil }
 
-        guard !currentDrawing.strokes.isEmpty || !visibleBoxes.isEmpty,
+        guard !currentDrawing.strokes.isEmpty || !visibleBoxes.isEmpty || !visibleImages.isEmpty,
               let image = PencilKitCanvasRepresentable.renderNotePreview(
                 drawing: currentDrawing.cropped(to: canvasRect),
                 textBoxes: visibleBoxes,
+                images: visibleImages,
                 backgroundStyle: noteBackgroundStyle,
                 backgroundScale: noteBackgroundScale,
                 clipRect: canvasRect,
@@ -1531,7 +1781,7 @@ public struct LessonDrawingOverlayView: View {
     private var recognitionCanvasSize: CGSize {
         CGSize(
             width: paperWidth,
-            height: max(180, canvasHeight - headerHeight)
+            height: canvasContentHeight
         )
     }
 
@@ -1652,12 +1902,19 @@ public struct LessonDrawingOverlayView: View {
         )
         // Alte oder hand-edited Speicherstände können doppelte IDs
         // enthalten. SwiftUI würde solche Elemente in einer ForEach als
-        // dasselbe View-Element behandeln und beim ersten Text-Tap instabil
-        // werden lassen. Beim Laden wird deshalb genau eine sichere Box je
+             // werden lassen. Beim Laden wird deshalb genau eine sichere Box je
         // UUID übernommen.
         var loadedIDs = Set<UUID>()
         textBoxes = note.textBoxes.compactMap { box in
             guard loadedIDs.insert(box.id).inserted else { return nil }
+            return box.sanitized(in: canvasSize)
+        }
+
+        // Bilder laden (doppelte IDs und unlesbare Daten fallen heraus,
+        // der Rest der Notiz bleibt in jedem Fall erhalten).
+        var loadedImageIDs = Set<UUID>()
+        imageBoxes = note.imageBoxes.compactMap { box in
+            guard loadedImageIDs.insert(box.id).inserted else { return nil }
             return box.sanitized(in: canvasSize)
         }
 
@@ -1716,9 +1973,14 @@ public struct LessonDrawingOverlayView: View {
             guard !box.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             return box.sanitized(in: canvasRect.size)
         }
+        let cleanedImageBoxes = imageBoxes.compactMap { box -> NoteImageBox? in
+            guard box.uiImage != nil else { return nil }
+            return box.sanitized(in: canvasRect.size)
+        }
         let croppedImage = PencilKitCanvasRepresentable.renderNotePreview(
             drawing: croppedDrawing,
             textBoxes: cleanedTextBoxes,
+            images: cleanedImageBoxes,
             backgroundStyle: noteBackgroundStyle,
             backgroundScale: noteBackgroundScale,
             clipRect: canvasRect,
@@ -1917,9 +2179,14 @@ public struct LessonDrawingOverlayView: View {
             guard !box.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             return box.sanitized(in: canvasRect.size)
         }
+        let cleanedImageBoxes = imageBoxes.compactMap { box -> NoteImageBox? in
+            guard box.uiImage != nil else { return nil }
+            return box.sanitized(in: canvasRect.size)
+        }
         let image = PencilKitCanvasRepresentable.renderNotePreview(
             drawing: croppedDrawing,
             textBoxes: cleanedTextBoxes,
+            images: cleanedImageBoxes,
             backgroundStyle: noteBackgroundStyle,
             backgroundScale: noteBackgroundScale,
             clipRect: canvasRect,
@@ -1931,6 +2198,7 @@ public struct LessonDrawingOverlayView: View {
             croppedImageData: image?.pngData(),
             lineCount: max(3, min(10, Int((canvasHeight - headerHeight) / 56))),
             textBoxes: cleanedTextBoxes,
+            imageBoxes: cleanedImageBoxes,
             backgroundStyle: noteBackgroundStyle,
             backgroundScale: noteBackgroundScale,
             tagID: noteTagID,
@@ -1941,12 +2209,14 @@ public struct LessonDrawingOverlayView: View {
     private var hasCopyableContent: Bool {
         let currentDrawing = canvasView?.drawing ?? drawing
         if !currentDrawing.strokes.isEmpty { return true }
+        if imageBoxes.contains(where: { $0.uiImage != nil }) { return true }
         return textBoxes.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
     private func copyCurrentNote() {
         selectedTextBoxID = nil
         editingTextBoxID = nil
+        selectedImageID = nil
         let snapshot = currentNoteSnapshot()
         guard snapshot.hasVisibleContent else {
             Haptics.warning()
@@ -1959,8 +2229,8 @@ public struct LessonDrawingOverlayView: View {
     }
 
     /// Ersetzt den kompletten Inhalt dieser Notiz durch die kopierte Notiz
-    /// (Zeichnung, Textfelder, Hintergrund, Mustergröße, Tag). Ein einziger
-    /// Rückgängig-Schritt stellt den vorherigen Zustand wieder her.
+    /// (Zeichnung, Textfelder, Bilder, Hintergrund, Mustergröße, Tag). Ein
+    /// einziger Rückgängig-Schritt stellt den vorherigen Zustand wieder her.
     private func pasteCopiedNote() {
         guard let copied = viewModel.copiedNote, copied.hasVisibleContent else {
             Haptics.warning()
@@ -1974,6 +2244,7 @@ public struct LessonDrawingOverlayView: View {
 
         selectedTextBoxID = nil
         editingTextBoxID = nil
+        selectedImageID = nil
 
         canvasHeight = max(
             minimumCanvasHeight,
@@ -2301,6 +2572,145 @@ public struct LessonDrawingOverlayView: View {
         // Die Drehung gehört zur Sitzung: Die nächste beginnt wieder bei 0°.
         undoScrubRotation.reset()
         withAnimation(.easeOut(duration: 0.16)) {
+            undoScrubSession = nil
+        }
+    }
+}
+et()
+        withAnimation(.easeOut(duration: 0.16)) {
+            undoScrubSession = nil
+        }
+    }
+}
+undoScrubSession = nil
+        }
+    }
+}
+ut(duration: 0.16)) {
+            undoScrubSession = nil
+        }
+    }
+}
+duration: 0.16)) {
+            undoScrubSession = nil
+        }
+    }
+}
+   undoScrubRotation.reset()
+        withAnimation(.easeOut(duration: 0.16)) {
+            undoScrubSession = nil
+        }
+    }
+}
+et()
+        withAnimation(.easeOut(duration: 0.16)) {
+            undoScrubSession = nil
+        }
+    }
+}
+undoScrubSession = nil
+        }
+    }
+}
+ut(duration: 0.16)) {
+            undoScrubSession = nil
+        }
+    }
+}
+duration: 0.16)) {
+            undoScrubSession = nil
+        }
+    }
+}
+t – der Apple Pencil Pro vibriert selbst.
+        Haptics.pencilSnap(intensity: 0.9)
+
+        guard updated.currentOffset != session.targetOffset else { return }
+        // Ein Schritt pro Takt: Der Knopf wandert sichtbar über den Bogen.
+        let item = DispatchWorkItem { [self] in
+            guard let next = undoScrubSession, next.id == session.id else { return }
+            stepScrub(towards: next)
+        }
+        scrubStepWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.07, execute: item)
+    }
+
+    private func performSilentUndo() -> Bool {
+        flushPendingCanvasChange()
+        guard let snapshot = editingHistory.undo() else { return false }
+        applyHistorySnapshot(snapshot)
+        return true
+    }
+
+    private func performSilentRedo() -> Bool {
+        flushPendingCanvasChange()
+        guard let snapshot = editingHistory.redo() else { return false }
+        applyHistorySnapshot(snapshot)
+        return true
+    }
+
+    private func endUndoScrub() {
+        // Beim Loslassen sofort aufholen: Alle noch offenen Schritte werden
+        // ohne Takt angewandt, damit der Zustand exakt dem Ziel entspricht.
+        scrubStepWorkItem?.cancel()
+        scrubStepWorkItem = nil
+        if let live = undoScrubSession {
+            let delta = live.targetOffset - live.currentOffset
+            if delta > 0 {
+                for _ in 0..<delta { _ = performSilentUndo() }
+            } else if delta < 0 {
+                for _ in 0..<(-delta) { _ = performSilentRedo() }
+            }
+        }
+        // Die Drehung gehört zur Sitzung: Die nächste beginnt wieder bei 0°.
+        undoScrubRotation.reset()
+        withAnimation(.easeOut(duration: 0.16)) {
+            undoScrubSession = nil
+        }
+    }
+}
+et()
+        withAnimation(.easeOut(duration: 0.16)) {
+            undoScrubSession = nil
+        }
+    }
+}
+undoScrubSession = nil
+        }
+    }
+}
+ut(duration: 0.16)) {
+            undoScrubSession = nil
+        }
+    }
+}
+duration: 0.16)) {
+            undoScrubSession = nil
+        }
+    }
+}
+   undoScrubRotation.reset()
+        withAnimation(.easeOut(duration: 0.16)) {
+            undoScrubSession = nil
+        }
+    }
+}
+et()
+        withAnimation(.easeOut(duration: 0.16)) {
+            undoScrubSession = nil
+        }
+    }
+}
+undoScrubSession = nil
+        }
+    }
+}
+ut(duration: 0.16)) {
+            undoScrubSession = nil
+        }
+    }
+}
+duration: 0.16)) {
             undoScrubSession = nil
         }
     }

@@ -549,7 +549,7 @@ private struct NoteTextBoxView: View {
     private func resizeHandle(edge: ResizeEdge) -> some View {
         Circle()
             .fill(Color.blue)
-            .frame(width: 24, height: 24)
+            .frame(width: handleDiameter, height: handleDiameter)
             .overlay(
                 Image(systemName: "arrow.left.and.right")
                     .font(.system(size: 10, weight: .bold))

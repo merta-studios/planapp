@@ -147,8 +147,15 @@ public struct DrawingToolbarView: View {
         )
     }
 
-    private var buttonSize: CGFloat { isCompactToolbar ? 32 : 40 }
-    private var buttonCornerRadius: CGFloat { isCompactToolbar ? 8 : 10 }
+    /// Auf dem iPhone ist die Leiste bewusst noch einmal kleiner, damit
+    /// wirklich alle Werkzeuge Platz haben.
+    private var buttonSize: CGFloat {
+        if isPhoneLayout { return isCompactToolbar ? 28 : 32 }
+        return isCompactToolbar ? 32 : 40
+    }
+    private var buttonCornerRadius: CGFloat {
+        DeviceLayout.buttonCornerRadius(isCompactToolbar ? 8 : 10)
+    }
 
     public init(
         toolSelection: Binding<DrawingToolSelection>,
@@ -181,7 +188,8 @@ public struct DrawingToolbarView: View {
         canCopyNote: Bool = false,
         canPasteNote: Bool = false,
         onCopyNote: @escaping () -> Void = {},
-        onPasteNote: @escaping () -> Void = {}
+        onPasteNote: @escaping () -> Void = {},
+        onAddImage: @escaping (NoteImageSource) -> Void = { _ in }
     ) {
         _toolSelection = toolSelection
         _penWidth = penWidth
@@ -254,7 +262,7 @@ public struct DrawingToolbarView: View {
     }
 
     private var toolbarControls: some View {
-        HStack(spacing: isCompactToolbar ? 6 : (isPhoneLayout ? 8 : 10)) {
+        HStack(spacing: (isCompactToolbar || isPhoneLayout) ? 6 : 10) {
             if isPhoneLayout {
                 lassoButton
                 textToolButton
@@ -291,7 +299,7 @@ public struct DrawingToolbarView: View {
     private var penControls: some View {
         HStack(spacing: 6) {
             Image(systemName: "pencil.tip")
-                .font(.system(size: 15))
+                .font(.system(size: isPhoneLayout ? 13 : 15))
                 .foregroundColor(.primary)
                 .accessibilityHidden(true)
 
@@ -329,7 +337,7 @@ public struct DrawingToolbarView: View {
 
                         Circle()
                             .fill(swatch)
-                            .frame(width: 22, height: 22)
+                            .frame(width: isPhoneLayout ? 19 : 22, height: isPhoneLayout ? 19 : 22)
                             .overlay(
                                 Circle().strokeBorder(
                                     hex.caseInsensitiveCompare("#FFFFFF") == .orderedSame
@@ -388,7 +396,7 @@ public struct DrawingToolbarView: View {
     private var textColorControls: some View {
         HStack(spacing: 6) {
             Image(systemName: "paintpalette")
-                .font(.system(size: 15))
+                .font(.system(size: isPhoneLayout ? 13 : 15))
                 .foregroundColor(.primary)
                 .accessibilityHidden(true)
 
@@ -416,7 +424,7 @@ public struct DrawingToolbarView: View {
 
                         Circle()
                             .fill(swatch)
-                            .frame(width: 22, height: 22)
+                            .frame(width: isPhoneLayout ? 19 : 22, height: isPhoneLayout ? 19 : 22)
                             .overlay(
                                 Circle().strokeBorder(
                                     hex.caseInsensitiveCompare("#FFFFFF") == .orderedSame
@@ -472,7 +480,7 @@ public struct DrawingToolbarView: View {
     private var markerControls: some View {
         HStack(spacing: 6) {
             Image(systemName: "highlighter")
-                .font(.system(size: 15))
+                .font(.system(size: isPhoneLayout ? 13 : 15))
                 .foregroundColor(.primary)
                 .accessibilityHidden(true)
 
@@ -503,7 +511,7 @@ public struct DrawingToolbarView: View {
 
                         RoundedRectangle(cornerRadius: 5, style: .continuous)
                             .fill(swatch)
-                            .frame(width: 21, height: 21)
+                            .frame(width: isPhoneLayout ? 18 : 21, height: isPhoneLayout ? 18 : 21)
 
                         if isSelected {
                             RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous)
@@ -616,7 +624,7 @@ public struct DrawingToolbarView: View {
         } label: {
             // Nur das Aa-Symbol, kein Beschriftungstext.
             Image(systemName: "textformat")
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: isPhoneLayout ? 15 : 17, weight: .semibold))
                 .frame(width: buttonSize, height: buttonSize)
                 .background(isSelected ? Color.blue : Color(UIColor.tertiarySystemBackground).opacity(0.72))
                 .foregroundColor(isSelected ? .white : .primary)
@@ -757,7 +765,7 @@ public struct DrawingToolbarView: View {
             toolSelection = .eraser
         } label: {
             Image(systemName: "eraser")
-                .font(.system(size: 16, weight: .medium))
+                .font(.system(size: isPhoneLayout ? 14 : 16, weight: .medium))
                 .frame(width: buttonSize, height: buttonSize)
                 .background(isSelected ? Color.blue : Color(UIColor.tertiarySystemBackground).opacity(0.72))
                 .foregroundColor(isSelected ? .white : .primary)
@@ -791,7 +799,7 @@ public struct DrawingToolbarView: View {
             toolSelection = .lasso
         } label: {
             Image(systemName: "lasso")
-                .font(.system(size: 16, weight: .medium))
+                .font(.system(size: isPhoneLayout ? 14 : 16, weight: .medium))
                 .frame(width: buttonSize, height: buttonSize)
                 .background(isSelected ? Color.blue : Color(UIColor.tertiarySystemBackground).opacity(0.72))
                 .foregroundColor(isSelected ? .white : .primary)
@@ -833,7 +841,7 @@ public struct DrawingToolbarView: View {
         let isInteractive = canUndo || canRedo
         return ZStack {
             Image(systemName: "arrow.uturn.backward")
-                .font(.system(size: isCompactToolbar ? 13 : 15, weight: .medium))
+                .font(.system(size: (isCompactToolbar || isPhoneLayout) ? 13 : 15, weight: .medium))
                 .frame(width: buttonSize, height: buttonSize)
                 .background(Color(UIColor.tertiarySystemBackground).opacity(0.72))
                 .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
@@ -860,6 +868,35 @@ public struct DrawingToolbarView: View {
 
     private var moreOptionsButton: some View {
         Menu {
+            Menu {
+                Button {
+                    Haptics.tap()
+                    onAddImage(.file)
+                } label: {
+                    Label("Aus Datei", systemImage: "folder")
+                }
+
+                Button {
+                    Haptics.tap()
+                    onAddImage(.photos)
+                } label: {
+                    Label("Aus Fotos", systemImage: "photo.on.rectangle")
+                }
+
+                if NoteImageCameraAvailability.isCameraOffered {
+                    Button {
+                        Haptics.tap()
+                        onAddImage(.camera)
+                    } label: {
+                        Label("Mit Kamera aufnehmen", systemImage: "camera")
+                    }
+                }
+            } label: {
+                Label("Bild hinzufügen", systemImage: "photo.badge.plus")
+            }
+
+            Divider()
+
             Button {
                 Haptics.tap()
                 onConvertHandwriting()
@@ -939,7 +976,7 @@ public struct DrawingToolbarView: View {
             }
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: isPhoneLayout ? 14 : 16, weight: .semibold))
                 .foregroundColor(.primary)
                 .frame(width: buttonSize, height: buttonSize)
                 .background(Color(UIColor.tertiarySystemBackground).opacity(0.72))
@@ -958,7 +995,7 @@ public struct DrawingToolbarView: View {
             }
             Button("Abbrechen", role: .cancel) {}
         } message: {
-            Text("Alle Zeichnungen und Textfelder auf dieser Seite werden entfernt.")
+            Text("Alle Zeichnungen, Textfelder und Bilder auf dieser Seite werden entfernt.")
         }
         .confirmationDialog(
             "Kopierte Notiz einfügen?",
@@ -994,7 +1031,7 @@ public struct DrawingToolbarView: View {
             action()
         } label: {
             Image(systemName: systemName)
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(size: isPhoneLayout ? 13 : 15, weight: .medium))
                 .frame(width: buttonSize, height: buttonSize)
                 .background(Color(UIColor.tertiarySystemBackground).opacity(0.72))
                 .clipShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))

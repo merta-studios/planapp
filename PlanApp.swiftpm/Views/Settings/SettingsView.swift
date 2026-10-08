@@ -25,7 +25,7 @@ public struct SettingsView: View {
                     // kann dabei genau das UIKit-Textfeld entfernt werden, das
                     // gerade First Responder ist – die Tastatur klappt wieder
                     // zu bzw. erscheint gar nicht erst.
-                    VStack(spacing: 12) {
+                    VStack(spacing: DeviceLayout.isPhone ? 10 : 12) {
                         ForEach(SettingsCategory.allCases) { category in
                             NavigationLink(value: category) {
                                 SettingsCategoryRow(category: category)
@@ -33,7 +33,7 @@ public struct SettingsView: View {
                             .buttonStyle(.plain)
                         }
                     }
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, DeviceLayout.isPhone ? 12 : 20)
                     .padding(.top, 16)
                     .padding(.bottom, 28)
                 }
@@ -52,7 +52,7 @@ public struct SettingsView: View {
                             .padding(.horizontal, 14)
                             .padding(.vertical, 6)
                     }
-                    .lightButton(cornerRadius: 10, tint: .blue, isFilled: true)
+                    .liquidGlassButton(cornerRadius: 10, tint: .blue, isFilled: true)
                     .foregroundColor(.white)
                 }
             }
@@ -104,8 +104,8 @@ private struct SettingsCategoryRow: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.secondary.opacity(0.7))
         }
-        .padding(14)
-        .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
+        .padding(DeviceLayout.settingsInnerPadding)
+        .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }

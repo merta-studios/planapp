@@ -110,6 +110,7 @@ eintippen, Dateiinhalt einfügen, committen). Danach steht der Workflow im Tab *
 - **Dynamische Stiftdicke**: Unter *Zeichnen & Apple Pencil* schaltbar (Standard an). Aus = Kugelschreiber (Monoline) mit konstanter Dicke.
 - **Mustergröße**: Im „…“-Menü der Zeichenfläche regelt ein Schieberegler die Größe von Linien, Kästchen und Punkten (Mitte = Standard, bis halb so klein / doppelt so groß). Der Standardwert für neue Notizen steht in den Einstellungen.
 - **Notiz kopieren & einfügen**: Stunden-Block (oder Karte in „Nur Notizen“) gedrückt halten → *Kopieren* (wenn eine Notiz existiert) bzw. *Einfügen* (ersetzt die Zielnotiz komplett). Dieselben Optionen gibt es im „…“-Menü der geöffneten Notiz.
+- **Bilder**: Im „…“-Menü → *Bild hinzufügen* – aus Datei, Fotos oder Kamera. Das Bild landet mittig, halb so groß wie die Zeichenfläche. Im Text-Werkzeug lässt es sich antippen und dann in der Mitte verschieben, an den vier Eckpunkten seitenrichtig skalieren, per Knopf entfernen oder in einer eigenen Übersicht zuschneiden. Bilder sind in Undo/Redo, Kopieren, Vorschau, Export und Sync enthalten (max. 10 pro Notiz).
 - **Dark Mode**: Die Zeichenfläche läuft fest im hellen Erscheinungsbild – schwarze Tinte bleibt beim Öffnen einer Notiz schwarz, auch wenn das Gerät im Dark Mode ist.
 
 ### 🗒️ 6. Ansichts-Modus „Nur Notizen“ als Raster
@@ -125,6 +126,7 @@ eintippen, Dateiinhalt einfügen, committen). Danach steht der Workflow im Tab *
 ### 🏷️ 7. Tag-System (optional)
 
 - *Einstellungen → Tag-System*: Schalter **„Tag System aktivieren“** (Standard aus), darunter die Liste der Tags (Name + Farbe, maximal 20). Bearbeiten über das Stift-Symbol, Reihenfolge per Ziehen an den drei Strichen rechts.
+- In der Notiz n den drei Strichen rechts.
 - In der Notiz steht neben dem Fachnamen eine gestrichelte graue Pille **„+ Tag hinzufügen“**; ein Tipp öffnet die kleine Tag-Auswahl direkt an der Pille. Das Mini-Fenster **wächst als Größen-Animation aus der Pille heraus** und schrumpft beim Schließen wieder dorthin – es wird nicht ein-/ausgeblendet. Ein gesetzter Tag füllt die Pille in seiner Farbe (weiße Schrift bei dunklen Farben); erneutes Tippen wechselt oder entfernt ihn.
 - Im Stundenplan erscheint der Tag neben dem Fachnamen. Eine leere Notiz mit Tag wird nicht gespeichert – der Tag entfällt.
 
