@@ -933,7 +933,29 @@ public struct LessonDrawingOverlayView: View {
                     rects.append(rect)
                 }
                 return rects
-            }
+            },
+            elementRects: {
+                var rects: [CGRect] = images.map {
+                    CGRect(
+                        x: CGFloat($0.x),
+                        y: CGFloat($0.y),
+                        width: CGFloat($0.width),
+                        height: CGFloat($0.height)
+                    )
+                }
+                rects += texts.map {
+                    CGRect(
+                        x: CGFloat($0.x),
+                        y: CGFloat($0.y),
+                        width: CGFloat($0.width),
+                        height: estimatedTextBoxHeight($0, fontStyle: fontStyle)
+                    )
+                }
+                return rects
+            },
+            backgroundCapturesFingerTaps: fingerManipulationEnabled && (
+                selectedImage != nil || selectedText != nil || editingText != nil
+            )
         )
     }
 

@@ -31,6 +31,12 @@ struct LayerInputPolicy {
     /// Flächen, die auch im Zeichen-Modus anfassbar bleiben (die aktuell
     /// ausgewählten Elemente inkl. ihrer Optionen), in Koordinaten der Ebene.
     var selectionRects: () -> [CGRect]
+    /// Flächen **aller** Elemente (Bilder, Textfelder) in Koordinaten der Ebene.
+    /// Dient als Gegenprobe zur SwiftUI-Trefferfläche (siehe `hitTest`).
+    var elementRects: () -> [CGRect] = { [] }
+    /// Der (unsichtbare) Vollflächen-Hintergrund existiert gerade und nimmt
+    /// Finger-Tipps auf leerer Fläche entgegen (Auswahl aufheben).
+    var backgroundCapturesFingerTaps: Bool = false
 }
 
 /// UIKit-Hit-Test, der die Regeln aus ``LayerInputPolicy`` umsetzt.
@@ -58,7 +64,17 @@ final class InputFilteredPassthroughView<Content: View>: UIView {
         // Punkt wirklich bedient (sonst `nil` – so fällt z. B. `allowsHitTesting(false)` durch).
         // Ein Treffer auf `host.view` oder tiefer ist also **Inhalt**
         // (Box, Anfasser, Options-Knöpfe, Tip-Hintergrund).
-        let isEmptyArea = hit == nil || hit === self
+        //
+        // Gegenprobe über die Geometrie: Liefert SwiftUI für leere Fläche
+        // ausnahmsweise die Hosting-View selbst, zählt der Punkt trotzdem als
+        // leer – außer ein Element liegt darunter oder der Hintergrund-Tipp
+        // ist aktiv (dann bleibt die Fläche bedienbar wie bisher).
+        let onElement = policy.elementRects().contains { $0.contains(point) }
+        let backgroundTapActive = policy.backgroundCapturesFingerTaps
+        var isEmptyArea = hit == nil || hit === self
+        if let hostView = host?.view, hit === hostView, !onElement, !backgroundTapActive {
+            isEmptyArea = true
+        }
 
         let touches = event?.allTouches ?? []
         let eventHasPencil = touches.contains {

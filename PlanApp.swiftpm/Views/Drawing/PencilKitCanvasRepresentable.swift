@@ -282,16 +282,21 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         // denselben Inhalt unterschiedliche Werte liefern; deshalb prüfen
         // wir den Zeicheninhalt statt einer nicht verfügbaren Objektidentität.
         // `lastSyncedDrawing` ist der Stand, der zuletzt auf die Fläche kam.
+        // Der (teure) Inhaltsvergleich läuft nur, wenn die billigen Bedingungen
+        // schon eine Übernahme zulassen – also nicht beim Zeichnen oder bei
+        // offenen Änderungen und nicht bei jedem Zoom-/Pan-Tick.
+        let mayApplyBinding = !isInking
+            && !context.coordinator.preservesCanvasDrawing
+            && !context.coordinator.hasPendingDrawingChange
         let bindingIsNewer: Bool
-        if let lastSynced = context.coordinator.lastSyncedDrawing {
+        if !mayApplyBinding {
+            bindingIsNewer = false
+        } else if let lastSynced = context.coordinator.lastSyncedDrawing {
             bindingIsNewer = !Coordinator.drawingsMatch(drawing, lastSynced)
         } else {
             bindingIsNewer = true
         }
-        if !isInking,
-           !context.coordinator.preservesCanvasDrawing,
-           !context.coordinator.hasPendingDrawingChange,
-           bindingIsNewer {
+        if bindingIsNewer {
             DrawingDiagnostics.stroke.debug("updateUIView: externer Zeichnungsstand wird übernommen")
             context.coordinator.applyExternalDrawing(drawing)
         }
