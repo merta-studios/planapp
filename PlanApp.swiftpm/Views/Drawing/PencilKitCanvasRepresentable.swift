@@ -1989,11 +1989,3 @@ final class StrokeHoldGestureRecognizer: UIGestureRecognizer {
         state = .cancelled
     }
 }
-touches, with: event)
-        state = .cancelled
-    }
-}
-t)
-        state = .cancelled
-    }
-}
