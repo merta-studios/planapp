@@ -52,7 +52,7 @@ struct DataTransferSection: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 11)
                     }
-                    .liquidGlassButton(cornerRadius: 12, tint: .blue, isFilled: true)
+                    .lightButton(cornerRadius: 12, tint: .blue, isFilled: true)
                     .foregroundColor(.white)
 
                     Button(action: copyExportToClipboard) {
@@ -65,14 +65,14 @@ struct DataTransferSection: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 11)
                     }
-                    .liquidGlassButton(cornerRadius: 12, tint: .blue)
+                    .lightButton(cornerRadius: 12, tint: .blue)
                     .foregroundColor(.blue)
                 }
                 .disabled(isPreparingExport)
                 .opacity(isPreparingExport ? 0.6 : 1)
             }
             .padding(DeviceLayout.settingsInnerPadding)
-            .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
+            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
 
             // IMPORT
             VStack(alignment: .leading, spacing: 12) {
@@ -99,11 +99,11 @@ struct DataTransferSection: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 11)
                 }
-                .liquidGlassButton(cornerRadius: 12, tint: .green)
+                .lightButton(cornerRadius: 12, tint: .green)
                 .foregroundColor(.green)
             }
             .padding(DeviceLayout.settingsInnerPadding)
-            .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
+            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
 
             if let statusMessage {
                 Text(statusMessage)
@@ -113,7 +113,7 @@ struct DataTransferSection: View {
             }
         }
         .padding(DeviceLayout.settingsOuterPadding)
-        .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
+        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
         .sheet(item: $shareItem) { item in
             ShareSheet(activityItems: [item.text])
         }
@@ -303,7 +303,7 @@ private struct FileSyncCard: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 11)
                 }
-                .liquidGlassButton(cornerRadius: 12, tint: .blue)
+                .lightButton(cornerRadius: 12, tint: .blue)
                 .foregroundColor(.blue)
                 .disabled(service.isWorking)
             } else {
@@ -381,7 +381,7 @@ private struct FileSyncCard: View {
             }
         }
         .padding(DeviceLayout.settingsInnerPadding)
-        .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
+        .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
         .sheet(isPresented: $showSetup) {
             FileSyncSetupSheet(service: service)
         }
@@ -474,7 +474,7 @@ private struct FileSyncSetupSheet: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14)
                     }
-                    .liquidGlassButton(cornerRadius: 14, tint: .blue, isFilled: true)
+                    .lightButton(cornerRadius: 14, tint: .blue, isFilled: true)
                     .foregroundColor(.white)
                     .disabled(isLinking)
 
@@ -498,7 +498,7 @@ private struct FileSyncSetupSheet: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14)
                     }
-                    .liquidGlassButton(cornerRadius: 14, tint: .green)
+                    .lightButton(cornerRadius: 14, tint: .green)
                     .foregroundColor(.green)
                     .disabled(isLinking)
                 }

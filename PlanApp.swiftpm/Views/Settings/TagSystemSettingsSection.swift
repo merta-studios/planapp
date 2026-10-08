@@ -48,7 +48,7 @@ struct TagSystemSettingsSection: View {
                 }
             }
             .padding(DeviceLayout.settingsInnerPadding)
-            .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
+            .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
 
             // 2. TAG-LISTE
             if viewModel.tagSettings.isEnabled {
@@ -102,7 +102,7 @@ struct TagSystemSettingsSection: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 11)
                     }
-                    .liquidGlassButton(cornerRadius: 12, tint: .indigo)
+                    .lightButton(cornerRadius: 12, tint: .indigo)
                     .foregroundColor(.indigo)
                     .disabled(!viewModel.tagSettings.canAddTag)
                     .opacity(viewModel.tagSettings.canAddTag ? 1 : 0.55)
@@ -113,12 +113,12 @@ struct TagSystemSettingsSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(DeviceLayout.settingsInnerPadding)
-                .liquidGlassCard(cornerRadius: 14, strokeOpacity: 0.18)
+                .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(DeviceLayout.settingsOuterPadding)
-        .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
+        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
         .sheet(item: $editingTag) { tag in
             TagEditorSheet(tag: tag) { updated in
                 viewModel.updateTag(updated)

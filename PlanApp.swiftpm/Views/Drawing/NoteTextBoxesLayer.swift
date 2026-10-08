@@ -53,6 +53,12 @@ struct NoteTextBoxesLayer: View {
     @Binding var selectedID: UUID?
     @Binding var editingID: UUID?
     let isTextToolActive: Bool
+    /// Ob ein Tipp auf die leere Fläche die Auswahl aufheben bzw. die
+    /// Bearbeitung beenden darf. Nur wenn der aktuelle Input die Fläche
+    /// bedienen soll (Text-Werkzeug oder Finger-Modus bei „Nur Apple
+    /// Pencil“) – im Zeichen-Modus darf es keinen vollflächigen Hintergrund
+    /// geben, der jede Berührung (auch die des Stifts) schlucken würde.
+    let allowsBackgroundTap: Bool
     let areaSize: CGSize
     /// Undo-Registrierung: (Snapshot vorher, Snapshot nachher).
     let registerUndo: (_ before: [NoteTextBox], _ after: [NoteTextBox]) -> Void
@@ -81,7 +87,10 @@ struct NoteTextBoxesLayer: View {
         return ZStack(alignment: .topLeading) {
             // Hintergrund fängt Tipp-Gesten ab: Bearbeiten beenden, Auswahl
             // aufheben oder (mit Text-Werkzeug) ein neues Feld erstellen.
-            if isTextToolActive || selectedID != nil || editingID != nil {
+            // Im Zeichen-Modus (Stift zeichnen) gibt es ihn nur, wenn der
+            // Finger die Fläche bedienen darf – sonst würde er das Zeichnen
+            // blockieren.
+            if isTextToolActive || (allowsBackgroundTap && (selectedID != nil || editingID != nil)) {
                 Color.clear
                     .contentShape(Rectangle())
                     .gesture(

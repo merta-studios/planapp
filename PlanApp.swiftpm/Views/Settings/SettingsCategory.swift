@@ -129,7 +129,7 @@ struct SettingsCategoryDetailView: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 6)
                 }
-                .liquidGlassButton(cornerRadius: 10, tint: .blue, isFilled: true)
+                .lightButton(cornerRadius: 10, tint: .blue, isFilled: true)
                 .foregroundColor(.white)
             }
         }
@@ -164,10 +164,10 @@ struct SettingsCategoryDetailView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
             }
-            .liquidGlassButton(cornerRadius: 14, tint: .red)
+            .lightButton(cornerRadius: 14, tint: .red)
             .foregroundColor(.red)
         }
         .padding(DeviceLayout.settingsOuterPadding)
-        .liquidGlassCard(cornerRadius: 16, strokeOpacity: 0.25)
+        .lightCard(cornerRadius: 16, strokeOpacity: 0.25)
     }
 }

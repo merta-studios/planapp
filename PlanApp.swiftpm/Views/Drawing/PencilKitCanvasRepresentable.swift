@@ -9,6 +9,25 @@ private final class UndoDisabledPKCanvasView: PKCanvasView {
     override var undoManager: UndoManager? { nil }
 }
 
+/// Signatur der Eingaben, die das PencilKit-Werkzeug bestimmen.
+///
+/// `updateUIView` läuft bei **jedem** SwiftUI-Update des Editors – auch bei
+/// jedem Tick einer Zoom- oder Verschiebe-Geste. Ohne Vergleich würde dabei
+/// jedes Mal ein neues `PKInkingTool`/`PKEraserTool` erzeugt (teuer, und
+/// PencilKit konfiguriert das Werkzeug mitten in der Geste neu). Der Guard
+/// sorgt dafür, dass das Werkzeug nur bei echter Änderung neu gesetzt wird.
+///
+/// `internal` (nicht `private`): Die `public`-Coordinator-Klasse hält eine
+/// Property dieses Typs – ein privater Typ wäre dort ein Access-Level-Fehler.
+struct CanvasToolSignature: Equatable {
+    var toolSelection: DrawingToolSelection
+    var penWidth: CGFloat
+    var markerWidth: CGFloat
+    var eraserWidth: CGFloat
+    var pencilOnlyDrawing: Bool
+    var dynamicPenWidth: Bool
+}
+
 /// SwiftUI wrapper for `PKCanvasView` with Apple-Pencil-only drawing.
 /// Direct finger touches never draw; two fingers are forwarded to the surrounding
 /// note as incremental pan updates, and a two-finger pinch is forwarded as an
@@ -230,6 +249,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         context.coordinator.canvasView = canvasView
         context.coordinator.adoptInitialDrawing(drawing)
         applyTool(to: canvasView)
+        context.coordinator.lastAppliedToolSignature = currentToolSignature
 
         DispatchQueue.main.async {
             self.onCanvasCreated(canvasView)
@@ -266,7 +286,26 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
             context.coordinator.applyExternalDrawing(drawing)
         }
         context.coordinator.publishSelectionIfToolChanged(isInking: isInking)
-        applyTool(to: uiView)
+        // Werkzeug nur bei echter Änderung neu setzen (siehe
+        // `CanvasToolSignature`): Zoom-/Pan-Ticks lösen sonst 60× pro Sekunde
+        // eine teure Werkzeug-Neukonfiguration aus.
+        let signature = currentToolSignature
+        if context.coordinator.lastAppliedToolSignature != signature {
+            context.coordinator.lastAppliedToolSignature = signature
+            applyTool(to: uiView)
+        }
+    }
+
+    /// Signatur aller Eingaben, die das PencilKit-Werkzeug bestimmen.
+    private var currentToolSignature: CanvasToolSignature {
+        CanvasToolSignature(
+            toolSelection: toolSelection,
+            penWidth: penWidth,
+            markerWidth: markerWidth,
+            eraserWidth: eraserWidth,
+            pencilOnlyDrawing: pencilOnlyDrawing,
+            dynamicPenWidth: dynamicPenWidth
+        )
     }
 
     private func applyTool(to canvasView: PKCanvasView) {
@@ -357,6 +396,9 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     public final class Coordinator: NSObject, PKCanvasViewDelegate, UIPencilInteractionDelegate, UIGestureRecognizerDelegate {
         var parent: PencilKitCanvasRepresentable
         weak var canvasView: PKCanvasView?
+        /// Zuletzt angewendete Werkzeug-Signatur (Zoom-/Pan-Ticks sollen das
+        /// PencilKit-Werkzeug nicht neu konfigurieren).
+        var lastAppliedToolSignature: CanvasToolSignature?
         /// Letzte Hover-Position des Apple Pencil in Fenster-Koordinaten.
         private var lastHoverLocation: CGPoint?
         /// Richtung, in die der Stift zuletzt gezeigt hat (Fenster-Koordinaten).
