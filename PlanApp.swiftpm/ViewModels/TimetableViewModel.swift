@@ -768,8 +768,15 @@ public final class TimetableViewModel: ObservableObject {
         }
     }
 
-    /// Schließt und speichert die Notiz
-    public func saveNote(
+    /// Speichert die Notiz, **ohne** das Zeichen-Overlay zu schließen.
+    ///
+    /// Damit kann der Editor sofort ausgeblendet werden (siehe
+    /// `closeNoteOverlay`), während das teure Rendern des Vorschau-Bilds auch
+    /// danach asynchron laufen darf (`updateNotePreview`). Der Rückgabewert
+    /// ist der Zeitstempel der gespeicherten Notiz – nur mit genau ihm darf
+    /// ein nachträgliches Vorschau-Update eingespielt werden.
+    @discardableResult
+    public func persistNote(
         for lesson: Lesson,
         drawingData: Data,
         croppedImageData: Data?,
@@ -779,7 +786,7 @@ public final class TimetableViewModel: ObservableObject {
         backgroundStyle: NoteBackgroundStyle = .blank,
         backgroundScale: Double = NoteBackgroundMetrics.defaultScale,
         tagID: UUID? = nil
-    ) {
+    ) -> Date {
         let key = lesson.noteKey
         // Ein Tag zählt nur, solange er im Tag-System noch existiert.
         let resolvedTagID = tagSettings.tag(withID: tagID)?.id
@@ -812,10 +819,59 @@ public final class TimetableViewModel: ObservableObject {
             // die alte Notiz beim Zusammenführen wieder auf.
             fileSyncService.recordDeletedNote(id: key)
         }
+        return note.updatedAt
+    }
 
+    /// Spielt ein im Hintergrund gerendertes Vorschau-Bild in eine bereits
+    /// gespeicherte Notiz ein. Wird nur übernommen, wenn die Notiz inzwischen
+    /// weder geändert noch gelöscht wurde (sonst gehört das Bild zu einem
+    /// veralteten Stand).
+    public func updateNotePreview(
+        for lesson: Lesson,
+        expectedUpdatedAt: Date,
+        croppedImageData: Data
+    ) {
+        let key = lesson.noteKey
+        guard var note = lessonNotes[key],
+              note.updatedAt == expectedUpdatedAt else { return }
+        note.croppedImageData = croppedImageData
+        lessonNotes[key] = note
+        storage.saveLessonNote(note)
+    }
+
+    /// Blendet das Zeichen-Overlay sofort aus (ohne zu speichern). Das
+    /// Speichern übernimmt `persistNote` – bei Bedarf auch erst danach.
+    public func closeNoteOverlay() {
+        guard activeNotePresentation != nil else { return }
         withAnimation(.easeOut(duration: 0.18)) {
             activeNotePresentation = nil
         }
+    }
+
+    /// Schließt und speichert die Notiz
+    public func saveNote(
+        for lesson: Lesson,
+        drawingData: Data,
+        croppedImageData: Data?,
+        lineCount: Int,
+        textBoxes: [NoteTextBox] = [],
+        imageBoxes: [NoteImageBox] = [],
+        backgroundStyle: NoteBackgroundStyle = .blank,
+        backgroundScale: Double = NoteBackgroundMetrics.defaultScale,
+        tagID: UUID? = nil
+    ) {
+        persistNote(
+            for: lesson,
+            drawingData: drawingData,
+            croppedImageData: croppedImageData,
+            lineCount: lineCount,
+            textBoxes: textBoxes,
+            imageBoxes: imageBoxes,
+            backgroundStyle: backgroundStyle,
+            backgroundScale: backgroundScale,
+            tagID: tagID
+        )
+        closeNoteOverlay()
     }
 
     /// Gibt die Notiz für eine bestimmte Stunde zurück

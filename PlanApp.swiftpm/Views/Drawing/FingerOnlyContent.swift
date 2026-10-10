@@ -18,7 +18,9 @@ import UIKit
 ///     Tippen hebt die Auswahl auf).
 ///   * **Finger** fasst Elemente an, wenn „Nur Apple Pencil“ **an** ist
 ///     (unabhängig vom Werkzeug). Ist „Nur Apple Pencil“ **aus**, zeichnet
-///     der Finger wie der Stift – Auswählen geht dann nur im Text-Werkzeug.
+///     der Finger wie der Stift – Auswählen von Textfeldern geht dann nur im
+///     Text-Werkzeug. **Bilder** darf der Finger dagegen in jedem Werkzeug
+///     antippen und bedienen (sie sind eingefügte Objekte).
 ///   * Liegt gleichzeitig ein **Pencil-Kontakt** an (Handballen!), gilt
 ///     jeder Direkt-Kontakt im selben Ereignis als Handballen und wird
 ///     durchgereicht (Palm-Reject). Sonst schluckt die Hülle jeden
@@ -35,6 +37,13 @@ struct LayerInputPolicy {
     /// schnellen pointInside-Test. Verhindert, dass die Ebene die gesamte
     /// Zeichenfläche beansprucht und das Zeichnen blockiert.
     var contentRects: () -> [CGRect] = { [] }
+    /// Bild-Rechtecke, die der **Finger** in jedem Werkzeug antippen und
+    /// bedienen darf – auch im Zeichen-Modus, in dem neue Auswahl sonst
+    /// gesperrt ist. Bilder sind eingefügte Objekte: Ein Tipp darauf wählt
+    /// sie aus (verschieben, skalieren, löschen), statt zu zeichnen. Der
+    /// Apple Pencil zeichnet im Zeichen-Modus weiter auch über Bildern; er
+    /// bedient Bilder nur über die Auswahl bzw. das Text-Werkzeug.
+    var interactiveImageRects: () -> [CGRect] = { [] }
 }
 
 /// UIKit-Hit-Test, der die Regeln aus ``LayerInputPolicy`` umsetzt.
@@ -109,6 +118,11 @@ final class InputFilteredPassthroughView<Content: View>: UIView {
             rect.insetBy(dx: -6, dy: -6).contains(paper)
         }
         if expandedContent { return true }
+        // Bild-Rechtecke bleiben für den Finger in jedem Modus anfassbar.
+        let expandedImages = policy.interactiveImageRects().contains { rect in
+            rect.insetBy(dx: -6, dy: -6).contains(paper)
+        }
+        if expandedImages { return true }
         return false
     }
 
@@ -142,7 +156,14 @@ final class InputFilteredPassthroughView<Content: View>: UIView {
         }
 
         // Zeichen-Werkzeuge: nur die Auswahl-Flächen bleiben anfassbar.
-        let onSelection = policy.selectionRects().contains { $0.contains(paperPoint(point)) }
+        let paper = paperPoint(point)
+        let onSelection = policy.selectionRects().contains { $0.contains(paper) }
+        // Bilder sind eingefügte Objekte: Der Finger darf sie in **jedem**
+        // Werkzeug antippen und bedienen (auswählen, verschieben, skalieren,
+        // löschen) – auch dann, wenn der Finger sonst zeichnet.
+        let onInteractiveImage = policy.interactiveImageRects().contains {
+            $0.contains(paper)
+        }
 
         switch kind {
         case .pencil:
@@ -159,9 +180,10 @@ final class InputFilteredPassthroughView<Content: View>: UIView {
             if eventHasPencil {
                 return nil
             }
-            if policy.fingerSelects {
-                // Finger darf Elemente anfassen; leere Fläche fällt durch
-                // (Zwei-Finger-Verschieben/-Zoomen landet auf dem Canvas).
+            if policy.fingerSelects || onInteractiveImage {
+                // Finger darf Elemente anfassen (bzw. Bilder immer); leere
+                // Fläche fällt durch (Zwei-Finger-Verschieben/-Zoomen landet
+                // auf dem Canvas).
                 return isEmptyArea ? nil : hit
             }
             // Finger zeichnet („Nur Apple Pencil“ aus) – nur die Auswahl
@@ -169,9 +191,10 @@ final class InputFilteredPassthroughView<Content: View>: UIView {
             return onSelection ? hit : nil
         case .unknown:
             // Kein Ereignis / keine Berührung am Punkt (z. B. systeminterne
-            // Abfragen): wie im Zeichen-Modus nur Auswahl-Flächen bedienen,
-            // im Text-Modus alles – konservativ zum bisherigen Verhalten.
-            return onSelection ? hit : (isEmptyArea ? nil : hit)
+            // Abfragen): wie im Zeichen-Modus nur Auswahl- und Bild-Flächen
+            // bedienen, im Text-Modus alles – konservativ zum bisherigen
+            // Verhalten.
+            return (onSelection || onInteractiveImage) ? hit : (isEmptyArea ? nil : hit)
         }
     }
 
