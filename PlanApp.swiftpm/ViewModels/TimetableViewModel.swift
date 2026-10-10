@@ -813,7 +813,7 @@ public final class TimetableViewModel: ObservableObject {
             fileSyncService.recordDeletedNote(id: key)
         }
 
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
+        withAnimation(.easeOut(duration: 0.18)) {
             activeNotePresentation = nil
         }
     }

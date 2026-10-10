@@ -44,6 +44,10 @@ struct NoteImagesLayer: View {
     let registerUndo: (_ before: [NoteImageBox], _ after: [NoteImageBox]) -> Void
     /// Öffnet die Zuschneide-Übersicht für das Bild.
     let onCrop: (UUID) -> Void
+    /// Wirksame Skalierung der Zeichenfläche. Rahmen und Bedienelemente werden
+    /// gegen diese Skalierung korrigiert, damit sie auf dem Bildschirm immer
+    /// gleich groß wirken.
+    var canvasScale: CGFloat = 1
 
     static let coordinateSpaceName = "noteImagesLayer"
 
@@ -84,6 +88,7 @@ struct NoteImagesLayer: View {
                     box: box,
                     isSelected: selectedID == box.id,
                     areaSize: size,
+                    canvasScale: canvasScale,
                     onTap: { handleTapSelect(box.id) },
                     onEnsureSelected: { ensureSelected(box.id) },
                     onDelete: { deleteBox(id: box.id) },
@@ -187,6 +192,7 @@ private struct NoteImageBoxView: View {
     let box: NoteImageBox
     let isSelected: Bool
     let areaSize: CGSize
+    let canvasScale: CGFloat
     /// Tap auf das Bild (Auswahl bzw. Auswahl aufheben im Zeichen-Modus).
     let onTap: () -> Void
     /// Auswahl sicherstellen, bevor eine Zieh-/Skalier-Geste greift.
@@ -202,8 +208,9 @@ private struct NoteImageBoxView: View {
     @State private var scaleStartBox: NoteImageBox? = nil
 
     private let margin: CGFloat = 6
-    private var cornerDotDiameter: CGFloat { DeviceLayout.isPhone ? 20 : 24 }
-    private var actionButtonDiameter: CGFloat { DeviceLayout.isPhone ? 22 : 26 }
+    private var inverseScale: CGFloat { 1 / max(0.01, canvasScale) }
+    private var cornerDotDiameter: CGFloat { (DeviceLayout.isPhone ? 20 : 24) * inverseScale }
+    private var actionButtonDiameter: CGFloat { (DeviceLayout.isPhone ? 22 : 26) * inverseScale }
 
     private enum Corner {
         case topLeading, topTrailing, bottomLeading, bottomTrailing
@@ -244,16 +251,16 @@ private struct NoteImageBoxView: View {
             }
         }
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 8 * inverseScale, style: .continuous)
                 .fill(isSelected ? Color.blue.opacity(0.07) : Color.clear)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 8 * inverseScale, style: .continuous)
                 .strokeBorder(
                     isSelected ? Color.blue.opacity(0.9) : Color.blue.opacity(0.28),
                     style: StrokeStyle(
-                        lineWidth: isSelected ? 1.5 : 1,
-                        dash: isSelected ? [] : [4, 3]
+                        lineWidth: (isSelected ? 1.5 : 1) * inverseScale,
+                        dash: isSelected ? [] : [4 * inverseScale, 3 * inverseScale]
                     )
                 )
         )
@@ -284,17 +291,17 @@ private struct NoteImageBoxView: View {
         .overlay(alignment: .topTrailing) {
             if isSelected {
                 deleteButton
-                    .offset(x: 14, y: -34)
+                    .offset(x: 14 * inverseScale, y: -34 * inverseScale)
             }
         }
         .overlay(alignment: .topLeading) {
             if isSelected {
                 cropButton
-                    .offset(x: -14, y: -34)
+                    .offset(x: -14 * inverseScale, y: -34 * inverseScale)
             }
         }
         .offset(x: boxOrigin.x, y: boxOrigin.y)
-        .contentShape(Rectangle())
+        .contentShape(Rectangle().inset(by: -12 * inverseScale))
         .gesture(moveGesture)
         .onTapGesture {
             onTap()
@@ -304,7 +311,7 @@ private struct NoteImageBoxView: View {
     // MARK: - Verschieben
 
     private var moveGesture: some Gesture {
-        DragGesture(minimumDistance: 2, coordinateSpace: .named(NoteImagesLayer.coordinateSpaceName))
+        DragGesture(minimumDistance: 6, coordinateSpace: .named(NoteImagesLayer.coordinateSpaceName))
             .onChanged { value in
                 if moveStart == nil {
                     moveStart = boxOrigin
@@ -335,10 +342,10 @@ private struct NoteImageBoxView: View {
             .fill(Color.blue)
             .frame(width: cornerDotDiameter, height: cornerDotDiameter)
             .overlay(
-                Circle().strokeBorder(Color.white.opacity(0.85), lineWidth: 2)
+                Circle().strokeBorder(Color.white.opacity(0.85), lineWidth: 2 * inverseScale)
             )
-            .shadow(color: Color.black.opacity(0.25), radius: 3, x: 0, y: 1)
-            .contentShape(Circle().inset(by: -12))
+            .shadow(color: Color.black.opacity(0.25), radius: 3 * inverseScale, x: 0, y: 1 * inverseScale)
+            .contentShape(Circle().inset(by: -14 * inverseScale))
             .gesture(scaleGesture(corner: corner))
     }
 
@@ -415,13 +422,14 @@ private struct NoteImageBoxView: View {
     private var deleteButton: some View {
         Button(action: onDelete) {
             Image(systemName: "xmark")
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: 11 * inverseScale, weight: .bold))
                 .foregroundColor(.white)
                 .frame(width: actionButtonDiameter, height: actionButtonDiameter)
                 .background(Circle().fill(Color.red))
-                .shadow(color: Color.black.opacity(0.25), radius: 3, x: 0, y: 1)
+                .shadow(color: Color.black.opacity(0.25), radius: 3 * inverseScale, x: 0, y: 1 * inverseScale)
         }
         .buttonStyle(.plain)
+        .contentShape(Circle().inset(by: -10 * inverseScale))
         .hoverEffect(.lift)
         .accessibilityLabel("Bild entfernen")
     }
@@ -429,13 +437,14 @@ private struct NoteImageBoxView: View {
     private var cropButton: some View {
         Button(action: onCrop) {
             Image(systemName: "crop")
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: 11 * inverseScale, weight: .bold))
                 .foregroundColor(.white)
                 .frame(width: actionButtonDiameter, height: actionButtonDiameter)
                 .background(Circle().fill(Color.blue))
-                .shadow(color: Color.black.opacity(0.25), radius: 3, x: 0, y: 1)
+                .shadow(color: Color.black.opacity(0.25), radius: 3 * inverseScale, x: 0, y: 1 * inverseScale)
         }
         .buttonStyle(.plain)
+        .contentShape(Circle().inset(by: -10 * inverseScale))
         .hoverEffect(.lift)
         .accessibilityLabel("Bild zuschneiden")
     }

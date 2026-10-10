@@ -898,9 +898,13 @@ public struct LessonDrawingOverlayView: View {
         let selectedText = selectedTextBoxID
         let editingText = editingTextBoxID
         let fontStyle = viewModel.drawingSettings.textFontStyle
+        let paperW = paperWidth
+        let canvasH = canvasContentHeight
+        let textActive = isTextToolActive
+        let fingerEnabled = fingerManipulationEnabled
         return LayerInputPolicy(
-            textToolActive: isTextToolActive,
-            fingerSelects: fingerManipulationEnabled,
+            textToolActive: textActive,
+            fingerSelects: fingerEnabled,
             selectionRects: {
                 var rects: [CGRect] = []
                 if let id = selectedImage,
@@ -933,6 +937,38 @@ public struct LessonDrawingOverlayView: View {
                     rects.append(rect)
                 }
                 return rects
+            },
+            contentRects: {
+                var rects: [CGRect] = []
+                for box in images {
+                    rects.append(CGRect(
+                        x: CGFloat(box.x),
+                        y: CGFloat(box.y),
+                        width: CGFloat(box.width),
+                        height: CGFloat(box.height)
+                    ))
+                }
+                for box in texts {
+                    let height = estimatedTextBoxHeight(box, fontStyle: fontStyle)
+                    rects.append(CGRect(
+                        x: CGFloat(box.x),
+                        y: CGFloat(box.y),
+                        width: CGFloat(box.width),
+                        height: height
+                    ))
+                }
+                // Hintergrund-Tap zum Aufheben der Auswahl: Wenn ein Element
+                // ausgewählt ist und der aktuelle Input die Fläche bedient
+                // (Text-Werkzeug oder Finger bei „Nur Apple Pencil“), deckt
+                // die Ebene mit einem Color.clear die ganze Fläche ab. Dann
+                // muss pointInside überall true liefern, damit der Finger-
+                // Tap den Hintergrund erreicht; hitTest filtert Pencil trotzdem
+                // durch (PencilPassThroughHitTest).
+                if (selectedImage != nil || selectedText != nil || editingText != nil)
+                    && (textActive || fingerEnabled) {
+                    rects.append(CGRect(origin: .zero, size: CGSize(width: paperW, height: canvasH)))
+                }
+                return rects
             }
         )
     }
@@ -961,7 +997,8 @@ public struct LessonDrawingOverlayView: View {
                 },
                 newTextColorHex: preferredTextColorHex,
                 newTextFontSize: viewModel.drawingSettings.defaultTextFontSize,
-                textFontStyle: viewModel.drawingSettings.textFontStyle
+                textFontStyle: viewModel.drawingSettings.textFontStyle,
+                canvasScale: canvasScale
             )
 
             NoteImagesLayer(
@@ -984,7 +1021,8 @@ public struct LessonDrawingOverlayView: View {
                     if let box = imageBoxes.first(where: { $0.id == id }) {
                         cropTarget = box
                     }
-                }
+                },
+                canvasScale: canvasScale
             )
         }
     }
@@ -2133,15 +2171,15 @@ public struct LessonDrawingOverlayView: View {
         // Erst die Abdunkelung – in einer eigenen, kurzen Animation. So kann
         // sie nicht als Schleier stehen bleiben, falls der Hero-Morph
         // (Abbrechen, App-Wechsel, Moduswechsel) nicht zu Ende läuft.
-        withAnimation(.easeOut(duration: 0.18)) {
+        withAnimation(.easeOut(duration: 0.16)) {
             isBackdropVisible = false
         }
-        withAnimation(.spring(response: 0.40, dampingFraction: 0.88)) {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
             isExpanded = false
             heroBlend = 0
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
             persistEditingHistory()
 
             // Immer die bekannte Papiergröße verwenden – `PKCanvasView.bounds`
