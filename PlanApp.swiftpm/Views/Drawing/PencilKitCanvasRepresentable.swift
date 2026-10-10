@@ -7,6 +7,40 @@ import UIKit
 /// not register a competing, drawing-only undo history with the system.
 private final class UndoDisabledPKCanvasView: PKCanvasView {
     override var undoManager: UndoManager? { nil }
+
+    /// Papiergröße in unskalierten Inhaltskoordinaten (ohne Zoom). Die
+    /// Inhaltsgröße wird darauf festgehalten: Ist der gezoomte Inhalt kleiner
+    /// als der Rahmen, würde UIScrollView ihn zentrieren – dann läge die
+    /// Zeichnung nicht mehr deckungsgleich über Text- und Bildebene.
+    var paperContentSize: CGSize = .zero {
+        didSet {
+            guard oldValue != paperContentSize else { return }
+            enforcePaperContentSize()
+        }
+    }
+
+    /// Setzt den Zoom der Zeichenfläche (Vektor-Neurendering statt
+    /// Pixel-Vergrößerung). Gleiche Skalierung wie der übrige Block.
+    func applyDisplayScale(_ scale: CGFloat) {
+        guard scale.isFinite, scale > 0 else { return }
+        if abs(zoomScale - scale) > 0.0001 {
+            setZoomScale(scale, animated: false)
+            contentOffset = .zero
+        }
+        enforcePaperContentSize()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        enforcePaperContentSize()
+    }
+
+    private func enforcePaperContentSize() {
+        guard paperContentSize.width > 0, paperContentSize.height > 0 else { return }
+        if contentSize != paperContentSize {
+            contentSize = paperContentSize
+        }
+    }
 }
 
 /// Signatur der Eingaben, die das PencilKit-Werkzeug bestimmen.
@@ -88,6 +122,13 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
     /// Overlay hält damit den Rückgängig-Knopf verfügbar: Ein Antippen
     /// veröffentlicht den offenen Stand zuerst.
     public let onPendingDrawingChange: (Bool) -> Void
+    /// Wirksame Anzeige-Skalierung der Zeichenfläche (Anpassung × Zoom). Sie
+    /// wird als **nativer** Zoom des PKCanvasView gesetzt: PencilKit rendert
+    /// Striche dann in der Zielauflösung neu, statt ein Bitmap zu vergrößern
+    /// (das machte Zeichnungen beim Zoomen unscharf).
+    public let displayScale: CGFloat
+    /// Papiergröße in unskalierten Koordinaten (Inhaltsgröße des Canvas).
+    public let paperContentSize: CGSize
 
     /// Wie lange der Stift am Ende eines Strichs still gehalten werden muss,
     /// bis der Strich zur geraden Linie einrastet.
@@ -114,8 +155,12 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         onCanvasGestureEnded: @escaping () -> Void = {},
         onStraightLineSnap: @escaping () -> Void = {},
         onCommitDrawingSteps: @escaping ([PKDrawing]) -> Void = { _ in },
-        onPendingDrawingChange: @escaping (Bool) -> Void = { _ in }
+        onPendingDrawingChange: @escaping (Bool) -> Void = { _ in },
+        displayScale: CGFloat = 1,
+        paperContentSize: CGSize = .zero
     ) {
+        self.displayScale = displayScale
+        self.paperContentSize = paperContentSize
         self.onCommitDrawingSteps = onCommitDrawingSteps
         self.onPendingDrawingChange = onPendingDrawingChange
         self._drawing = drawing
@@ -166,6 +211,11 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         canvasView.drawingPolicy = pencilOnlyDrawing ? .pencilOnly : .anyInput
         canvasView.isScrollEnabled = false
         canvasView.bounces = false
+        // Nativer Zoom (nur über `displayScale` gesetzt, nie per Geste): die
+        // Grenzen müssen den gesamten Bereich der Notiz abdecken.
+        canvasView.minimumZoomScale = 0.01
+        canvasView.maximumZoomScale = 32
+        canvasView.bouncesZoom = false
         // Eigene Scroll-Gesten des CanvasView deaktivieren
         canvasView.panGestureRecognizer.isEnabled = false
         canvasView.pinchGestureRecognizer?.isEnabled = false
@@ -265,6 +315,12 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         context.coordinator.parent = self
         if uiView.overrideUserInterfaceStyle != .light {
             uiView.overrideUserInterfaceStyle = .light
+        }
+        // Zoom und Papiergröße vor dem Inhalt setzen: Der Zoom bestimmt, wie
+        // PencilKit die Striche in Bildschirmauflösung zeichnet.
+        if let zoomable = uiView as? UndoDisabledPKCanvasView {
+            zoomable.paperContentSize = paperContentSize
+            zoomable.applyDisplayScale(displayScale)
         }
         // Die Zeichenfläche ist während eines laufenden Strichs die einzige
         // Quelle der Wahrheit (PencilKit hält den Live-Strich; das Binding

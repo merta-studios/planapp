@@ -722,13 +722,14 @@ public struct LessonDrawingOverlayView: View {
                     .offset(y: headerHeight)
             }
             .frame(width: scaledPaperWidth, height: cardHeight)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            // Nach dem Clip die **volle** Kartenfläche tippbar machen:
-            // `clipShape` beschneidet nur die Darstellung, nicht die
-            // Hit-Tests. Ohne diese Content-Shape fällt ein Tipp in den
-            // runden Eck-Ausschnitten durch die Karte auf den Schließen-
-            // Backdrop – die Notiz ging dabei (verzögert) zu. Akzeptanz:
-            // Tippen am Rand (auch Ecken) zeichnet/ignoriert, schließt nie.
+            // Kein `clipShape` auf der Karte mehr: Griffe, Eck-Punkte und
+            // Knöpfe eines ausgewählten Elements dürfen über den Kartenrand
+            // ragen, ohne abgeschnitten zu werden. Die Ecken der Zeichen-
+            // fläche werden stattdessen gezielt am Canvas gerundet.
+            // Die **volle** Kartenfläche bleibt tippbar: Ein Tipp in den
+            // Ecken darf nie durch die Karte auf den Schließen-Backdrop
+            // fallen. Akzeptanz: Tippen am Rand (auch Ecken) zeichnet/
+            // ignoriert, schließt nie.
             .contentShape(Rectangle())
 
             resizeHandle(viewport: viewport)
@@ -764,21 +765,28 @@ public struct LessonDrawingOverlayView: View {
         // dem Bildschirm landen so immer 8 pt Abstand und 11 pt Radius –
         // unabhängig vom Zoom. Das Muster selbst bleibt Teil des Inhalts
         // und skaliert mit (wie die Striche).
+        //
+        // Schichten (unten → oben): Papier, Stift-Canvas, Text/Bilder. Der
+        // Stift-Canvas wird **nicht** per SwiftUI vergrößert (das verwischte
+        // die Striche), sondern über den nativen Zoom von PencilKit gesetzt.
+        // Papier und Ebene bleiben Vektor-Layer und skalieren per SwiftUI.
         let inverseScale = 1 / canvasScale
         return ZStack(alignment: .topLeading) {
             // A lightly separated writing surface keeps all Pencil colors
             // readable while the selected lesson itself visibly turns grey.
-            DrawingCanvasBackgroundView(
-                style: noteBackgroundStyle,
-                scale: noteBackgroundScale,
-                cornerRadius: paperCornerRadius * inverseScale
+            paperScaled(
+                DrawingCanvasBackgroundView(
+                    style: noteBackgroundStyle,
+                    scale: noteBackgroundScale,
+                    cornerRadius: paperCornerRadius * inverseScale
+                )
+                .frame(
+                    width: max(8, paperWidth - 2 * paperHorizontalInset * inverseScale),
+                    height: max(180, canvasContentHeight - paperBottomInset * inverseScale)
+                )
+                .offset(x: paperHorizontalInset * inverseScale, y: 0)
+                .opacity(showsEditor ? 1 : 0)
             )
-            .frame(
-                width: max(8, paperWidth - 2 * paperHorizontalInset * inverseScale),
-                height: max(180, canvasContentHeight - paperBottomInset * inverseScale)
-            )
-            .offset(x: paperHorizontalInset * inverseScale, y: 0)
-            .opacity(showsEditor ? 1 : 0)
 
             PencilKitCanvasRepresentable(
                 drawing: $drawing,
@@ -839,21 +847,58 @@ public struct LessonDrawingOverlayView: View {
                 },
                 onPendingDrawingChange: { pending in
                     hasPendingCanvasChange = pending
-                }
+                },
+                // Nativer Zoom des Canvas: Striche werden in Bildschirm-
+                // auflösung neu gerendert statt als Bitmap vergrößert.
+                displayScale: canvasScale,
+                paperContentSize: CGSize(width: paperWidth, height: canvasContentHeight)
             )
             .frame(
-                width: paperWidth,
-                height: canvasContentHeight
+                width: scaledPaperWidth,
+                height: scaledCanvasHeight,
+                alignment: .topLeading
+            )
+            // Untere Ecken wie die Karte gerundet: Die Karte selbst beschneidet
+            // nicht mehr, daher bekommt die Zeichenfläche ihre Rundung hier.
+            .clipShape(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 0,
+                    bottomLeadingRadius: 16,
+                    bottomTrailingRadius: 16,
+                    topTrailingRadius: 0,
+                    style: .continuous
+                )
             )
             .opacity(showsEditor ? 1 : 0)
             .allowsHitTesting(showsEditor && !isTextToolActive)
 
             // Frei bewegliche Textfelder und Bilder über der Zeichenfläche.
-            manipulableLayerContainer(viewport: viewport)
+            paperScaled(manipulableLayerContainer(viewport: viewport))
         }
-        .frame(width: paperWidth, height: canvasContentHeight, alignment: .topLeading)
-        .scaleEffect(canvasScale, anchor: .topLeading)
         .frame(width: scaledPaperWidth, height: scaledCanvasHeight, alignment: .topLeading)
+    }
+
+    /// Skaliert einen Inhalt, der in Papier-Koordinaten liegt, mit der
+    /// Zeichenfläche (Vektor-Layer statt Bitmap-Vergrößerung). Der Inhalt darf
+    /// über den Papierrahmen hinausragen – Griffe und Knöpfe bleiben so sichtbar.
+    private func paperScaled<Content: View>(_ content: Content) -> some View {
+        content
+            .frame(width: paperWidth, height: canvasContentHeight, alignment: .topLeading)
+            .scaleEffect(canvasScale, anchor: .topLeading)
+            .frame(width: scaledPaperWidth, height: scaledCanvasHeight, alignment: .topLeading)
+    }
+
+    /// Überhang der Eingabe-Ebene über das Papier (Papier-Einheiten). Griffe
+    /// und Knöpfe haben feste Größe auf dem Bildschirm, daher wird der Rand
+    /// durch den Zoom geteilt.
+    private var layerOverflow: CGFloat {
+        120 / max(0.05, canvasScale)
+    }
+
+    /// Auswahl-Halo um ein Element (Papier-Einheiten): deckt Eck-Griffe und
+    /// Knöpfe ab, die über die Kontur hinausragen.
+    private var layerHaloPad: CGFloat {
+        48 / max(0.05, canvasScale)
     }
 
     /// Die Text-/Bild-Ebene samt Eingabe-Filter und Zwei-Finger-Zoom.
@@ -870,15 +915,21 @@ public struct LessonDrawingOverlayView: View {
     /// in vertretbarer Zeit bestimmen kann.
     @ViewBuilder
     private func manipulableLayerContainer(viewport: DrawingViewport) -> some View {
+        // Die Hülle ist um den Überhang größer als das Papier. Nur so bekommen
+        // Griffe und Knöpfe, die über den Papierrand ragen, Berührungen (SwiftUI
+        // und UIKit schneiden sonst am Rahmen ab). Der Inhalt ist um denselben
+        // Betrag eingerückt, daher bleiben alle Koordinaten Papier-Koordinaten.
+        let overflow = layerOverflow
         InputFilteredContent(
-            content: manipulableLayer,
-            policy: layerInputPolicy
+            content: manipulableLayer.padding(overflow),
+            policy: layerInputPolicy,
+            overflow: overflow
         )
         .frame(
-            width: paperWidth,
-            height: canvasContentHeight,
-            alignment: .topLeading
+            width: paperWidth + 2 * overflow,
+            height: canvasContentHeight + 2 * overflow
         )
+        .offset(x: -overflow, y: -overflow)
         .opacity(showsEditor ? 1 : 0)
         .allowsHitTesting(manipulableLayerHitTesting)
         .simultaneousGesture(layerMagnificationGesture(in: viewport))
@@ -902,6 +953,11 @@ public struct LessonDrawingOverlayView: View {
         let canvasH = canvasContentHeight
         let textActive = isTextToolActive
         let fingerEnabled = fingerManipulationEnabled
+        // Halo in Papier-Einheiten (fest auf dem Bildschirm, daher durch den
+        // Zoom geteilt). Er umschließt Eck-Griffe, Knöpfe oben, links und
+        // rechts sowie – bei Textfeldern – die Schriftgrößen-Knöpfe unten.
+        let pad = layerHaloPad
+        let bottomExtra = 60 / max(0.05, canvasScale)
         return LayerInputPolicy(
             textToolActive: textActive,
             fingerSelects: fingerEnabled,
@@ -909,32 +965,26 @@ public struct LessonDrawingOverlayView: View {
                 var rects: [CGRect] = []
                 if let id = selectedImage,
                    let box = images.first(where: { $0.id == id }) {
-                    // Inkl. Anfasser-Halo: Eck-Griffe ragen ~24 pt heraus, die
-                    // Options-Knöpfe liegen ~47 pt über der Oberkante.
-                    var rect = CGRect(
+                    let rect = CGRect(
                         x: CGFloat(box.x),
                         y: CGFloat(box.y),
                         width: CGFloat(box.width),
                         height: CGFloat(box.height)
                     )
-                    rect = rect.insetBy(dx: -24, dy: -24)
-                    rect.origin.y -= 28
-                    rect.size.height += 28
-                    rects.append(rect)
+                    rects.append(rect.insetBy(dx: -pad, dy: -pad))
                 }
                 for id in [selectedText, editingText].compactMap({ $0 }) {
                     guard let box = texts.first(where: { $0.id == id }) else { continue }
                     let height = estimatedTextBoxHeight(box, fontStyle: fontStyle)
-                    var rect = CGRect(
+                    let rect = CGRect(
                         x: CGFloat(box.x),
                         y: CGFloat(box.y),
                         width: CGFloat(box.width),
                         height: height
                     )
-                    rect = rect.insetBy(dx: -24, dy: -24)
-                    rect.origin.y -= 28
-                    rect.size.height += 28
-                    rects.append(rect)
+                    var halo = rect.insetBy(dx: -pad, dy: -pad)
+                    halo.size.height += bottomExtra
+                    rects.append(halo)
                 }
                 return rects
             },
@@ -957,13 +1007,13 @@ public struct LessonDrawingOverlayView: View {
                         height: height
                     ))
                 }
-                // Hintergrund-Tap zum Aufheben der Auswahl: Wenn ein Element
-                // ausgewählt ist und der aktuelle Input die Fläche bedient
-                // (Text-Werkzeug oder Finger bei „Nur Apple Pencil“), deckt
-                // die Ebene mit einem Color.clear die ganze Fläche ab. Dann
+                // Hintergrund-Tap zum Aufheben der Auswahl (`layerBackdrop`):
+                // Ist ein Element ausgewählt und bedient der aktuelle Input
+                // die Fläche (Text-Werkzeug oder Finger bei „Nur Apple
+                // Pencil“), liegt eine Color.clear-Fläche ganz unten. Dann
                 // muss pointInside überall true liefern, damit der Finger-
-                // Tap den Hintergrund erreicht; hitTest filtert Pencil trotzdem
-                // durch (PencilPassThroughHitTest).
+                // Tap sie erreicht. Pencil filtert hitTest weiterhin: Auf
+                // leerer Fläche zeichnet er (nil → Zeichenfläche).
                 if (selectedImage != nil || selectedText != nil || editingText != nil)
                     && (textActive || fingerEnabled) {
                     rects.append(CGRect(origin: .zero, size: CGSize(width: paperW, height: canvasH)))
@@ -974,20 +1024,20 @@ public struct LessonDrawingOverlayView: View {
     }
 
     /// Text- und Bild-Ebene in unskalierten Zeichenflächen-Koordinaten.
+    ///
+    /// Schichtung (unten → oben): Tipp-Fläche, dann Text- oder Bildebene. Das
+    /// **ausgewählte** Element liegt immer über den Elementen der anderen Art,
+    /// damit seine Griffe und Knöpfe nie hinter Text oder Bildern verschwinden.
     private var manipulableLayer: some View {
-        // Ein Tipp auf die leere Fläche ist nur dann eine Bedienung (Auswahl
-        // aufheben), wenn der aktuelle Input die Fläche bedienen soll. Im
-        // Zeichen-Modus zeichnet der Finger/Stift stattdessen – dort darf die
-        // Ebene keinen vollflächigen Hintergrund haben, der das Zeichnen
-        // blockieren würde.
-        let allowsBackgroundTap = isTextToolActive || fingerManipulationEnabled
+        let textOnTop = selectedTextBoxID != nil || editingTextBoxID != nil
         return ZStack(alignment: .topLeading) {
+            layerBackdrop
+                .zIndex(0)
+
             NoteTextBoxesLayer(
                 textBoxes: $textBoxes,
                 selectedID: $selectedTextBoxID,
                 editingID: $editingTextBoxID,
-                isTextToolActive: isTextToolActive,
-                allowsBackgroundTap: allowsBackgroundTap,
                 areaSize: CGSize(
                     width: paperWidth,
                     height: canvasContentHeight
@@ -995,11 +1045,10 @@ public struct LessonDrawingOverlayView: View {
                 registerUndo: { before, after in
                     recordTextChange(from: before, to: after)
                 },
-                newTextColorHex: preferredTextColorHex,
-                newTextFontSize: viewModel.drawingSettings.defaultTextFontSize,
                 textFontStyle: viewModel.drawingSettings.textFontStyle,
                 canvasScale: canvasScale
             )
+            .zIndex(textOnTop ? 2 : 1)
 
             NoteImagesLayer(
                 images: $imageBoxes,
@@ -1009,7 +1058,6 @@ public struct LessonDrawingOverlayView: View {
                 // (Nutzer-Regeln): Finger „immer“ bei „Nur Apple Pencil“,
                 // sonst nur im Text-Werkzeug.
                 canSelectElements: isTextToolActive || fingerManipulationEnabled,
-                allowsBackgroundTap: allowsBackgroundTap,
                 areaSize: CGSize(
                     width: paperWidth,
                     height: canvasContentHeight
@@ -1024,7 +1072,80 @@ public struct LessonDrawingOverlayView: View {
                 },
                 canvasScale: canvasScale
             )
+            .zIndex(textOnTop ? 1 : 2)
         }
+        .frame(width: paperWidth, height: canvasContentHeight, alignment: .topLeading)
+        // Genau ein Element ist ausgewählt: Text und Bild schließen sich aus.
+        .onChange(of: selectedTextBoxID) { _, newValue in
+            if newValue != nil, selectedImageID != nil {
+                selectedImageID = nil
+            }
+        }
+        .onChange(of: selectedImageID) { _, newValue in
+            guard newValue != nil else { return }
+            if selectedTextBoxID != nil { selectedTextBoxID = nil }
+            if editingTextBoxID != nil { editingTextBoxID = nil }
+        }
+    }
+
+    /// Unsichtbare Tipp-Fläche ganz unten in der Ebene: Ein Tipp auf die leere
+    /// Fläche hebt die Auswahl auf bzw. erzeugt im Text-Werkzeug ein Textfeld.
+    ///
+    /// Liegt **unter** Text- und Bildebene, damit sie nie einen Tipp auf ein
+    /// anderes Element abfängt. Bewusst reine SwiftUI-Fläche: Eine UIKit-
+    /// Hilfsview würde bei Berührungen SwiftUI-Elemente darüber verdrängen.
+    @ViewBuilder
+    private var layerBackdrop: some View {
+        let allowsBackgroundTap = isTextToolActive || fingerManipulationEnabled
+        let hasSelection = selectedTextBoxID != nil
+            || editingTextBoxID != nil
+            || selectedImageID != nil
+        // Im Zeichen-Modus nur, wenn der Finger die Fläche bedienen darf –
+        // sonst würde die Fläche das Zeichnen blockieren.
+        if isTextToolActive || (allowsBackgroundTap && hasSelection) {
+            Color.clear
+                .frame(width: paperWidth, height: canvasContentHeight)
+                .contentShape(Rectangle())
+                .gesture(
+                    SpatialTapGesture(coordinateSpace: .local)
+                        .onEnded { value in
+                            handleLayerBackgroundTap(at: value.location)
+                        }
+                )
+        }
+    }
+
+    /// Tipp auf die leere Fläche: Auswahl und Bearbeitung beenden (Aufräumen
+    /// und Undo übernimmt die Textebene über ihre Änderungs-Handler). Ohne
+    /// Auswahl erzeugt der Tipp im Text-Werkzeug ein neues Textfeld.
+    private func handleLayerBackgroundTap(at location: CGPoint) {
+        if selectedTextBoxID != nil || editingTextBoxID != nil || selectedImageID != nil {
+            Haptics.tap()
+            editingTextBoxID = nil
+            selectedTextBoxID = nil
+            selectedImageID = nil
+            return
+        }
+        guard isTextToolActive else { return }
+        createTextBox(at: location)
+    }
+
+    /// Neues Textfeld an der Tipp-Stelle, direkt mit Tastatur.
+    private func createTextBox(at location: CGPoint) {
+        guard let box = NoteTextBoxesLayer.makeNewBox(
+            at: location,
+            areaSize: CGSize(width: paperWidth, height: canvasContentHeight),
+            colorHex: preferredTextColorHex,
+            fontSize: viewModel.drawingSettings.defaultTextFontSize
+        ) else { return }
+        Haptics.tap()
+        let before = textBoxes
+        textBoxes.append(box)
+        recordTextChange(from: before, to: textBoxes)
+        // Auswahl und Bearbeitung direkt setzen – ohne Element-Bindings.
+        selectedImageID = nil
+        selectedTextBoxID = box.id
+        editingTextBoxID = box.id
     }
 
     private var manipulableLayerHitTesting: Bool {
@@ -2174,12 +2295,14 @@ public struct LessonDrawingOverlayView: View {
         withAnimation(.easeOut(duration: 0.16)) {
             isBackdropVisible = false
         }
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
-            isExpanded = false
-            heroBlend = 0
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+        // Speichern und Rendern erst, wenn der Rückflug in den Stundenblock
+        // **vollständig** abgeschlossen ist. Vorher hat das Overlay den Block
+        // noch nicht erreicht; ein früheres Entfernen (wie zuvor nach 0,18 s)
+        // schnitt die Feder mitten im Flug ab.
+        var didFinishDismiss = false
+        let finishDismiss: () -> Void = {
+            guard !didFinishDismiss else { return }
+            didFinishDismiss = true
             persistEditingHistory()
 
             // Immer die bekannte Papiergröße verwenden – `PKCanvasView.bounds`
@@ -2228,6 +2351,23 @@ public struct LessonDrawingOverlayView: View {
                 backgroundScale: backgroundScale,
                 tagID: tagID
             )
+        }
+
+        withAnimation(
+            .spring(response: 0.36, dampingFraction: 0.9),
+            completionCriteria: .logicallyComplete
+        ) {
+            isExpanded = false
+            heroBlend = 0
+        } completion: {
+            finishDismiss()
+        }
+
+        // Sicherheitsnetz: Kommt die Abschluss-Meldung nicht (etwa weil die
+        // Animation verworfen wurde), wird die Notiz trotzdem gespeichert.
+        // Die Abschluss-Funktion läuft nur einmal.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            finishDismiss()
         }
     }
 

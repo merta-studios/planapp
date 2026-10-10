@@ -52,19 +52,10 @@ struct NoteTextBoxesLayer: View {
     @Binding var textBoxes: [NoteTextBox]
     @Binding var selectedID: UUID?
     @Binding var editingID: UUID?
-    let isTextToolActive: Bool
-    /// Ob ein Tipp auf die leere Fläche die Auswahl aufheben bzw. die
-    /// Bearbeitung beenden darf. Nur wenn der aktuelle Input die Fläche
-    /// bedienen soll (Text-Werkzeug oder Finger-Modus bei „Nur Apple
-    /// Pencil“) – im Zeichen-Modus darf es keinen vollflächigen Hintergrund
-    /// geben, der jede Berührung (auch die des Stifts) schlucken würde.
-    let allowsBackgroundTap: Bool
     let areaSize: CGSize
     /// Undo-Registrierung: (Snapshot vorher, Snapshot nachher).
     let registerUndo: (_ before: [NoteTextBox], _ after: [NoteTextBox]) -> Void
-    /// Farbe, Schriftgröße und Schriftart der Textfelder.
-    var newTextColorHex: String = NoteTextBox.defaultColorHex
-    var newTextFontSize: Double = NoteTextBox.defaultFontSize
+    /// Schriftart der Textfelder.
     var textFontStyle: NoteTextFontStyle = .system
     /// Wirksame Skalierung der Zeichenfläche. Rahmen und Bedienelemente werden
     /// gegen diese Skalierung korrigiert, damit sie auf dem Bildschirm immer
@@ -85,31 +76,18 @@ struct NoteTextBoxesLayer: View {
         )
     }
 
+    /// Das ausgewählte bzw. in Bearbeitung befindliche Feld liegt **ganz oben**,
+    /// damit seine Griffe und Knöpfe nie hinter anderen Textfeldern verschwinden.
+    /// Über `zIndex` statt Umsortieren: Die Views bleiben an Ort und Stelle,
+    /// ein aktives UITextView wird dadurch nicht umgehängt.
+    private func isFrontBox(_ id: UUID) -> Bool {
+        id == selectedID || id == editingID
+    }
+
     var body: some View {
         let size = safeAreaSize
 
         return ZStack(alignment: .topLeading) {
-            // Hintergrund fängt Tipp-Gesten ab: Bearbeiten beenden, Auswahl
-            // aufheben oder (mit Text-Werkzeug) ein neues Feld erstellen.
-            // Im Zeichen-Modus (Stift zeichnen) gibt es ihn nur, wenn der
-            // Finger die Fläche bedienen darf – sonst würde er das Zeichnen
-            // blockieren. Pencil-Berührungen reicht er im Zeichen-Modus
-            // durch: Der Stift zeichnet auf leerer Fläche weiter, statt zu
-            // deselecten; im Text-Modus tippt auch der Pencil normal.
-            if isTextToolActive || (allowsBackgroundTap && (selectedID != nil || editingID != nil)) {
-                PencilPassThroughHitTest(
-                    content: Color.clear
-                        .contentShape(Rectangle())
-                        .gesture(
-                            SpatialTapGesture(coordinateSpace: .local)
-                                .onEnded { value in
-                                    handleBackgroundTap(at: value.location)
-                                }
-                        ),
-                    pencilPassesThrough: !isTextToolActive
-                )
-            }
-
             // Explizite ID verhindert, dass SwiftUI bei einer gerade
             // erzeugten/entfernten Box einen veralteten Element-Index
             // wiederverwendet. Die Box wird weiter als Wert übergeben und
@@ -151,11 +129,11 @@ struct NoteTextBoxesLayer: View {
                     },
                     fontStyle: textFontStyle
                 )
+                .zIndex(isFrontBox(box.id) ? 1 : 0)
             }
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .coordinateSpace(name: Self.coordinateSpaceName)
-        .clipped()
         .onChange(of: selectedID) { _, newValue in
             if editingID == nil {
                 pruneEmptyBoxes(keeping: newValue)
@@ -202,37 +180,24 @@ struct NoteTextBoxesLayer: View {
         editingID = nil
     }
 
-    private func finishEditingAndDeselect() {
-        let wasEditing = editingID != nil
-        if wasEditing { editingID = nil }
-        if selectedID != nil { selectedID = nil }
-        if !wasEditing {
-            pruneEmptyBoxes(keeping: nil)
-        }
-    }
+    // MARK: - Erstellen (Tipp auf leere Fläche, Text-Werkzeug)
 
-    // MARK: - Tipp auf leere Fläche
+    /// Neues Textfeld an der Tipp-Stelle. Reine Rechnung ohne Zustand: Die
+    /// Ebene darüber (Overlay) fügt es ein, damit der Tipp-Catcher ganz
+    /// unten liegen kann – unter Text- **und** Bildebene.
+    static func makeNewBox(
+        at location: CGPoint,
+        areaSize: CGSize,
+        colorHex: String,
+        fontSize: Double
+    ) -> NoteTextBox? {
+        let size = CGSize(
+            width: areaSize.width.isFinite && areaSize.width > 0 ? areaSize.width : 320,
+            height: areaSize.height.isFinite && areaSize.height > 0 ? areaSize.height : 180
+        )
+        let margin: CGFloat = 6
+        guard location.x.isFinite, location.y.isFinite else { return nil }
 
-    private func handleBackgroundTap(at location: CGPoint) {
-        if editingID != nil || selectedID != nil {
-            // Bearbeiten beenden und Auswahl aufheben – der nächste Tipp
-            // erzeugt dann sofort ein neues Feld.
-            Haptics.tap()
-            finishEditingAndDeselect()
-        } else if isTextToolActive {
-            createTextBox(at: location)
-        }
-    }
-
-    // MARK: - Erstellen / Löschen
-
-    private func createTextBox(at location: CGPoint) {
-        let size = safeAreaSize
-        guard location.x.isFinite, location.y.isFinite else { return }
-
-        Haptics.tap()
-
-        let before = textBoxes
         let defaultWidth: CGFloat = 240
         let minWidth: CGFloat = 120
 
@@ -254,23 +219,14 @@ struct NoteTextBoxesLayer: View {
             x: Double(x),
             y: Double(y),
             width: Double(width),
-            fontSize: newTextFontSize,
-            colorHex: newTextColorHex.isEmpty ? NoteTextBox.defaultColorHex : newTextColorHex
+            fontSize: fontSize,
+            colorHex: colorHex.isEmpty ? NoteTextBox.defaultColorHex : colorHex
         )
-        guard let box = rawBox.sanitized(in: size) else { return }
-
-        // Das neue UIKit-Textfeld wird direkt nach dem State-Update
-        // Erstbeantworter. Eine Layout-Animation um einen neu erzeugten
-        // UITextView kann den Responder während `makeUIView` entfernen und
-        // war dadurch eine weitere Quelle für Abstürze.
-        textBoxes.append(box)
-        registerUndo(before, textBoxes)
-
-        // Kein DispatchQueue-Umweg mehr nötig: Ohne Element-Bindings ist es
-        // sicher, Auswahl und Bearbeitung direkt zu setzen.
-        selectedID = box.id
-        editingID = box.id
+        return rawBox.sanitized(in: size)
     }
+
+    // MARK: - Löschen
+
 
     private func deleteBox(id: UUID) {
         guard textBoxes.contains(where: { $0.id == id }) else { return }
