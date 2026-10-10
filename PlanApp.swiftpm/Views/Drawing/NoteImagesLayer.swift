@@ -12,7 +12,8 @@ import UIKit
 /// - Ziehen an den vier Eckpunkten: seitenrichtig skalieren.
 /// - Ziehen in der Mitte: verschieben.
 /// - Roter Knopf: löschen. Blauer Knopf: zuschneiden (eigene Übersicht).
-/// - Tippen daneben (Text-Werkzeug/Finger-Modus): Auswahl aufheben.
+/// - Tippen daneben (Text-Werkzeug/Finger-Modus): Auswahl aufheben (die
+///   Ebene darunter, `LessonDrawingOverlayView.layerBackdrop`).
 ///
 /// Wie die Text-Ebene arbeitet auch diese Ebene bewusst **ohne**
 /// `ForEach($images)`-Element-Bindings: Werte gehen nach unten, Änderungen
@@ -29,16 +30,6 @@ struct NoteImagesLayer: View {
     /// Text-Werkzeug oder Finger-Modus bei „Nur Apple Pencil“. Die Fläche des
     /// **bereits ausgewählten** Bildes bleibt davon unabhängig anfassbar.
     let canSelectElements: Bool
-    /// Ob ein Tipp auf die leere Fläche die Auswahl aufheben darf.
-    ///
-    /// **Nur** wenn der aktuelle Input die Fläche bedienen soll (Text-Werkzeug
-    /// oder Finger-Modus bei „Nur Apple Pencil“). Ist ein Zeichen-Werkzeug
-    /// aktiv und zeichnet der Finger/Stift, darf es **keinen** vollflächigen
-    /// Hintergrund geben, der das Zeichnen komplett blockieren würde. Der
-    /// Pencil wird zusätzlich von `PencilPassThroughHitTest` durchgereicht,
-    /// damit ein Stift-Strich auf der leeren Fläche auch bei ausgewähltem
-    /// Bild zeichnet und nicht die Auswahl aufhebt.
-    let allowsBackgroundTap: Bool
     let areaSize: CGSize
     /// Undo-Registrierung: (Snapshot vorher, Snapshot nachher).
     let registerUndo: (_ before: [NoteImageBox], _ after: [NoteImageBox]) -> Void
@@ -62,27 +53,16 @@ struct NoteImagesLayer: View {
         )
     }
 
+    /// Das ausgewählte Bild liegt **ganz oben**, damit seine Griffe und Knöpfe
+    /// nie hinter anderen Bildern verschwinden (über `zIndex`, ohne Umsortieren).
+    private func isFrontImage(_ id: UUID) -> Bool {
+        id == selectedID
+    }
+
     var body: some View {
         let size = safeAreaSize
 
         return ZStack(alignment: .topLeading) {
-            // Hintergrund fängt Tipps ab und hebt die Auswahl auf. Er existiert
-            // nur, wenn ein Tipp auf leere Fläche eine Bedienung ist (nicht
-            // zeichnen) – sonst würde er die Zeichenfläche blockieren. Pencil-
-            // Berührungen reicht er im Zeichen-Modus durch (dort zeichnet der
-            // Stift auf leerer Fläche weiter).
-            if allowsBackgroundTap, selectedID != nil {
-                PencilPassThroughHitTest(
-                    content: Color.clear
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            Haptics.tap()
-                            selectedID = nil
-                        },
-                    pencilPassesThrough: !isTextToolActive
-                )
-            }
-
             ForEach(images, id: \.id) { box in
                 NoteImageBoxView(
                     box: box,
@@ -114,11 +94,11 @@ struct NoteImagesLayer: View {
                     },
                     onGestureEnd: { finishGesture(id: box.id) }
                 )
+                .zIndex(isFrontImage(box.id) ? 1 : 0)
             }
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .coordinateSpace(name: Self.coordinateSpaceName)
-        .clipped()
     }
 
     // MARK: - Auswahl & Löschen

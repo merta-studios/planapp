@@ -168,3 +168,28 @@ App-Package auf dem Gerät geprüft werden.
 6. In jeder Ecke und im schmalen Fenster öffnen; auch aufgeklappte Farben bleiben
    erreichbar. Nach mehrfachem Öffnen/Schließen keine übrig gebliebenen Observer
    oder unsichtbaren Vollbild-Trefferflächen über Papier/Toolbar.
+
+### Bilder & Textfelder: Auswahl, Griffe und Zoom
+
+1. Notiz öffnen, Text-Werkzeug wählen, ein Bild einfügen. Es ist sofort
+   ausgewählt. Verschieben (Mitte ziehen), an einer Ecke skalieren, über den
+   roten Knopf löschen und über den blauen Knopf zuschneiden – auch dann, wenn
+   das Bild am oberen, linken oder rechten Papierrand liegt und die Knöpfe über
+   den Rand ragen.
+2. Ein weiteres Bild einfügen und das erste antippen: Es wird ausgewählt, das
+   zuvor gewählte verliert die Auswahl. Ein überlappendes Bild oder Textfeld
+   liegt **unter** dem ausgewählten Element; die Griffe liegen immer vorn.
+3. Bei ausgewähltem Bild ein Textfeld antippen (oder umgekehrt): Immer nur ein
+   Element ist ausgewählt. Der Griff des ausgewählten Textfelds liegt vor einem
+   darüberliegenden Bild.
+4. Im Text-Werkzeug auf die leere Fläche tippen: neues Textfeld. Auf die leere
+   Fläche tippen, während etwas ausgewählt ist: nur Auswahl aufheben (kein neues
+   Feld, kein Bild wandert).
+5. Im Zeichen-Modus mit Apple Pencil über ein ausgewähltes Bild und durch seine
+   Halo-Zone zeichnen: Striche entstehen dort, wo keine Griffe oder Knöpfe liegen.
+6. Zwei-Finger-Pinch auf die Notiz mehrmals hin- und herzoomen: Schrift und
+   Striche bleiben scharf (keine Pixelung). Zeichnung, Text und Bilder bleiben
+   beim Zoomen deckungsgleich, auch bei kleinem Zoom (Herauszoomen).
+7. Notiz schließen: Der Rückflug in den Stundenblock läuft in einem Zug zu Ende.
+   Die Notiz verschwindet erst am Ziel, ohne Sprung oder abgeschnittene Bewegung.
+   Danach zeigt der Block die aktuelle Vorschau.

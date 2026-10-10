@@ -50,6 +50,31 @@ final class InputFilteredPassthroughView<Content: View>: UIView {
         fingerSelects: false,
         selectionRects: { [] }
     )
+    /// Überhang über den Papierrahmen hinaus (in Papier-Einheiten). Die View
+    /// ist um diesen Rand größer als das Papier, damit Anfasser und Knöpfe,
+    /// die über die Ecken ragen, überhaupt Berührungen bekommen. Alle Regeln
+    /// (Rechtecke der Policy) gelten weiter in Papier-Koordinaten.
+    var overflow: CGFloat = 0 {
+        didSet {
+            guard oldValue != overflow else { return }
+            applyOverflowConstraints()
+        }
+    }
+    /// Randbedingungen des Hosts: links, rechts, oben, unten (in dieser Reihenfolge).
+    var overflowConstraints: [NSLayoutConstraint] = []
+
+    private func applyOverflowConstraints() {
+        guard overflowConstraints.count == 4 else { return }
+        overflowConstraints[0].constant = -overflow
+        overflowConstraints[1].constant = overflow
+        overflowConstraints[2].constant = -overflow
+        overflowConstraints[3].constant = overflow
+    }
+
+    /// Umrechnung von View-Koordinaten in Papier-Koordinaten.
+    private func paperPoint(_ point: CGPoint) -> CGPoint {
+        CGPoint(x: point.x - overflow, y: point.y - overflow)
+    }
 
     private enum TouchKind {
         case pencil, finger, unknown
@@ -73,14 +98,15 @@ final class InputFilteredPassthroughView<Content: View>: UIView {
             return super.point(inside: point, with: event)
         }
         // Auswahl-Halo (inkl. Anfasser/Buttons) hat Vorrang.
-        if policy.selectionRects().contains(where: { $0.contains(point) }) {
+        let paper = paperPoint(point)
+        if policy.selectionRects().contains(where: { $0.contains(paper) }) {
             return true
         }
         // Jedes Element-Rechteck (mit kleinem Toleranz-Rand) gilt als Inhalt.
         // Liegt der Punkt dort, muss hitTest entscheiden (Finger→Inhalt,
         // Pencil→nur Auswahl). Sonst ist es leer und fällt sofort durch.
         let expandedContent = policy.contentRects().contains { rect in
-            rect.insetBy(dx: -6, dy: -6).contains(point)
+            rect.insetBy(dx: -6, dy: -6).contains(paper)
         }
         if expandedContent { return true }
         return false
@@ -116,7 +142,7 @@ final class InputFilteredPassthroughView<Content: View>: UIView {
         }
 
         // Zeichen-Werkzeuge: nur die Auswahl-Flächen bleiben anfassbar.
-        let onSelection = policy.selectionRects().contains { $0.contains(point) }
+        let onSelection = policy.selectionRects().contains { $0.contains(paperPoint(point)) }
 
         switch kind {
         case .pencil:
@@ -193,6 +219,9 @@ final class InputFilteredPassthroughView<Content: View>: UIView {
 struct InputFilteredContent<Content: View>: UIViewRepresentable {
     var content: Content
     var policy: LayerInputPolicy
+    /// Überhang über den Rahmen hinaus (Papier-Einheiten). Der Inhalt muss
+    /// um denselben Betrag eingerückt sein (siehe `padding` beim Aufrufer).
+    var overflow: CGFloat = 0
 
     func makeUIView(context: Context) -> InputFilteredPassthroughView<Content> {
         let view = InputFilteredPassthroughView<Content>()
@@ -204,81 +233,26 @@ struct InputFilteredContent<Content: View>: UIViewRepresentable {
         host.view.translatesAutoresizingMaskIntoConstraints = false
         view.host = host
         view.addSubview(host.view)
-        NSLayoutConstraint.activate([
-            host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            host.view.topAnchor.constraint(equalTo: view.topAnchor),
-            host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
+        let constraints = [
+            host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: -overflow),
+            host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: overflow),
+            host.view.topAnchor.constraint(equalTo: view.topAnchor, constant: -overflow),
+            host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: overflow)
+        ]
+        NSLayoutConstraint.activate(constraints)
+        view.overflowConstraints = constraints
+        view.overflow = overflow
         view.policy = policy
         return view
     }
 
     func updateUIView(_ uiView: InputFilteredPassthroughView<Content>, context: Context) {
         uiView.host?.rootView = content
+        uiView.overflow = overflow
         uiView.policy = policy
     }
 
     static func dismantleUIView(_ uiView: InputFilteredPassthroughView<Content>, coordinator: Void) {
-        uiView.host?.view.removeFromSuperview()
-        uiView.host = nil
-    }
-}
-
-/// Unsichtbare Vollflächen-Tip-Fläche der Text-/Bild-Ebene („Auswahl
-/// aufheben“, „neues Textfeld“), die Apple-Pencil-Berührungen im
-/// **Zeichen-Modus** durchlässt.
-///
-/// Ohne diesen Filter würde ein Pencil-Tipp auf die leere Fläche (mit
-/// ausgewähltem Bild) die Auswahl aufheben, statt zu zeichnen – die Fläche
-/// soll dann aber zeichnen (nur Tippen auf das Bild selbst hebt die Auswahl
-/// auf). Im Text-Modus gibt es nichts zu zeichnen; dort tippt auch der Pencil
-/// normal auf die Fläche.
-struct PencilPassThroughHitTest<Content: View>: UIViewRepresentable {
-    var content: Content
-    /// `true`: Pencil-Berührungen fallen durch (Zeichen-Modus).
-    var pencilPassesThrough: Bool
-
-    final class PassThroughView<Hosted: View>: UIView {
-        var host: UIHostingController<Hosted>?
-        var pencilPassesThrough = true
-
-        override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-            if pencilPassesThrough,
-               let touches = event?.allTouches,
-               touches.contains(where: { $0.type == .pencil }) {
-                return nil
-            }
-            return super.hitTest(point, with: event)
-        }
-    }
-
-    func makeUIView(context: Context) -> PassThroughView<Content> {
-        let view = PassThroughView<Content>()
-        view.backgroundColor = .clear
-        view.isOpaque = false
-        let host = UIHostingController(rootView: content)
-        host.view.backgroundColor = .clear
-        host.view.isOpaque = false
-        host.view.translatesAutoresizingMaskIntoConstraints = false
-        view.host = host
-        view.addSubview(host.view)
-        NSLayoutConstraint.activate([
-            host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            host.view.topAnchor.constraint(equalTo: view.topAnchor),
-            host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
-        view.pencilPassesThrough = pencilPassesThrough
-        return view
-    }
-
-    func updateUIView(_ uiView: PassThroughView<Content>, context: Context) {
-        uiView.host?.rootView = content
-        uiView.pencilPassesThrough = pencilPassesThrough
-    }
-
-    static func dismantleUIView(_ uiView: PassThroughView<Content>, coordinator: Void) {
         uiView.host?.view.removeFromSuperview()
         uiView.host = nil
     }
