@@ -42,6 +42,27 @@ struct NoteTextEditor: UIViewRepresentable {
         Coordinator(self)
     }
 
+    /// Die Höhe kommt vom Textsystem der UITextView selbst – nicht aus einer
+    /// Schätzung. Die Editier-Ansicht war vorher auf eine geschätzte Höhe
+    /// begrenzt; wich die Schätzung vom tatsächlichen Umbruch ab, wurden
+    /// Zeilen abgeschnitten. Die Breite gibt der Aufrufer vor.
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: CustomNoteTextView,
+        context: Context
+    ) -> CGSize? {
+        let proposedWidth = proposal.width ?? .infinity
+        let width = proposedWidth.isFinite && proposedWidth > 0
+            ? proposedWidth
+            : uiView.bounds.width
+        guard width.isFinite, width > 0 else { return nil }
+        let fitted = uiView.sizeThatFits(
+            CGSize(width: width, height: .greatestFiniteMagnitude)
+        )
+        let height = fitted.height.isFinite ? fitted.height : 36
+        return CGSize(width: width, height: max(36, ceil(height)))
+    }
+
     func makeUIView(context: Context) -> CustomNoteTextView {
         let textView = CustomNoteTextView()
         textView.delegate = context.coordinator
@@ -147,6 +168,9 @@ struct NoteTextEditor: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             guard !isApplyingExternalChange, !isDismantled else { return }
+            // Die Höhe folgt dem Text (siehe `sizeThatFits`): Die Größe neu
+            // anfragen, damit auch eine neue Zeile sofort sichtbar wird.
+            textView.invalidateIntrinsicContentSize()
             let newText = textView.text ?? ""
             guard newText != parent.text else { return }
             parent.onChangeText(newText)

@@ -193,3 +193,14 @@ App-Package auf dem Gerät geprüft werden.
 7. Notiz schließen: Der Rückflug in den Stundenblock läuft in einem Zug zu Ende.
    Die Notiz verschwindet erst am Ziel, ohne Sprung oder abgeschnittene Bewegung.
    Danach zeigt der Block die aktuelle Vorschau.
+
+8. Neues Textfeld im Text-Werkzeug antippen und ohne Enter weiterschreiben: Das
+   Feld wächst nach rechts, bis zum rechten Papierrand; erst dort bricht die Zeile
+   um. Alle Zeilen sind beim Schreiben sichtbar (nicht nur die erste). Nach dem
+   Schließen und erneuten Öffnen bricht der Text bei der Breite des Feldes um.
+9. Bild im Text-Werkzeug auswählen, dann im Stift-Werkzeug (Finger und Pencil):
+   Kreuz, Eckpunkte und Verschieben reagieren; der Strich entsteht nur außerhalb
+   der Griffe.
+10. Notiz unten über den Zieh-Griff vergrößern, mehrfach, und bis zum unteren Rand
+   der Zeichenfläche zeichnen; danach zwei Finger zoomen und den Zieh-Griff erneut
+   benutzen. Die Zeichnung darf beim Zoomen nicht kurz wegspringen.

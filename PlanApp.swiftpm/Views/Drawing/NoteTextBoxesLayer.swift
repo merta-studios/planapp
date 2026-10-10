@@ -66,6 +66,10 @@ struct NoteTextBoxesLayer: View {
 
     @State private var gestureSnapshot: [NoteTextBox]? = nil
     @State private var editSessionSnapshot: [NoteTextBox]? = nil
+    /// Frisch erzeugtes Feld, das beim Schreiben nach rechts wächst (statt in
+    /// eine neue Zeile zu brechen). Gilt nur für die erste Bearbeitung eines
+    /// leeren Feldes – danach oder nach manuellem Größenändern nicht mehr.
+    @State private var growingBoxID: UUID? = nil
 
     private let margin: CGFloat = 6
 
@@ -105,6 +109,7 @@ struct NoteTextBoxesLayer: View {
                     onDelete: { deleteBox(id: box.id) },
                     onChangeText: { newText in
                         updateBox(id: box.id) { $0.text = newText }
+                        growWidthToFitText(id: box.id)
                     },
                     onGestureStart: {
                         if gestureSnapshot == nil {
@@ -118,6 +123,7 @@ struct NoteTextBoxesLayer: View {
                         }
                     },
                     onResize: { newX, newWidth in
+                        growingBoxID = nil
                         updateBox(id: box.id) {
                             $0.x = Double(newX)
                             $0.width = Double(newWidth)
@@ -141,6 +147,11 @@ struct NoteTextBoxesLayer: View {
         }
         .onChange(of: editingID) { oldValue, newValue in
             if let newValue, newValue != oldValue {
+                growingBoxID = isEmptyBox(newValue) ? newValue : nil
+            } else if newValue == nil {
+                growingBoxID = nil
+            }
+            if let newValue, newValue != oldValue {
                 if editSessionSnapshot == nil {
                     editSessionSnapshot = textBoxes
                 }
@@ -153,6 +164,36 @@ struct NoteTextBoxesLayer: View {
                 }
             }
         }
+    }
+
+    // MARK: - Mitwachsen beim ersten Schreiben
+
+    private func isEmptyBox(_ id: UUID) -> Bool {
+        guard let box = textBoxes.first(where: { $0.id == id }) else { return false }
+        return box.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Wächst das frisch erzeugte Feld um die Breite der längsten Zeile, damit
+    /// der Text in derselben Zeile weiterläuft – bis zum rechten Papierrand.
+    /// Erst dort bricht der Text wie gewohnt in eine neue Zeile um. Die Breite
+    /// wächst nur, sie schrumpft beim Löschen nicht.
+    private func growWidthToFitText(id: UUID) {
+        guard growingBoxID == id,
+              let box = textBoxes.first(where: { $0.id == id }) else { return }
+        let font = textFontStyle.uiFont(size: CGFloat(box.fontSize))
+        let longestLine = box.text
+            .components(separatedBy: "\n")
+            .map { ($0 as NSString).size(withAttributes: [.font: font]).width }
+            .max() ?? 0
+        // Innenabstand des Feldes (je 8 pt links und rechts) plus Reserve für
+        // den Cursor.
+        let neededWidth = ceil(longestLine) + 16 + 6
+        // Nie über den rechten Rand hinaus – so verschiebt sich das Feld beim
+        // Wachsen nicht nach links (siehe `sanitized(in:)`).
+        let roomToRightEdge = safeAreaSize.width - margin - CGFloat(box.x)
+        let targetWidth = min(neededWidth, roomToRightEdge, 640)
+        guard targetWidth.isFinite, targetWidth > CGFloat(box.width) else { return }
+        updateBox(id: id) { $0.width = Double(targetWidth) }
     }
 
     // MARK: - Auswahl & Bearbeitung
@@ -492,11 +533,9 @@ private struct NoteTextBoxView: View {
         // Wechsel von Anzeige- zu Editiermodus niemals ein alter UIKit-
         // Responder mit einer anderen UUID weiterverwendet.
         .id(box.id)
-        .frame(
-            width: boxWidth,
-            height: estimatedTextBoxHeight(box, fontStyle: fontStyle),
-            alignment: .topLeading
-        )
+        // Nur die Breite fest: Die Höhe liefert die UITextView selbst
+        // (`sizeThatFits`), damit jede Zeile sichtbar bleibt.
+        .frame(width: boxWidth, alignment: .topLeading)
     }
 
     // MARK: - Verschieben (sofort, folgt dem Finger)

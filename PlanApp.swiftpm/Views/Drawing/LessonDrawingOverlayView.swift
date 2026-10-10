@@ -1486,13 +1486,28 @@ public struct LessonDrawingOverlayView: View {
         let newZoom = min(max(1, zoomScale * factor), maxZoom)
         guard newZoom != zoomScale else { return }
 
-        let oldEffective = canvasScale
-        let newEffective = max(0.01, scale * newZoom)
+        // Der Punkt der Zeichenfläche unter dem Anker bleibt beim Zoomen stehen.
+        // Dafür zählt der **Ursprung der Zeichenfläche** – also die Kartenecke
+        // plus die (nicht mitwachsende) Kopfzeile. Die Kartenmitte allein
+        // stimmt nicht: Kopfzeile und Zieh-Griff skalieren nicht, dadurch
+        // wanderte die Zeichnung bei jedem Zoomschritt ein Stück weg.
+        let oldScale = canvasScale
+        let newScale = max(0.01, scale * newZoom)
         let center = renderCenter(in: viewport)
-        let ratio = newEffective / oldEffective
+        let oldCanvasOrigin = CGPoint(
+            x: center.x - scaledPaperWidth / 2,
+            y: center.y - panelHeight / 2 + headerHeight
+        )
+        let ratio = newScale / oldScale
+        let newCanvasOrigin = CGPoint(
+            x: anchor.x + (oldCanvasOrigin.x - anchor.x) * ratio,
+            y: anchor.y + (oldCanvasOrigin.y - anchor.y) * ratio
+        )
+        // Neue Kartenmaße bei neuem Zoom (Kopfzeile fix, Zeichenfläche skaliert).
+        let newPanelHeight = headerHeight + canvasContentHeight * newScale + handleExtent
         let newCenter = CGPoint(
-            x: anchor.x + (center.x - anchor.x) * ratio,
-            y: anchor.y + (center.y - anchor.y) * ratio
+            x: newCanvasOrigin.x + paperWidth * newScale / 2,
+            y: newCanvasOrigin.y - headerHeight + newPanelHeight / 2
         )
 
         zoomScale = newZoom

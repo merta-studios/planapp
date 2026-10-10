@@ -121,11 +121,19 @@ final class InputFilteredPassthroughView<Content: View>: UIView {
         // (Box, Anfasser, Options-Knöpfe, Tip-Hintergrund).
         let isEmptyArea = hit == nil || hit === self
 
+        // `hitTest` bekommt den Punkt in Koordinaten der **Superview**
+        // (UIKit-Vertrag). Die Regeln (Rechtecke in Papier-Koordinaten) und
+        // die Berührungsprüfung arbeiten dagegen lokal. Ohne Umrechnung
+        // lagen Griffe, Kreuz und Eckpunkte des ausgewählten Elements um den
+        // Überhang daneben: Sie reagierten nicht mehr, der Stift zeichnete
+        // stattdessen. `point(inside:)` bekommt bereits lokale Koordinaten.
+        let localPoint = superview.map { convert(point, from: $0) } ?? point
+
         let touches = event?.allTouches ?? []
         let eventHasPencil = touches.contains {
             Self.isActivePhase($0.phase) && $0.type == .pencil
         }
-        let kind = Self.touchKind(at: point, in: self, touches: touches)
+        let kind = Self.touchKind(at: localPoint, in: self, touches: touches)
 
         // Diagnose: Gemischte Kontakte (Stift + Handballen) und das
         // Verschlucken von Pencil-Kontakten sind die Kernfälle der
@@ -142,7 +150,7 @@ final class InputFilteredPassthroughView<Content: View>: UIView {
         }
 
         // Zeichen-Werkzeuge: nur die Auswahl-Flächen bleiben anfassbar.
-        let onSelection = policy.selectionRects().contains { $0.contains(paperPoint(point)) }
+        let onSelection = policy.selectionRects().contains { $0.contains(paperPoint(localPoint)) }
 
         switch kind {
         case .pencil:

@@ -15,30 +15,44 @@ private final class UndoDisabledPKCanvasView: PKCanvasView {
     var paperContentSize: CGSize = .zero {
         didSet {
             guard oldValue != paperContentSize else { return }
-            enforcePaperContentSize()
+            enforcePaperLayout()
         }
     }
 
-    /// Setzt den Zoom der Zeichenfläche (Vektor-Neurendering statt
-    /// Pixel-Vergrößerung). Gleiche Skalierung wie der übrige Block.
-    func applyDisplayScale(_ scale: CGFloat) {
-        guard scale.isFinite, scale > 0 else { return }
-        if abs(zoomScale - scale) > 0.0001 {
-            setZoomScale(scale, animated: false)
-            contentOffset = .zero
+    /// Zoom der Zeichenfläche (Vektor-Neurendering statt Pixel-Vergrößerung).
+    /// Gleiche Skalierung wie der übrige Block.
+    var displayScale: CGFloat = 1 {
+        didSet {
+            guard oldValue != displayScale else { return }
+            enforcePaperLayout()
         }
-        enforcePaperContentSize()
     }
 
     override func layoutSubviews() {
+        // Zoom und Inhaltsgröße **vor** `super` setzen: Ist der Rahmen schon
+        // gewachsen, der Zoom aber noch alt, kann UIScrollView den dann zu
+        // kleinen Inhalt zentrieren. Das würde die Zeichnung kurz verschieben,
+        // bis der Zoom danach nachgezogen wird.
+        enforcePaperLayout()
         super.layoutSubviews()
-        enforcePaperContentSize()
+        enforcePaperLayout()
     }
 
-    private func enforcePaperContentSize() {
+    /// Hält den Canvas auf dem Papier: feste Inhaltsgröße, Zoom wie angefordert
+    /// und Inhalt immer bei (0, 0). Scrollen ist ausgeschaltet; ein Versatz
+    /// (z. B. durch Safe-Area-Insets) würde dazu führen, dass der untere Rand
+    /// der Zeichenfläche außerhalb des Inhalts liegt und nicht bemalbar ist.
+    private func enforcePaperLayout() {
         guard paperContentSize.width > 0, paperContentSize.height > 0 else { return }
         if contentSize != paperContentSize {
             contentSize = paperContentSize
+        }
+        guard displayScale.isFinite, displayScale > 0 else { return }
+        if abs(zoomScale - displayScale) > 0.0001 {
+            setZoomScale(displayScale, animated: false)
+        }
+        if !isDragging, !isDecelerating, !isZooming, contentOffset != .zero {
+            contentOffset = .zero
         }
     }
 }
@@ -211,6 +225,10 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         canvasView.drawingPolicy = pencilOnlyDrawing ? .pencilOnly : .anyInput
         canvasView.isScrollEnabled = false
         canvasView.bounces = false
+        // Keine automatischen Safe-Area-Insets: Der Inhalt liegt exakt auf dem
+        // Papier und wird nicht je nach Lage am Bildschirmrand verschoben.
+        canvasView.contentInsetAdjustmentBehavior = .never
+        canvasView.contentInset = .zero
         // Nativer Zoom (nur über `displayScale` gesetzt, nie per Geste): die
         // Grenzen müssen den gesamten Bereich der Notiz abdecken.
         canvasView.minimumZoomScale = 0.01
@@ -320,7 +338,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         // PencilKit die Striche in Bildschirmauflösung zeichnet.
         if let zoomable = uiView as? UndoDisabledPKCanvasView {
             zoomable.paperContentSize = paperContentSize
-            zoomable.applyDisplayScale(displayScale)
+            zoomable.displayScale = displayScale
         }
         // Die Zeichenfläche ist während eines laufenden Strichs die einzige
         // Quelle der Wahrheit (PencilKit hält den Live-Strich; das Binding
