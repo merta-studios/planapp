@@ -66,6 +66,10 @@ struct NoteTextBoxesLayer: View {
     var newTextColorHex: String = NoteTextBox.defaultColorHex
     var newTextFontSize: Double = NoteTextBox.defaultFontSize
     var textFontStyle: NoteTextFontStyle = .system
+    /// Wirksame Skalierung der Zeichenfläche. Rahmen und Bedienelemente werden
+    /// gegen diese Skalierung korrigiert, damit sie auf dem Bildschirm immer
+    /// gleich groß wirken.
+    var canvasScale: CGFloat = 1
 
     static let coordinateSpaceName = "noteTextBoxesLayer"
 
@@ -116,6 +120,7 @@ struct NoteTextBoxesLayer: View {
                     isSelected: selectedID == box.id,
                     isEditing: editingID == box.id,
                     areaSize: size,
+                    canvasScale: canvasScale,
                     onSelect: { select(box.id) },
                     onBeginEditing: { beginEditing(box.id) },
                     onEndEditing: { endEditing(box.id) },
@@ -370,6 +375,7 @@ private struct NoteTextBoxView: View {
     let isSelected: Bool
     let isEditing: Bool
     let areaSize: CGSize
+    let canvasScale: CGFloat
     let onSelect: () -> Void
     let onBeginEditing: () -> Void
     let onEndEditing: () -> Void
@@ -389,13 +395,15 @@ private struct NoteTextBoxView: View {
 
     private let minWidth: CGFloat = 90
     private let margin: CGFloat = 6
+    private var inverseScale: CGFloat { 1 / max(0.01, canvasScale) }
     /// Durchmesser der runden Schriftgrößen-Knöpfe (bewusst groß genug,
-    /// um sie auch mit dem Finger sicher zu treffen).
-    private let fontSizeButtonDiameter: CGFloat = 46
+    /// um sie auch mit dem Finger sicher zu treffen). Gegen die Zoom-
+    /// Skalierung korrigiert, damit sie auf dem Bildschirm gleich groß bleiben.
+    private var fontSizeButtonDiameter: CGFloat { 46 * inverseScale }
     /// Durchmesser der beiden blauen Breiten-Griffe links und rechts am Feld.
     /// Auf dem iPhone bewusst kleiner, damit die Griffe das Feld nicht
     /// verdecken (wie bei den Bild-Griffen in der Bild-Ebene).
-    private var handleDiameter: CGFloat { DeviceLayout.isPhone ? 20 : 24 }
+    private var handleDiameter: CGFloat { (DeviceLayout.isPhone ? 20 : 24) * inverseScale }
 
     private enum ResizeEdge {
         case leading
@@ -432,18 +440,21 @@ private struct NoteTextBoxView: View {
                 displayContent
             }
         }
-        // Auswahl-Rahmen und Steuerelemente je nach Modus.
+        // Auswahl-Rahmen und Steuerelemente je nach Modus. Rahmen und Griffe
+        // werden gegen die Zoom-Skalierung korrigiert, damit sie auf dem
+        // Bildschirm immer gleich groß wirken (siehe Issue: Ränder und Buttons
+        // sollen beim Zoomen nicht mitwachsen).
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 8 * inverseScale, style: .continuous)
                 .fill(isSelected || isEditing ? Color.blue.opacity(0.07) : Color.clear)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 8 * inverseScale, style: .continuous)
                 .strokeBorder(
                     (isSelected || isEditing) ? Color.blue.opacity(0.85) : Color.blue.opacity(0.28),
                     style: StrokeStyle(
-                        lineWidth: (isSelected || isEditing) ? 1.5 : 1,
-                        dash: (isSelected || isEditing) ? [] : [4, 3]
+                        lineWidth: (isSelected || isEditing ? 1.5 : 1) * inverseScale,
+                        dash: (isSelected || isEditing) ? [] : [4 * inverseScale, 3 * inverseScale]
                     )
                 )
         )
@@ -451,27 +462,27 @@ private struct NoteTextBoxView: View {
             // Seiten-Griff nur im Verschiebe-Modus (nicht beim Bearbeiten).
             if isSelected, !isEditing {
                 resizeHandle(edge: .leading)
-                    .offset(x: -13)
+                    .offset(x: -13 * inverseScale)
             }
         }
         .overlay(alignment: .trailing) {
             if isSelected, !isEditing {
                 resizeHandle(edge: .trailing)
-                    .offset(x: 13)
+                    .offset(x: 13 * inverseScale)
             }
         }
         .overlay(alignment: .topTrailing) {
             // Lösch-Kreuz nur im Verschiebe-Modus (nicht beim Bearbeiten).
             if isSelected, !isEditing {
                 deleteButton
-                    .offset(x: 14, y: -14)
+                    .offset(x: 14 * inverseScale, y: -14 * inverseScale)
             }
         }
         .overlay(alignment: .bottomTrailing) {
             // Schriftgröße bleibt in beiden Modi verfügbar.
             if isSelected || isEditing {
                 fontSizeControls
-                    .offset(y: fontSizeButtonDiameter + 8)
+                    .offset(y: (fontSizeButtonDiameter + 8 * inverseScale))
             }
         }
         .offset(x: boxOrigin.x, y: boxOrigin.y)
@@ -570,11 +581,11 @@ private struct NoteTextBoxView: View {
             .frame(width: handleDiameter, height: handleDiameter)
             .overlay(
                 Image(systemName: "arrow.left.and.right")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 10 * inverseScale, weight: .bold))
                     .foregroundColor(.white)
             )
-            .shadow(color: Color.black.opacity(0.25), radius: 3, x: 0, y: 1)
-            .contentShape(Circle().inset(by: -12))
+            .shadow(color: Color.black.opacity(0.25), radius: 3 * inverseScale, x: 0, y: 1 * inverseScale)
+            .contentShape(Circle().inset(by: -12 * inverseScale))
             .gesture(resizeGesture(edge: edge))
     }
 
@@ -615,11 +626,11 @@ private struct NoteTextBoxView: View {
     private var deleteButton: some View {
         Button(action: onDelete) {
             Image(systemName: "xmark")
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: 11 * inverseScale, weight: .bold))
                 .foregroundColor(.white)
-                .frame(width: 26, height: 26)
+                .frame(width: 26 * inverseScale, height: 26 * inverseScale)
                 .background(Circle().fill(Color.red))
-                .shadow(color: Color.black.opacity(0.25), radius: 3, x: 0, y: 1)
+                .shadow(color: Color.black.opacity(0.25), radius: 3 * inverseScale, x: 0, y: 1 * inverseScale)
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
@@ -628,7 +639,7 @@ private struct NoteTextBoxView: View {
 
     /// Große, runde Liquid-Glass-Knöpfe zum Ändern der Schriftgröße.
     private var fontSizeControls: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 10 * inverseScale) {
             fontSizeButton(
                 systemName: "textformat.size.smaller",
                 accessibilityLabel: "Schrift kleiner",
@@ -651,7 +662,7 @@ private struct NoteTextBoxView: View {
             onChangeFontSize(delta)
         } label: {
             Image(systemName: systemName)
-                .font(.system(size: 19, weight: .semibold))
+                .font(.system(size: 19 * inverseScale, weight: .semibold))
                 .foregroundColor(.primary)
                 .frame(width: fontSizeButtonDiameter, height: fontSizeButtonDiameter)
                 .background(
@@ -686,11 +697,11 @@ private struct NoteTextBoxView: View {
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
-                            lineWidth: 1
+                            lineWidth: 1 * inverseScale
                         )
                 )
                 .clipShape(Circle())
-                .shadow(color: Color.black.opacity(0.2), radius: 6, x: 0, y: 3)
+                .shadow(color: Color.black.opacity(0.2), radius: 6 * inverseScale, x: 0, y: 3 * inverseScale)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)

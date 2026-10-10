@@ -31,6 +31,10 @@ struct LayerInputPolicy {
     /// Flächen, die auch im Zeichen-Modus anfassbar bleiben (die aktuell
     /// ausgewählten Elemente inkl. ihrer Optionen), in Koordinaten der Ebene.
     var selectionRects: () -> [CGRect]
+    /// Alle Element-Rechtecke (un- und ausgewählte Bilder/Textfelder) für den
+    /// schnellen pointInside-Test. Verhindert, dass die Ebene die gesamte
+    /// Zeichenfläche beansprucht und das Zeichnen blockiert.
+    var contentRects: () -> [CGRect] = { [] }
 }
 
 /// UIKit-Hit-Test, der die Regeln aus ``LayerInputPolicy`` umsetzt.
@@ -49,6 +53,37 @@ final class InputFilteredPassthroughView<Content: View>: UIView {
 
     private enum TouchKind {
         case pencil, finger, unknown
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        // Ohne diesen Override beansprucht die View die gesamte Zeichenfläche
+        // für das SwiftUI-Hit-Testing, selbst wenn ihr UIView-hitTest später
+        // nil zurückgeben würde. Dann blockiert die Ebene die Zeichenfläche
+        // komplett (Pencil/Marker-Hover sichtbar, aber kein Strich). Mit dem
+        // Override gibt die View einen leeren Bereich sofort frei, sodass der
+        // darunterliegende PKCanvasView den Touch bekommt. Ein Bereich mit
+        // SwiftUI-Inhalt (un- oder ausgewähltes Bild/Text) oder die Halo-
+        // Auswahl der aktuell selektierten Elemente bleibt dagegen anfassbar
+        // – der eigentliche Filter (Pencil vs Finger) entscheidet dann im
+        // hitTest, ob die Berührung wirklich an die Ebene geht oder doch an
+        // den Canvas durchgereicht wird. Kein super.hitTest hier aufrufen
+        // (rekursiv über pointInside), sondern rein geometrisch über die
+        // mitgegebenen contentRects/selectionRects entscheiden.
+        if policy.textToolActive {
+            return super.point(inside: point, with: event)
+        }
+        // Auswahl-Halo (inkl. Anfasser/Buttons) hat Vorrang.
+        if policy.selectionRects().contains(where: { $0.contains(point) }) {
+            return true
+        }
+        // Jedes Element-Rechteck (mit kleinem Toleranz-Rand) gilt als Inhalt.
+        // Liegt der Punkt dort, muss hitTest entscheiden (Finger→Inhalt,
+        // Pencil→nur Auswahl). Sonst ist es leer und fällt sofort durch.
+        let expandedContent = policy.contentRects().contains { rect in
+            rect.insetBy(dx: -6, dy: -6).contains(point)
+        }
+        if expandedContent { return true }
+        return false
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {

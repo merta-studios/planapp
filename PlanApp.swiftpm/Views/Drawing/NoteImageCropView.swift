@@ -193,12 +193,12 @@ struct NoteImageCropView: View {
             .overlay(Circle().strokeBorder(Color.black.opacity(0.25), lineWidth: 1))
             .shadow(color: Color.black.opacity(0.3), radius: 3, x: 0, y: 1)
             .position(position)
-            .contentShape(Circle().inset(by: -12))
+            .contentShape(Circle().inset(by: -16))
             .gesture(handleGesture(corner, fitted: fitted))
     }
 
     private func handleGesture(_ corner: Corner, fitted: CGRect) -> some Gesture {
-        DragGesture(minimumDistance: 1, coordinateSpace: .local)
+        DragGesture(minimumDistance: 1, coordinateSpace: .named("noteImageCrop"))
             .onChanged { value in
                 guard fitted.width > 0, fitted.height > 0 else { return }
                 // Griffposition in normalisierten Koordinaten.
