@@ -937,11 +937,13 @@ public struct LessonDrawingOverlayView: View {
 
     /// Eingabe-Regeln der Text-/Bild-Ebene (siehe ``LayerInputPolicy``).
     ///
-    /// Auswahl-Regeln (vom Nutzer bestätigt): Finger tippt Elemente immer an,
-    /// wenn „Nur Apple Pencil“ **an** ist – sonst nur im Text-Werkzeug. Der
-    /// Apple Pencil tippt Elemente nur im Text-Werkzeug an; im Zeichen-Modus
-    /// bleibt allein die Fläche des **ausgewählten** Elements anfassbar
-    /// (dessen Optionen: Verschieben, Eck-Griffe, Löschen, Zuschneiden).
+    /// Auswahl-Regeln: Finger tippt Textfelder immer an, wenn „Nur Apple
+    /// Pencil“ **an** ist – sonst nur im Text-Werkzeug. **Bilder** darf der
+    /// Finger in **jedem** Werkzeug antippen und bedienen (sie sind eingefügte
+    /// Objekte, keine Zeichenfläche). Der Apple Pencil tippt Elemente nur im
+    /// Text-Werkzeug an; im Zeichen-Modus bleibt allein die Fläche des
+    /// **ausgewählten** Elements anfassbar (dessen Optionen: Verschieben,
+    /// Eck-Griffe, Löschen, Zuschneiden).
     private var layerInputPolicy: LayerInputPolicy {
         let images = imageBoxes
         let texts = textBoxes
@@ -957,6 +959,11 @@ public struct LessonDrawingOverlayView: View {
         // Zoom geteilt). Er umschließt Eck-Griffe, Knöpfe oben, links und
         // rechts sowie – bei Textfeldern – die Schriftgrößen-Knöpfe unten.
         let pad = layerHaloPad
+        // Bilder tragen ihre Lösch-/Zuschneide-Knöpfe deutlich weiter über
+        // dem Rahmen als Textfelder (Knopfmitte 34 pt über der Ecke plus
+        // Radius und vergrößerte Tipp-Fläche) – der Halo muss sie vollständig
+        // einschließen, sonst fallen Tipps daneben auf die Zeichenfläche.
+        let imagePad = 72 / max(0.05, canvasScale)
         let bottomExtra = 60 / max(0.05, canvasScale)
         return LayerInputPolicy(
             textToolActive: textActive,
@@ -971,7 +978,7 @@ public struct LessonDrawingOverlayView: View {
                         width: CGFloat(box.width),
                         height: CGFloat(box.height)
                     )
-                    rects.append(rect.insetBy(dx: -pad, dy: -pad))
+                    rects.append(rect.insetBy(dx: -imagePad, dy: -imagePad))
                 }
                 for id in [selectedText, editingText].compactMap({ $0 }) {
                     guard let box = texts.first(where: { $0.id == id }) else { continue }
@@ -1019,6 +1026,19 @@ public struct LessonDrawingOverlayView: View {
                     rects.append(CGRect(origin: .zero, size: CGSize(width: paperW, height: canvasH)))
                 }
                 return rects
+            },
+            interactiveImageRects: {
+                // Bilder sind in jedem Werkzeug für den Finger anfassbar –
+                // auch dann, wenn der Finger sonst zeichnet. So lassen sie
+                // sich auswählen, verschieben, skalieren und löschen.
+                images.map { box in
+                    CGRect(
+                        x: CGFloat(box.x),
+                        y: CGFloat(box.y),
+                        width: CGFloat(box.width),
+                        height: CGFloat(box.height)
+                    )
+                }
             }
         )
     }
@@ -1054,10 +1074,12 @@ public struct LessonDrawingOverlayView: View {
                 images: $imageBoxes,
                 selectedID: $selectedImageID,
                 isTextToolActive: isTextToolActive,
-                // Neue Auswahl nur, wenn der Modus Elemente antippen darf
-                // (Nutzer-Regeln): Finger „immer“ bei „Nur Apple Pencil“,
-                // sonst nur im Text-Werkzeug.
-                canSelectElements: isTextToolActive || fingerManipulationEnabled,
+                // Bilder darf der Finger in jedem Werkzeug neu auswählen
+                // (sie sind eingefügte Objekte). Welcher Kontakt hier
+                // überhaupt ankommt, filtert die Eingabe-Hülle: Der Apple
+                // Pencil zeichnet im Zeichen-Modus weiter über Bildern und
+                // erreicht sie nur über das Text-Werkzeug bzw. die Auswahl.
+                canSelectElements: true,
                 areaSize: CGSize(
                     width: paperWidth,
                     height: canvasContentHeight
@@ -1149,12 +1171,18 @@ public struct LessonDrawingOverlayView: View {
     }
 
     private var manipulableLayerHitTesting: Bool {
+        // Bilder sollen sich in jedem Werkzeug per Finger antippen und
+        // bedienen lassen – auch dann, wenn der Finger sonst zeichnet.
+        // Deshalb macht bereits das Vorhandensein von Bildern die Ebene
+        // hit-testbar; die Eingabe-Hülle reicht Berührungen neben den
+        // Bildern weiterhin an die Zeichenfläche durch.
         showsEditor && (
             fingerManipulationEnabled
                 || isTextToolActive
                 || selectedTextBoxID != nil
                 || editingTextBoxID != nil
                 || selectedImageID != nil
+                || !imageBoxes.isEmpty
         )
     }
 
@@ -2295,7 +2323,7 @@ public struct LessonDrawingOverlayView: View {
         withAnimation(.easeOut(duration: 0.16)) {
             isBackdropVisible = false
         }
-        // Speichern und Rendern erst, wenn der Rückflug in den Stundenblock
+        // Ausblenden erst, wenn der Rückflug in den Stundenblock
         // **vollständig** abgeschlossen ist. Vorher hat das Overlay den Block
         // noch nicht erreicht; ein früheres Entfernen (wie zuvor nach 0,18 s)
         // schnitt die Feder mitten im Flug ab.
@@ -2305,6 +2333,14 @@ public struct LessonDrawingOverlayView: View {
             didFinishDismiss = true
             persistEditingHistory()
 
+            // Das Overlay wird **sofort** ausgeblendet, sobald der Rückflug
+            // den Stundenblock erreicht hat – unabhängig davon, wie lange das
+            // anschließende Speichern/Rendern dauert. Vorher blieb die Notiz
+            // für die gesamte Renderzeit (bei großen Notizen mehrere Sekunden)
+            // sichtbar auf dem Block liegen und blockierte jede Eingabe.
+            DrawingDiagnostics.dismiss.info("saveAndDismiss: Overlay wird ausgeblendet")
+            viewModel.closeNoteOverlay()
+
             // Immer die bekannte Papiergröße verwenden – `PKCanvasView.bounds`
             // kann beim ersten Öffnen noch winzig oder 0 sein und hat dann die
             // Vorschau im Stundenblock komisch klein gerendert.
@@ -2313,7 +2349,6 @@ public struct LessonDrawingOverlayView: View {
                 height: max(180, rawCanvasHeight - headerHeight)
             )
             let canvasRect = CGRect(origin: .zero, size: canvasSize)
-            let croppedDrawing = currentDrawing.cropped(to: canvasRect)
 
             let cleanedTextBoxes = rawTextBoxes.compactMap { box -> NoteTextBox? in
                 guard !box.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
@@ -2323,27 +2358,21 @@ public struct LessonDrawingOverlayView: View {
                 guard box.uiImage != nil else { return nil }
                 return box.sanitized(in: canvasRect.size)
             }
-            let croppedImage = PencilKitCanvasRepresentable.renderNotePreview(
-                drawing: croppedDrawing,
-                textBoxes: cleanedTextBoxes,
-                images: cleanedImageBoxes,
-                backgroundStyle: backgroundStyle,
-                backgroundScale: backgroundScale,
-                clipRect: canvasRect,
-                textFontStyle: textFontStyle
-            )
-            let drawingData = croppedDrawing.dataRepresentation()
             let calculatedLines = max(3, min(10, Int((rawCanvasHeight - headerHeight) / 56)))
 
-            // `saveNote` persists the note and closes the overlay itself.
-            // Do not call a second, non-existent close method here: with an
-            // `@EnvironmentObject` that produces misleading Binding/dynamic
-            // member diagnostics and prevents the package from building.
-            DrawingDiagnostics.dismiss.info("saveAndDismiss: speichere Notiz")
-            viewModel.saveNote(
+            // Phase 1 (sofort, günstig): Zeichnungsdaten zuschneiden und
+            // speichern. Damit ist der Stand direkt nach dem Schließen
+            // persistent – ein sofortiges erneutes Öffnen sieht immer den
+            // aktuellen Inhalt. Bis das neue Vorschau-Bild fertig ist, bleibt
+            // das bisherige Vorschau-Bild als Platzhalter stehen.
+            let croppedDrawing = currentDrawing.cropped(to: canvasRect)
+            let drawingData = croppedDrawing.dataRepresentation()
+            let placeholderPreview = viewModel.noteFor(lesson: lesson)?.croppedImageData
+            DrawingDiagnostics.dismiss.info("saveAndDismiss: speichere Notiz (Zeichnungsdaten)")
+            let persistedUpdatedAt = viewModel.persistNote(
                 for: lesson,
                 drawingData: drawingData,
-                croppedImageData: croppedImage?.pngData(),
+                croppedImageData: placeholderPreview,
                 lineCount: calculatedLines,
                 textBoxes: cleanedTextBoxes,
                 imageBoxes: cleanedImageBoxes,
@@ -2351,6 +2380,34 @@ public struct LessonDrawingOverlayView: View {
                 backgroundScale: backgroundScale,
                 tagID: tagID
             )
+
+            // Phase 2 (Hintergrund, teuer): Das Vorschau-Bild rendern und
+            // danach einspielen. Läuft abseits des Main-Threads, damit der
+            // Stundenplan sofort wieder bedienbar ist, statt während des
+            // Speicherns einzufrieren. Die Anzeige-Skala muss vorher auf dem
+            // Main-Thread gelesen werden (UIScreen ist Main-Thread-pflichtig).
+            let renderScale = UIScreen.main.scale
+            DispatchQueue.global(qos: .userInitiated).async {
+                let croppedImage = PencilKitCanvasRepresentable.renderNotePreview(
+                    drawing: croppedDrawing,
+                    textBoxes: cleanedTextBoxes,
+                    images: cleanedImageBoxes,
+                    backgroundStyle: backgroundStyle,
+                    backgroundScale: backgroundScale,
+                    clipRect: canvasRect,
+                    textFontStyle: textFontStyle,
+                    renderScale: renderScale
+                )
+                guard let imageData = croppedImage?.pngData() else { return }
+
+                DispatchQueue.main.async {
+                    viewModel.updateNotePreview(
+                        for: lesson,
+                        expectedUpdatedAt: persistedUpdatedAt,
+                        croppedImageData: imageData
+                    )
+                }
+            }
         }
 
         withAnimation(

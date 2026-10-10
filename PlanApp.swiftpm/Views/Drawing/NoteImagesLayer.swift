@@ -5,8 +5,10 @@ import UIKit
 ///
 /// Bedienung (Auswahl-Regeln siehe `LayerInputPolicy`):
 /// - Tippen auf ein Bild: auswählen (verschiebbar, skalierbar, löschbar).
-///   Finger tippt Elemente immer an, wenn „Nur Apple Pencil“ an ist – sonst
-///   nur im Text-Werkzeug. Der Apple Pencil tippt nur im Text-Werkzeug an.
+///   Der **Finger** tippt Bilder in **jedem** Werkzeug an – Bilder sind
+///   eingefügte Objekte, keine Zeichenfläche. Der Apple Pencil zeichnet im
+///   Zeichen-Modus auch über Bildern und tippt sie nur im Text-Werkzeug an
+///   (bzw. über ein bereits ausgewähltes Bild).
 /// - Tippen auf das **ausgewählte** Bild hebt im Zeichen-Modus die Auswahl
 ///   wieder auf (danach ist die Stelle wieder frei für Striche).
 /// - Ziehen an den vier Eckpunkten: seitenrichtig skalieren.
@@ -244,6 +246,18 @@ private struct NoteImageBoxView: View {
                     )
                 )
         )
+        // Verschieben/Auswählen greift auf der (etwas vergrößerten) Bildfläche.
+        // WICHTIG: Diese contentShape-/Gesten-Modifikatoren liegen **vor** den
+        // Steuerelement-Overlays darunter. Eine `contentShape`, die erst nach
+        // den Overlays käme, würde die Trefferfläche auf das Rechteck hier
+        // begrenzen – die Eck-Griffe, das Lösch-Kreuz und der Zuschneide-Knopf
+        // liegen aber außerhalb des Bildrahmens und bekämen dann keine Treffer
+        // mehr (genau das machte sie unbedienbar).
+        .contentShape(Rectangle().inset(by: -12 * inverseScale))
+        .gesture(moveGesture)
+        .onTapGesture {
+            onTap()
+        }
         .overlay(alignment: .topLeading) {
             if isSelected {
                 cornerDot(.topLeading)
@@ -281,11 +295,6 @@ private struct NoteImageBoxView: View {
             }
         }
         .offset(x: boxOrigin.x, y: boxOrigin.y)
-        .contentShape(Rectangle().inset(by: -12 * inverseScale))
-        .gesture(moveGesture)
-        .onTapGesture {
-            onTap()
-        }
     }
 
     // MARK: - Verschieben

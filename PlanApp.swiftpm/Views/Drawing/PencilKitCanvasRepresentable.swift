@@ -8,37 +8,65 @@ import UIKit
 private final class UndoDisabledPKCanvasView: PKCanvasView {
     override var undoManager: UndoManager? { nil }
 
-    /// Papiergröße in unskalierten Inhaltskoordinaten (ohne Zoom). Die
-    /// Inhaltsgröße wird darauf festgehalten: Ist der gezoomte Inhalt kleiner
-    /// als der Rahmen, würde UIScrollView ihn zentrieren – dann läge die
-    /// Zeichnung nicht mehr deckungsgleich über Text- und Bildebene.
+    /// Papiergröße in unskalierten Inhaltskoordinaten (ohne Zoom).
     var paperContentSize: CGSize = .zero {
         didSet {
             guard oldValue != paperContentSize else { return }
-            enforcePaperContentSize()
+            setNeedsLayout()
         }
     }
+
+    /// Vom SwiftUI-Wrapper angeforderte Skalierung der Zeichenfläche.
+    private var targetDisplayScale: CGFloat = 1
 
     /// Setzt den Zoom der Zeichenfläche (Vektor-Neurendering statt
     /// Pixel-Vergrößerung). Gleiche Skalierung wie der übrige Block.
+    ///
+    /// Der Zoom wird bewusst **nicht** hier (im `updateUIView`-Zeitpunkt)
+    /// gesetzt, sondern in `layoutSubviews`: Dort ist der neue Rahmen der
+    /// Zeichenfläche bereits angelegt, sodass Zoom und Rahmengröße im selben
+    /// Layout-Durchlauf zusammenpassen. Ein Zoom gegen den noch alten Rahmen
+    /// ließ UIScrollView den Inhalt beim anschließenden Layout-Durchlauf kurz
+    /// zentrieren bzw. versetzen und erst im nächsten Durchlauf korrigieren –
+    /// sichtbar als kurzes „Verrutschen“ der Zeichnung beim Rein-/Rauszoomen.
     func applyDisplayScale(_ scale: CGFloat) {
         guard scale.isFinite, scale > 0 else { return }
-        if abs(zoomScale - scale) > 0.0001 {
-            setZoomScale(scale, animated: false)
-            contentOffset = .zero
-        }
-        enforcePaperContentSize()
+        targetDisplayScale = scale
+        setNeedsLayout()
     }
 
     override func layoutSubviews() {
+        // Zoom zuerst setzen: `super` sieht damit konsistente Größen
+        // (Rahmen und gezoomter Inhalt) und zentriert den Inhalt nie.
+        if targetDisplayScale.isFinite, targetDisplayScale > 0,
+           abs(zoomScale - targetDisplayScale) > 0.0001 {
+            setZoomScale(targetDisplayScale, animated: false)
+        }
         super.layoutSubviews()
         enforcePaperContentSize()
+        // Den Inhalt immer bündig oben links halten – auch dann, wenn
+        // UIScrollView ihn in diesem Durchlauf hätte zentrieren wollen. So
+        // liegt die Zeichnung in jedem Frame deckungsgleich über der Text-
+        // und Bildebene.
+        if contentOffset != .zero {
+            contentOffset = .zero
+        }
     }
 
+    /// Hält die Inhaltsgröße auf der **gezoomten** Papiergröße – das ist der
+    /// Wert, den UIScrollView nach einem Zoom erwartet. Eine unskalierte
+    /// Inhaltsgröße wäre bei Zoom > 1 kleiner als der Rahmen; UIScrollView
+    /// würde den Inhalt dann zentrieren und die Zeichnung läge nicht mehr
+    /// deckungsgleich über der Text- und Bildebene.
     private func enforcePaperContentSize() {
-        guard paperContentSize.width > 0, paperContentSize.height > 0 else { return }
-        if contentSize != paperContentSize {
-            contentSize = paperContentSize
+        guard paperContentSize.width > 0, paperContentSize.height > 0,
+              zoomScale.isFinite, zoomScale > 0 else { return }
+        let scaledSize = CGSize(
+            width: paperContentSize.width * zoomScale,
+            height: paperContentSize.height * zoomScale
+        )
+        if contentSize != scaledSize {
+            contentSize = scaledSize
         }
     }
 }
@@ -1781,7 +1809,8 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         backgroundStyle: NoteBackgroundStyle = .blank,
         backgroundScale: Double = NoteBackgroundMetrics.defaultScale,
         clipRect: CGRect? = nil,
-        textFontStyle: NoteTextFontStyle = .system
+        textFontStyle: NoteTextFontStyle = .system,
+        renderScale: CGFloat = UIScreen.main.scale
     ) -> UIImage? {
         var contentRect = CGRect.null
 
@@ -1832,7 +1861,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
         )
 
         let format = UIGraphicsImageRendererFormat()
-        format.scale = UIScreen.main.scale
+        format.scale = renderScale
         format.opaque = false
 
         let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
@@ -1850,7 +1879,7 @@ public struct PencilKitCanvasRepresentable: UIViewRepresentable {
                 // PencilKit im Dark Mode schwarze Tinte als weiß ausgeben –
                 // unsichtbar auf dem weißen Papier der Vorschau.
                 let drawingImage = renderInLightAppearance {
-                    drawing.image(from: renderBounds, scale: UIScreen.main.scale)
+                    drawing.image(from: renderBounds, scale: renderScale)
                 }
                 drawingImage.draw(in: renderBounds)
             }
