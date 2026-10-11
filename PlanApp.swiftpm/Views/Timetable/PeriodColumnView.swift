@@ -25,7 +25,7 @@ public struct PeriodColumnView: View {
 
                 if isCompact {
                     Image(systemName: "clock")
-                        .font(.system(size: 12, weight: .regular, design: .default))
+                        .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundColor(.secondary)
                 } else {
                     HStack(spacing: 4) {
@@ -51,17 +51,17 @@ public struct PeriodColumnView: View {
                         )
 
                     if isCompact {
-                        VStack(spacing: 1) {
+                        VStack(spacing: 0) {
                             Text("\(period.periodNumber)")
-                                .font(.system(size: 13, weight: .semibold, design: .default))
+                                .font(.system(size: 12, weight: .semibold, design: .default))
                                 .foregroundColor(.primary)
                             Text(period.startTime)
-                                .font(.system(size: 8, weight: .regular, design: .default))
+                                .font(.system(size: 7, weight: .regular, design: .default))
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.7)
                         }
-                        .padding(.vertical, 2)
+                        .padding(.vertical, 1)
                     } else {
                         VStack(spacing: 2) {
                             Text(period.startTime)

@@ -194,39 +194,56 @@ struct NoteImageCropView: View {
             .shadow(color: Color.black.opacity(0.3), radius: 3, x: 0, y: 1)
             .position(position)
             .contentShape(Circle().inset(by: -16))
-            .gesture(handleGesture(corner, fitted: fitted))
+            .highPriorityGesture(handleGesture(corner, fitted: fitted))
     }
+
+    @State private var handleStartCrop: CGRect? = nil
 
     private func handleGesture(_ corner: Corner, fitted: CGRect) -> some Gesture {
         DragGesture(minimumDistance: 1, coordinateSpace: .named("noteImageCrop"))
             .onChanged { value in
                 guard fitted.width > 0, fitted.height > 0 else { return }
+                if handleStartCrop == nil {
+                    handleStartCrop = crop
+                }
+                guard let start = handleStartCrop else { return }
                 // Griffposition in normalisierten Koordinaten.
                 let point = CGPoint(
                     x: (value.location.x - fitted.minX) / fitted.width,
                     y: (value.location.y - fitted.minY) / fitted.height
                 )
                 guard point.x.isFinite, point.y.isFinite else { return }
-                var next = crop
+                var next = start
                 switch corner {
                 case .topLeading:
-                    next.origin.x = min(max(0, point.x), next.maxX - minimumCropEdge)
-                    next.origin.y = min(max(0, point.y), next.maxY - minimumCropEdge)
-                    next.size.width = crop.maxX - next.minX
-                    next.size.height = crop.maxY - next.minY
+                    let newMinX = min(max(0, point.x), start.maxX - minimumCropEdge)
+                    let newMinY = min(max(0, point.y), start.maxY - minimumCropEdge)
+                    next.origin.x = newMinX
+                    next.origin.y = newMinY
+                    next.size.width = start.maxX - newMinX
+                    next.size.height = start.maxY - newMinY
                 case .topTrailing:
-                    next.origin.y = min(max(0, point.y), next.maxY - minimumCropEdge)
-                    next.size.width = max(minimumCropEdge, min(1, point.x) - next.minX)
-                    next.size.height = crop.maxY - next.minY
+                    let newMinY = min(max(0, point.y), start.maxY - minimumCropEdge)
+                    let newMaxX = max(start.minX + minimumCropEdge, min(1, point.x))
+                    next.origin.y = newMinY
+                    next.size.width = newMaxX - start.minX
+                    next.size.height = start.maxY - newMinY
                 case .bottomLeading:
-                    next.origin.x = min(max(0, point.x), next.maxX - minimumCropEdge)
-                    next.size.width = crop.maxX - next.minX
-                    next.size.height = max(minimumCropEdge, min(1, point.y) - next.minY)
+                    let newMinX = min(max(0, point.x), start.maxX - minimumCropEdge)
+                    let newMaxY = max(start.minY + minimumCropEdge, min(1, point.y))
+                    next.origin.x = newMinX
+                    next.size.width = start.maxX - newMinX
+                    next.size.height = newMaxY - start.minY
                 case .bottomTrailing:
-                    next.size.width = max(minimumCropEdge, min(1, point.x) - next.minX)
-                    next.size.height = max(minimumCropEdge, min(1, point.y) - next.minY)
+                    let newMaxX = max(start.minX + minimumCropEdge, min(1, point.x))
+                    let newMaxY = max(start.minY + minimumCropEdge, min(1, point.y))
+                    next.size.width = newMaxX - start.minX
+                    next.size.height = newMaxY - start.minY
                 }
                 crop = next
+            }
+            .onEnded { _ in
+                handleStartCrop = nil
             }
     }
 

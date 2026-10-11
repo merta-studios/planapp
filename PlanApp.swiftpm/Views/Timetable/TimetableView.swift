@@ -513,7 +513,7 @@ struct SingleWeekGridView: View {
         let schoolDays = weekStart.schoolWeekDays()
         let dayColumnWidth = DeviceLayout.dayColumnWidth(availableWidth: availableWidth, compact: isCompact)
 
-        HStack(alignment: .top, spacing: isCompact ? 2 : 4) {
+        HStack(alignment: .top, spacing: isCompact ? 1 : 4) {
             // SPALTE 0: Stundennummern und Uhrzeiten
             PeriodColumnView(
                 rowHeight: calculatedRowHeight,
@@ -535,7 +535,7 @@ struct SingleWeekGridView: View {
                 .frame(width: dayColumnWidth)
             }
         }
-        .padding(.horizontal, isCompact ? 4 : 16)
-        .padding(.vertical, 8)
+        .padding(.horizontal, isCompact ? 3 : 16)
+        .padding(.vertical, isCompact ? 6 : 8)
     }
 }
