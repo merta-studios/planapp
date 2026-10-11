@@ -243,6 +243,10 @@ public final class TimetableStorageService {
             "lineCount": note.lineCount,
             "updatedAt": note.updatedAt.timeIntervalSince1970,
             "hasDrawing": note.hasVisibleContent,
+            "hasContent": note.hasVisibleContent,
+            "hasPreviewImage": note.croppedImageData != nil,
+            "textBoxCount": note.textBoxes.count,
+            "imageBoxCount": note.imageBoxes.count,
             "backgroundStyle": note.backgroundStyle.rawValue,
             "backgroundScale": note.backgroundScale
         ]
@@ -351,7 +355,27 @@ public final class TimetableStorageService {
         defaults.set([String: Any](), forKey: Keys.notesMetadata)
     }
 
-    private func loadNotesMetadata() -> [String: Any] {
+    public func loadNotesMetadata() -> [String: Any] {
         return defaults.dictionary(forKey: Keys.notesMetadata) ?? [:]
+    }
+
+    /// Lädt nur das Preview-Bild einer Notiz (ohne vollständige Notiz zu laden)
+    public func loadPreviewImage(for noteKey: String) -> Data? {
+        let imageFile = notesDirectory.appendingPathComponent("\(noteKey).png")
+        return try? Data(contentsOf: imageFile)
+    }
+
+    /// Speichert nur das Preview-Bild einer Notiz (für Background-Updates)
+    public func savePreviewImage(_ imageData: Data, for noteKey: String) {
+        let imageFile = notesDirectory.appendingPathComponent("\(noteKey).png")
+        try? imageData.write(to: imageFile, options: .atomic)
+        
+        // Metadata aktualisieren
+        var metadata = loadNotesMetadata()
+        if var entry = metadata[noteKey] as? [String: Any] {
+            entry["hasPreviewImage"] = true
+            metadata[noteKey] = entry
+            defaults.set(metadata, forKey: Keys.notesMetadata)
+        }
     }
 }

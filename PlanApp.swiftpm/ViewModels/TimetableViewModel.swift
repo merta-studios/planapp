@@ -48,19 +48,34 @@ public final class TimetableViewModel: ObservableObject {
         didSet { notesOverviewRevision &+= 1 }
     }
     @Published public var subjectCustomizations: [SubjectCustomization] = [] {
-        didSet { notesOverviewPresentationRevision &+= 1 }
+        didSet {
+            notesOverviewPresentationRevision &+= 1
+            subjectDisplayCache.removeAll() // Cache invalidieren
+        }
     }
     @Published public var teacherNameCustomizations: [TeacherNameCustomization] = [] {
-        didSet { notesOverviewPresentationRevision &+= 1 }
+        didSet {
+            notesOverviewPresentationRevision &+= 1
+            teacherNameCache.removeAll() // Cache invalidieren
+        }
     }
     @Published public var displaySettings: BlockDisplaySettings = .default {
         didSet { notesOverviewPresentationRevision &+= 1 }
     }
     @Published public var drawingSettings: DrawingSettings = .default
     @Published public var untisCredentials: UntisCredentials = UntisCredentials()
-    @Published public var lessonNotes: [String: LessonNote] = [:] {
+    
+    /// Lazy-Loaded Notizen: Nur Metadaten beim Start, vollständige Notizen on-demand
+    @Published public private(set) var lessonNotes: [String: LessonNote] = [:] {
         didSet { notesOverviewRevision &+= 1 }
     }
+    
+    /// Metadata für alle Notizen (schnell geladen beim Start)
+    public private(set) var notesMetadata: [String: NoteCacheService.NoteMetadata] = [:]
+    
+    /// Cache-Service für Lazy Loading
+    private let noteCache = NoteCacheService.shared
+    
     /// Aktueller Ansichts-Modus (Standard / Notizen hervorgehoben / Nur Notizen).
     /// Wird persistent gespeichert und beim Start wiederhergestellt.
     @Published public var viewMode: TimetableViewMode = .standard
@@ -267,7 +282,11 @@ public final class TimetableViewModel: ObservableObject {
         self.drawingSettings = storage.loadDrawingSettings()
         self.periods = storage.loadPeriods()
         self.lessons = storage.loadLessons()
-        self.lessonNotes = storage.loadAllLessonNotes()
+        
+        // PERFORMANCE: Nur Metadaten laden (schnell), vollständige Notizen lazy
+        self.notesMetadata = noteCache.loadAllMetadata()
+        self.lessonNotes = [:] // Leer starten, lazy laden
+        
         self.viewMode = storage.loadViewMode()
         self.appearance = storage.loadAppearance()
         self.tagSettings = storage.loadTagSettings()
@@ -275,6 +294,11 @@ public final class TimetableViewModel: ObservableObject {
         self.noteUndoSessions = storage.loadNoteUndoSessions()
         restoreApplePencilStatus()
 
+        // PERFORMANCE: Notizen für aktuelle Woche im Hintergrund laden
+        Task.detached(priority: .userInitiated) { [weak self] in
+            await self?.preloadCurrentWeekNotes()
+        }
+        
         // Alte, versehentlich leer gespeicherte Notizen (PKDrawing-Daten ohne
         // Strokes / leere Textfelder) direkt entfernen, damit sie nicht in
         // Optionen, Hervorhebung oder der Nur-Notizen-Übersicht auftauchen.
@@ -654,8 +678,19 @@ public final class TimetableViewModel: ObservableObject {
     /// Ermittelt den Anzeigennamen und die Farben für ein Fach. Alle Farben
     /// werden pastellisiert – egal was eingestellt ist, es gibt einen
     /// maximalen Schwarz-Anteil.
+    /// Cache für SubjectDisplay (Performance-Optimierung)
+    private var subjectDisplayCache: [String: SubjectDisplay] = [:]
+    
+    /// Cache für TeacherName (Performance-Optimierung)
+    private var teacherNameCache: [String: String] = [:]
+    
     public func resolveSubjectDisplay(for lesson: Lesson) -> SubjectDisplay {
         let raw = lesson.subjectRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Cache prüfen
+        if let cached = subjectDisplayCache[raw] {
+            return cached
+        }
 
         func display(for custom: SubjectCustomization) -> SubjectDisplay {
             let name = custom.customName.isEmpty ? raw : custom.customName
@@ -673,13 +708,17 @@ public final class TimetableViewModel: ObservableObject {
             $0.originalSubject.caseInsensitiveCompare(raw) == .orderedSame ||
             $0.originalSubject.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == raw.lowercased()
         }) {
-            return display(for: custom)
+            let result = display(for: custom)
+            subjectDisplayCache[raw] = result
+            return result
         }
 
         // 2. Suche nach Teilübereinstimmung (z.B. "M-LK" matcht "M")
         for custom in subjectCustomizations {
             if raw.lowercased().hasPrefix(custom.originalSubject.lowercased()) && !custom.originalSubject.isEmpty {
-                return display(for: custom)
+                let result = display(for: custom)
+                subjectDisplayCache[raw] = result
+                return result
             }
         }
 
@@ -690,12 +729,14 @@ public final class TimetableViewModel: ObservableObject {
         ]
         let hash = abs(raw.hashValue)
         let colorHex = fallbackColors[hash % fallbackColors.count]
-        return SubjectDisplay(
+        let result = SubjectDisplay(
             name: raw,
             colorHex: colorHex,
             color: Color(hex: colorHex).pastel,
             gradientEndColor: nil
         )
+        subjectDisplayCache[raw] = result
+        return result
     }
 
     /// Ersetzt ein Lehrer-Kürzel durch den manuell hinterlegten Anzeigenamen.
@@ -704,16 +745,24 @@ public final class TimetableViewModel: ObservableObject {
     public func resolveTeacherName(_ rawTeacher: String) -> String {
         let trimmed = rawTeacher.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return trimmed }
+        
+        // Cache prüfen
+        if let cached = teacherNameCache[trimmed] {
+            return cached
+        }
 
         let normalizedRaw = normalizedTeacherKey(trimmed)
         guard let custom = teacherNameCustomizations.first(where: {
             normalizedTeacherKey($0.systemAbbreviation) == normalizedRaw
         }) else {
+            teacherNameCache[trimmed] = trimmed
             return trimmed
         }
 
         let displayName = custom.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return displayName.isEmpty ? trimmed : displayName
+        let result = displayName.isEmpty ? trimmed : displayName
+        teacherNameCache[trimmed] = result
+        return result
     }
 
     private func normalizedTeacherKey(_ value: String) -> String {
@@ -806,14 +855,14 @@ public final class TimetableViewModel: ObservableObject {
         if note.hasVisibleContent {
             self.lessonNotes[key] = note
             visibleNoteKeys.insert(key)
-            storage.saveLessonNote(note)
+            noteCache.saveNote(note)
         } else {
             // Eine nur geöffnete, komplett geleerte oder nur mit Tag versehene
             // Seite bleibt wirklich "keine Notiz". Ein Tag ohne Inhalt wird
             // verworfen, damit keine leeren Stundenblöcke mit Tag entstehen.
             self.lessonNotes.removeValue(forKey: key)
             visibleNoteKeys.remove(key)
-            storage.deleteLessonNote(for: key)
+            noteCache.deleteNote(for: key)
             discardUndoSession(for: key)
             // Auch das Leeren ist eine Löschung für den Sync: Sonst stünde
             // die alte Notiz beim Zusammenführen wieder auf.
@@ -836,7 +885,7 @@ public final class TimetableViewModel: ObservableObject {
               note.updatedAt == expectedUpdatedAt else { return }
         note.croppedImageData = croppedImageData
         lessonNotes[key] = note
-        storage.saveLessonNote(note)
+        noteCache.saveNote(note)
     }
 
     /// Blendet das Zeichen-Overlay sofort aus (ohne zu speichern). Das
@@ -874,16 +923,51 @@ public final class TimetableViewModel: ObservableObject {
         closeNoteOverlay()
     }
 
-    /// Gibt die Notiz für eine bestimmte Stunde zurück
+    /// Gibt die Notiz für eine bestimmte Stunde zurück (mit Lazy Loading)
     public func noteFor(lesson: Lesson) -> LessonNote? {
-        return lessonNotes[lesson.noteKey]
+        let key = lesson.noteKey
+        
+        // Zuerst im Cache schauen
+        if let cached = lessonNotes[key] {
+            return cached
+        }
+        
+        // Lazy Loading: Notiz bei Bedarf laden
+        if let note = noteCache.loadNote(for: key) {
+            lessonNotes[key] = note
+            return note
+        }
+        
+        return nil
+    }
+    
+    /// Lädt Notizen für die aktuelle Woche im Hintergrund vor (Performance-Optimierung)
+    @MainActor
+    private func preloadCurrentWeekNotes() async {
+        let currentWeekLessons = lessons.filter { lesson in
+            guard let lessonDate = Date.fromYyyyMMdd(lesson.dateString) else { return false }
+            return lessonDate >= selectedWeekStart && lessonDate < Calendar.germanCalendar.date(byAdding: .day, value: 7, to: selectedWeekStart)!
+        }
+        
+        let noteKeys = currentWeekLessons.map { $0.noteKey }
+        
+        await withCheckedContinuation { continuation in
+            noteCache.loadNotes(for: noteKeys) { [weak self] loadedNotes in
+                Task { @MainActor in
+                    self?.lessonNotes.merge(loadedNotes) { _, new in new }
+                    continuation.resume()
+                }
+            }
+        }
     }
 
     /// Löscht die Notiz einer einzelnen Stunde.
     public func deleteNote(for lesson: Lesson) {
         let key = lesson.noteKey
-        guard lessonNotes[key] != nil else { return }
+        guard lessonNotes[key] != nil || notesMetadata[key] != nil else { return }
         lessonNotes.removeValue(forKey: key)
+        notesMetadata.removeValue(forKey: key)
+        noteCache.deleteNote(for: key)
         visibleNoteKeys.remove(key)
         storage.deleteLessonNote(for: key)
         discardUndoSession(for: key)
@@ -902,7 +986,9 @@ public final class TimetableViewModel: ObservableObject {
     /// Kopiert die komplette Notiz einer Stunde (Zeichnung, Textfelder,
     /// Hintergrund, Tag) in die interne Zwischenablage.
     public func copyNote(for lesson: Lesson) {
-        guard let note = lessonNotes[lesson.noteKey], note.hasVisibleContent else { return }
+        // Lazy Loading: Notiz bei Bedarf laden
+        guard let note = lessonNotes[lesson.noteKey] ?? noteCache.loadNote(for: lesson.noteKey),
+              note.hasVisibleContent else { return }
         copyNote(note)
     }
 
@@ -932,7 +1018,7 @@ public final class TimetableViewModel: ObservableObject {
         )
         lessonNotes[key] = pasted
         visibleNoteKeys.insert(key)
-        storage.saveLessonNote(pasted)
+        noteCache.saveNote(pasted)
         successMessage = "Notiz eingefügt."
     }
 
@@ -945,30 +1031,41 @@ public final class TimetableViewModel: ObservableObject {
     /// Tag einer Stunde (nur wenn das Tag-System aktiv ist und der Tag noch existiert).
     public func tag(for lesson: Lesson) -> NoteTag? {
         guard tagSettings.isEnabled else { return nil }
-        return tagSettings.tag(withID: lessonNotes[lesson.noteKey]?.tagID)
+        // PERFORMANCE: Verwende Metadaten statt vollständige Notiz zu laden
+        if let cached = lessonNotes[lesson.noteKey] {
+            return tagSettings.tag(withID: cached.tagID)
+        }
+        return tagSettings.tag(withID: notesMetadata[lesson.noteKey]?.tagID)
     }
 
     /// Tag zu einer Notiz-ID (nur wenn das Tag-System aktiv ist).
     public func tag(forNoteKey key: String) -> NoteTag? {
         guard tagSettings.isEnabled else { return nil }
-        return tagSettings.tag(withID: lessonNotes[key]?.tagID)
+        // PERFORMANCE: Verwende Metadaten statt vollständige Notiz zu laden
+        if let cached = lessonNotes[key] {
+            return tagSettings.tag(withID: cached.tagID)
+        }
+        return tagSettings.tag(withID: notesMetadata[key]?.tagID)
     }
 
     /// Setzt oder entfernt den Tag einer vorhandenen Notiz direkt (ohne den
     /// Editor zu öffnen).
     public func setTag(_ tagID: UUID?, for lesson: Lesson) {
         let key = lesson.noteKey
-        guard var note = lessonNotes[key] else { return }
+        
+        // Lazy Loading: Notiz bei Bedarf laden
+        guard var note = lessonNotes[key] ?? noteCache.loadNote(for: key) else { return }
+        
         note.tagID = tagSettings.tag(withID: tagID)?.id
         note.updatedAt = Date()
         if note.hasVisibleContent {
             lessonNotes[key] = note
             visibleNoteKeys.insert(key)
-            storage.saveLessonNote(note)
+            noteCache.saveNote(note)
         } else {
             lessonNotes.removeValue(forKey: key)
             visibleNoteKeys.remove(key)
-            storage.deleteLessonNote(for: key)
+            noteCache.deleteNote(for: key)
         }
     }
 
@@ -1126,16 +1223,18 @@ public final class TimetableViewModel: ObservableObject {
     /// Entfernt Notiz-Datensätze ohne sichtbaren Inhalt. Solche Datensätze
     /// entstanden früher schon beim bloßen Öffnen/Schließen einer Zeichenfläche.
     public func cleanupEmptyNotes() {
-        let emptyKeys = lessonNotes.compactMap { entry -> String? in
-            let (key, note) = entry
-            return note.hasVisibleContent ? nil : key
+        // PERFORMANCE: Verwende Metadaten statt alle Notizen zu laden
+        let emptyKeys = notesMetadata.compactMap { entry -> String? in
+            let (key, metadata) = entry
+            return metadata.hasContent ? nil : key
         }
         guard !emptyKeys.isEmpty else { return }
 
         for key in emptyKeys {
             lessonNotes.removeValue(forKey: key)
+            notesMetadata.removeValue(forKey: key)
             visibleNoteKeys.remove(key)
-            storage.deleteLessonNote(for: key)
+            noteCache.deleteNote(for: key)
             noteUndoSessions.removeSession(for: key)
         }
         if !emptyKeys.isEmpty {
@@ -1144,9 +1243,10 @@ public final class TimetableViewModel: ObservableObject {
     }
 
     private func rebuildVisibleNoteCache() {
-        visibleNoteKeys = Set(lessonNotes.compactMap { entry -> String? in
-            let (key, note) = entry
-            return note.hasVisibleContent ? key : nil
+        // PERFORMANCE: Verwende Metadaten statt alle Notizen zu laden
+        visibleNoteKeys = Set(notesMetadata.compactMap { entry -> String? in
+            let (key, metadata) = entry
+            return metadata.hasContent ? key : nil
         })
     }
 
@@ -1156,13 +1256,16 @@ public final class TimetableViewModel: ObservableObject {
         guard drawingSettings.autoDeletePastNotes else { return }
 
         let todayStart = Calendar.germanCalendar.startOfDay(for: Date())
-        let keys = Array(lessonNotes.keys)
+        
+        // PERFORMANCE: Verwende Metadaten statt alle Notizen zu laden
+        let keys = Array(notesMetadata.keys)
         for key in keys {
             let datePrefix = String(key.prefix(10))
             if let date = Date.fromYyyyMMdd(datePrefix), date < todayStart {
                 lessonNotes.removeValue(forKey: key)
+                notesMetadata.removeValue(forKey: key)
                 visibleNoteKeys.remove(key)
-                storage.deleteLessonNote(for: key)
+                noteCache.deleteNote(for: key)
             }
         }
     }
