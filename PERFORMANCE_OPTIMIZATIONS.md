@@ -289,8 +289,15 @@ let emptyKeys = notesMetadata.compactMap { entry -> String? in
 ## 🔧 Technische Details
 
 ### LRU-Cache Implementation
+`NSCache` akzeptiert nur Klassen (`ObjectType: AnyObject`), `LessonNote` und
+`NoteCacheService.NoteMetadata` sind aber Structs. Deshalb verpackt der
+`NoteValueCache<Value>`-Wrapper die Werte intern in eine leichtgewichtige
+Box-Klasse und stellt nach außen weiterhin `countLimit`, `totalCostLimit`
+und die automatische Eviction von `NSCache` bereit.
+
 ```swift
-private let cache = NSCache<NSString, LessonNote>()
+private let cache = NoteValueCache<LessonNote>()
+private let metadataCache = NoteValueCache<NoteMetadata>()
 
 private init() {
     cache.countLimit = maxCacheSize  // 30-100 je nach Gerät
@@ -299,7 +306,7 @@ private init() {
 
 // Cost-basierte Eviction
 let cost = note.drawingData.count + (note.croppedImageData?.count ?? 0)
-cache.setObject(note, forKey: cacheKey, cost: cost)
+cache.setObject(note, forKey: noteKey, cost: cost)
 ```
 
 ### Thread-Safety

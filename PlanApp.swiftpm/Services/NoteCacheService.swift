@@ -8,8 +8,8 @@ public final class NoteCacheService {
     public static let shared = NoteCacheService()
     
     private let storage = TimetableStorageService.shared
-    private let cache = NSCache<NSString, LessonNote>()
-    private let metadataCache = NSCache<NSString, NoteMetadata>()
+    private let cache = NoteValueCache<LessonNote>()
+    private let metadataCache = NoteValueCache<NoteMetadata>()
     
     /// Maximale Anzahl von Notizen im Cache (basierend auf verfügbarem Speicher)
     private let maxCacheSize: Int = {
@@ -38,33 +38,55 @@ public final class NoteCacheService {
         public let hasPreviewImage: Bool
         public let textBoxCount: Int
         public let imageBoxCount: Int
+
+        public init(
+            id: String,
+            lineCount: Int,
+            updatedAt: Date,
+            backgroundStyle: NoteBackgroundStyle,
+            backgroundScale: Double,
+            tagID: UUID?,
+            hasContent: Bool,
+            hasPreviewImage: Bool,
+            textBoxCount: Int,
+            imageBoxCount: Int
+        ) {
+            self.id = id
+            self.lineCount = lineCount
+            self.updatedAt = updatedAt
+            self.backgroundStyle = backgroundStyle
+            self.backgroundScale = backgroundScale
+            self.tagID = tagID
+            self.hasContent = hasContent
+            self.hasPreviewImage = hasPreviewImage
+            self.textBoxCount = textBoxCount
+            self.imageBoxCount = imageBoxCount
+        }
     }
     
     /// Lädt nur Metadaten für alle Notizen (sehr schnell)
     public func loadAllMetadata() -> [String: NoteMetadata] {
         var result: [String: NoteMetadata] = [:]
-        let metadata = storage.loadNotesMetadata()
+        let storedMetadata = storage.loadNotesMetadata()
         
-        for (key, meta) in metadata {
-            if let dict = meta as? [String: Any] {
-                let metadata = NoteMetadata(
-                    id: key,
-                    lineCount: dict["lineCount"] as? Int ?? 6,
-                    updatedAt: Date(timeIntervalSince1970: dict["updatedAt"] as? Double ?? Date().timeIntervalSince1970),
-                    backgroundStyle: (dict["backgroundStyle"] as? String).flatMap(NoteBackgroundStyle.init(rawValue:)) ?? .blank,
-                    backgroundScale: dict["backgroundScale"] as? Double ?? NoteBackgroundMetrics.defaultScale,
-                    tagID: (dict["tagID"] as? String).flatMap(UUID.init(uuidString:)),
-                    hasContent: dict["hasContent"] as? Bool ?? true,
-                    hasPreviewImage: dict["hasPreviewImage"] as? Bool ?? false,
-                    textBoxCount: dict["textBoxCount"] as? Int ?? 0,
-                    imageBoxCount: dict["imageBoxCount"] as? Int ?? 0
-                )
-                result[key] = metadata
+        for (key, value) in storedMetadata {
+            guard let dict = value as? [String: Any] else { continue }
+            let noteMetadata = NoteMetadata(
+                id: key,
+                lineCount: dict["lineCount"] as? Int ?? 6,
+                updatedAt: Date(timeIntervalSince1970: dict["updatedAt"] as? Double ?? Date().timeIntervalSince1970),
+                backgroundStyle: (dict["backgroundStyle"] as? String).flatMap(NoteBackgroundStyle.init(rawValue:)) ?? .blank,
+                backgroundScale: dict["backgroundScale"] as? Double ?? NoteBackgroundMetrics.defaultScale,
+                tagID: (dict["tagID"] as? String).flatMap(UUID.init(uuidString:)),
+                hasContent: dict["hasContent"] as? Bool ?? true,
+                hasPreviewImage: dict["hasPreviewImage"] as? Bool ?? false,
+                textBoxCount: dict["textBoxCount"] as? Int ?? 0,
+                imageBoxCount: dict["imageBoxCount"] as? Int ?? 0
+            )
+            result[key] = noteMetadata
                 
-                // In Metadata-Cache speichern
-                let cacheKey = key as NSString
-                metadataCache.setObject(metadata as AnyObject, forKey: cacheKey)
-            }
+            // In Metadata-Cache speichern
+            metadataCache.setObject(noteMetadata, forKey: key)
         }
         
         return result
@@ -72,10 +94,8 @@ public final class NoteCacheService {
     
     /// Gibt Metadaten für eine spezifische Notiz zurück
     public func metadata(for noteKey: String) -> NoteMetadata? {
-        let cacheKey = noteKey as NSString
-        
         // Aus Cache holen
-        if let cached = metadataCache.object(forKey: cacheKey) as? NoteMetadata {
+        if let cached = metadataCache.object(forKey: noteKey) {
             return cached
         }
         
@@ -88,10 +108,8 @@ public final class NoteCacheService {
     
     /// Lädt eine vollständige Notiz (mit Cache)
     public func loadNote(for noteKey: String) -> LessonNote? {
-        let cacheKey = noteKey as NSString
-        
         // Aus Cache holen
-        if let cached = cache.object(forKey: cacheKey) {
+        if let cached = cache.object(forKey: noteKey) {
             return cached
         }
         
@@ -102,7 +120,7 @@ public final class NoteCacheService {
         
         // In Cache speichern mit Cost (ungefähre Größe)
         let cost = note.drawingData.count + (note.croppedImageData?.count ?? 0)
-        cache.setObject(note, forKey: cacheKey, cost: cost)
+        cache.setObject(note, forKey: noteKey, cost: cost)
         
         return note
     }
@@ -112,9 +130,8 @@ public final class NoteCacheService {
         storage.saveLessonNote(note)
         
         // Cache aktualisieren
-        let cacheKey = note.id as NSString
         let cost = note.drawingData.count + (note.croppedImageData?.count ?? 0)
-        cache.setObject(note, forKey: cacheKey, cost: cost)
+        cache.setObject(note, forKey: note.id, cost: cost)
         
         // Metadata aktualisieren
         let metadata = NoteMetadata(
@@ -129,28 +146,25 @@ public final class NoteCacheService {
             textBoxCount: note.textBoxes.count,
             imageBoxCount: note.imageBoxes.count
         )
-        metadataCache.setObject(metadata as AnyObject, forKey: cacheKey)
+        metadataCache.setObject(metadata, forKey: note.id)
     }
     
     /// Löscht eine Notiz aus Storage und Cache
     public func deleteNote(for noteKey: String) {
         storage.deleteLessonNote(for: noteKey)
         
-        let cacheKey = noteKey as NSString
-        cache.removeObject(forKey: cacheKey)
-        metadataCache.removeObject(forKey: cacheKey)
+        cache.removeObject(forKey: noteKey)
+        metadataCache.removeObject(forKey: noteKey)
     }
     
     /// Gibt eine Notiz aus dem Cache zurück (ohne zu laden)
     public func cachedNote(for noteKey: String) -> LessonNote? {
-        let cacheKey = noteKey as NSString
-        return cache.object(forKey: cacheKey)
+        return cache.object(forKey: noteKey)
     }
     
     /// Entfernt eine Notiz aus dem Cache (bleibt auf Storage)
     public func evictFromCache(_ noteKey: String) {
-        let cacheKey = noteKey as NSString
-        cache.removeObject(forKey: cacheKey)
+        cache.removeObject(forKey: noteKey)
     }
     
     /// Leert den gesamten Cache
@@ -194,4 +208,49 @@ public final class NoteCacheService {
 
 // MARK: - NSCache Helper
 
-extension NoteCacheService.NoteMetadata: AnyObject {}
+/// `NSCache` kann ausschließlich Klassen speichern (`ObjectType: AnyObject`).
+/// `LessonNote` und `NoteCacheService.NoteMetadata` sind jedoch Structs.
+/// Diese Box verpackt einen beliebigen Werttyp in ein leichtgewichtiges
+/// Klassenobjekt, ohne den Wert zu kopieren.
+private final class NoteCacheBox<Value> {
+    let value: Value
+    
+    init(_ value: Value) {
+        self.value = value
+    }
+}
+
+/// Typsicherer Wrapper um `NSCache` für Werttypen.
+///
+/// Nach außen bleibt die API typisiert (`Value` statt `AnyObject`), intern
+/// kommt weiterhin `NSCache` zum Einsatz – inklusive `countLimit`,
+/// `totalCostLimit` und der automatischen Eviction bei Speicherdruck.
+private final class NoteValueCache<Value> {
+    private let storage = NSCache<NSString, NoteCacheBox<Value>>()
+    
+    var countLimit: Int {
+        get { storage.countLimit }
+        set { storage.countLimit = newValue }
+    }
+    
+    var totalCostLimit: Int {
+        get { storage.totalCostLimit }
+        set { storage.totalCostLimit = newValue }
+    }
+    
+    func object(forKey key: String) -> Value? {
+        storage.object(forKey: key as NSString)?.value
+    }
+    
+    func setObject(_ value: Value, forKey key: String, cost: Int = 0) {
+        storage.setObject(NoteCacheBox(value), forKey: key as NSString, cost: cost)
+    }
+    
+    func removeObject(forKey key: String) {
+        storage.removeObject(forKey: key as NSString)
+    }
+    
+    func removeAllObjects() {
+        storage.removeAllObjects()
+    }
+}
