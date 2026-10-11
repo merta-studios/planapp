@@ -21,7 +21,17 @@ die vorhandenen Tastatur-Layout-Tests, dann:
   Farbbogens für verschiedene Stiftrichtungen und Fenster;
 - die Scrubber-Mathematik: feste Stufen beim Halten, fester Winkel je Schritt
   (18°), kürzerer Teilbogen bei wenigen Schritten, mehrere Umdrehungen bis zum
-  letzten gespeicherten Schritt und die Wiederhol-Stufen des Balkens.
+  letzten gespeicherten Schritt und die Wiederhol-Stufen des Balkens;
+- das **Verkleinern der Zeichenfläche**: Untergrenze aus dem tiefsten Bild bzw.
+  Textfeld plus Rand, Einklemmen zwischen Inhalts- und Bildschirmgrenze (der
+  Inhalt gewinnt gegen eine zu kleine Obergrenze), ungültige Maße blockieren den
+  Griff nicht dauerhaft, und die Blockade-Rückmeldung kommt nur beim wirklichen
+  Anstoßen;
+- dass der **gehaltene Rückgängig-Knopf** der Kreis-Palette sie verschwinden
+  lässt, der Balken der Werkzeugleiste sie aber unverändert lässt;
+- das **Größenbudget der gespeicherten Rückgängig-Sitzung**: zusammenhängendes
+  Ende des Stapels innerhalb des Budgets, neuester Stand auch dann, wenn er das
+  Stapel-Budget allein sprengt, leerer Stapel, Budget 0 und ungültige Größen.
 
 Mit `TYPE_CHECK_ONLY=1 ./Tests/run-regressions.sh` werden dieselben Dateien nur
 übersetzt, ohne die Tests auszuführen – gedacht für einen Build-Check in CI
@@ -168,6 +178,12 @@ App-Package auf dem Gerät geprüft werden.
 6. In jeder Ecke und im schmalen Fenster öffnen; auch aufgeklappte Farben bleiben
    erreichbar. Nach mehrfachem Öffnen/Schließen keine übrig gebliebenen Observer
    oder unsichtbaren Vollbild-Trefferflächen über Papier/Toolbar.
+7. Den **Rückgängig-Knopf der Palette eine Sekunde halten**, scrubben und
+   loslassen: Der Ring verschwindet **und die Palette bleibt weg** – Farbwahl,
+   Bogen, Hintergrund und Elemente tauchen nicht wieder auf. Erst der nächste
+   Squeeze öffnet sie wieder vollständig. Dasselbe mit dem Balken in der
+   Werkzeugleiste: Er lässt die Leiste unverändert. Während des Haltens sind die
+   übrigen Knöpfe wie bisher ausgeblendet.
 
 ### Bilder & Textfelder: Auswahl, Griffe und Zoom
 
@@ -193,3 +209,43 @@ App-Package auf dem Gerät geprüft werden.
 7. Notiz schließen: Der Rückflug in den Stundenblock läuft in einem Zug zu Ende.
    Die Notiz verschwindet erst am Ziel, ohne Sprung oder abgeschnittene Bewegung.
    Danach zeigt der Block die aktuelle Vorschau.
+
+### Zeichenfläche verkleinern (Rand-Griff)
+
+1. Ein Bild unten auf dem Zettel ablegen, dann den runden Griff nach oben ziehen:
+   Der Griff **stoppt an der Unterkante des Bilds** (plus kleinem Rand). Das Bild
+   selbst bewegt sich keinen Punkt – früher wurde es nach oben geschoben.
+2. Weiterziehen über die Grenze hinaus: kurze Vibration als Rückmeldung, einmal
+   pro Zieh-Geste (nicht dauerhaft ratternd). Die Zeichenfläche bleibt stehen.
+3. Das Bild zur Seite bzw. nach oben räumen und erneut ziehen: Jetzt geht der
+   Zettel kleiner, bis zum absoluten Minimum.
+4. Dasselbe mit einem **Textfeld** (auch mit mehrzeiligem Text und großer
+   Schrift): Die geschätzte Texthöhe begrenzt den Griff, der Text wird nicht
+   verschoben oder abgeschnitten.
+5. Zwei Elemente übereinander: Das **tiefste** begrenzt den Griff.
+6. Nach oben wachsen bleibt unverändert möglich (bis zum Bildschirmrand) und
+   wird nicht von der Inhalts-Untergrenze beeinflusst.
+7. Notiz schließen und erneut öffnen: Die gespeicherte Höhe und die Positionen
+   von Bildern/Textfeldern stimmen mit dem letzten Stand überein.
+
+### Wochenwechsel & Schließen: Reaktion
+
+1. Mit mehreren Notizen (davon mindestens einer mit Bildern) zwischen den Wochen
+   wischen: Die Bewegung läuft ohne spürbaren Ruckler durch. Vorschauen, die noch
+   nicht im Speicher lagen, erscheinen kurz darauf von selbst – der Block bleibt
+   dabei bedienbar.
+2. Direkt nach dem Wischen eine Stunde antippen: Die Notiz öffnet sofort, auch
+   wenn ihre Vorschau gerade erst nachgeladen wurde.
+3. Eine Notiz mit Bildern schließen: Der Stundenplan ist **sofort** nach dem
+   Rückflug bedienbar (Wochen wischen, andere Stunde antippen, Modus wechseln) –
+   keine Wartezeit von ein bis zwei Sekunden. Bis die neue Vorschau da ist, steht
+   die bisherige Vorschau im Block.
+4. Sofort danach dieselbe Notiz wieder öffnen: Inhalt, Bilder, Textfelder und
+   Höhe sind unverändert; Rückgängig funktioniert für die zuletzt gespeicherten
+   Schritte.
+5. Notiz schließen, App sofort in den Hintergrund und zurück: Keine Notiz und
+   kein Wochenstand geht verloren (die Schreibvorgänge laufen im Hintergrund
+   weiter, die Reihenfolge bleibt erhalten).
+6. Nach dem Schließen einer bildreichen Notiz die App beenden und neu starten:
+   Die Notiz ist vollständig da. Die Rückgängig-Historie kann gekürzt sein
+   (Größenbudget) – das ist beabsichtigt und kein Datenverlust.

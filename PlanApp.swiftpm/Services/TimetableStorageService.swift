@@ -7,6 +7,30 @@ public final class TimetableStorageService {
     private let defaults = UserDefaults.standard
     private let fileManager = FileManager.default
 
+    /// Serieller Hintergrund-Queue für **alle** Schreibvorgänge.
+    ///
+    /// JSON-Encoding großer Daten (alle Stunden, Notizen inkl. Zeichnungen und
+    /// Bildern, Undo-Sitzungen mit bis zu 40 Vollständen je Notiz) plus das
+    /// Schreiben in UserDefaults und in die Sicherungsdatei dauern leicht
+    /// mehrere hundert Millisekunden. Lief das auf dem Main Thread, fror die
+    /// App genau in dem Moment ein, in dem die Notiz zurück in den Stundenblock
+    /// glitt bzw. eine neue Woche hereinkam. Die Reihenfolge bleibt über die
+    /// serielle Queue erhalten (Speichern → Löschen → Speichern wirkt wie
+    /// bisher), und gelesen wird ausschließlich aus dem Speicher bzw. aus
+    /// Dateien, die dieser Queue selbst geschrieben hat.
+    private let writeQueue = DispatchQueue(label: "planapp.storage.writes", qos: .userInitiated)
+
+    /// Schloss für `cachedNotesMetadata`: Notizen werden auch aus
+    /// Hintergrund-Queues geladen (Batch-Preload), die Metadaten also von
+    /// mehreren Threads gelesen.
+    private let metadataLock = NSLock()
+    /// Zwischengespeicherte Notiz-Metadaten. `UserDefaults.dictionary(forKey:)`
+    /// baut bei jedem Aufruf ein neues `[String: Any]` mit einem eigenen
+    /// Wörterbuch je Notiz auf. Beim Rendern des Drei-Wochen-Karussells wurde
+    /// das für **jede** Notiz wiederholt – ein wesentlicher Teil der
+    /// Verzögerung beim Wochenwechsel.
+    private var cachedNotesMetadata: [String: Any]? = nil
+
     // UserDefaults kann bei einem unerwarteten Beenden noch nicht auf die
     // Plist geschrieben sein. Eine zweite, atomare Kopie verhindert dadurch
     // den Eindruck eines "Reset" beim nächsten Start.
@@ -17,11 +41,13 @@ public final class TimetableStorageService {
     }
 
     private func persist<T: Encodable>(_ value: T, key: String) {
-        guard let data = try? JSONEncoder().encode(value) else { return }
-        defaults.set(data, forKey: key)
-        defaults.synchronize()
-        let url = backupDirectory.appendingPathComponent(key).appendingPathExtension("json")
-        try? data.write(to: url, options: .atomic)
+        writeQueue.async { [weak self] in
+            guard let self else { return }
+            guard let data = try? JSONEncoder().encode(value) else { return }
+            self.defaults.set(data, forKey: key)
+            let url = self.backupDirectory.appendingPathComponent(key).appendingPathExtension("json")
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     private func restore<T: Decodable>(_ type: T.Type, key: String) -> T? {
@@ -209,41 +235,57 @@ public final class TimetableStorageService {
 
     // MARK: - Lesson Notes (PencilKit Drawings & Images)
 
-    public func saveLessonNote(_ note: LessonNote) {
+    /// Speichert eine Notiz (Zeichnung, Vorschau, Textfelder, Bilder).
+    ///
+    /// - Parameter hasVisibleContent: Bekannter Inhalt (Striche/Text/Bilder).
+    ///   Die eigene Prüfung dekodiert die PencilKit-Daten und ist entsprechend
+    ///   teuer; Aufrufer, die das Ergebnis schon kennen (z. B. der Editor beim
+    ///   Schließen), geben es deshalb mit.
+    public func saveLessonNote(_ note: LessonNote, hasVisibleContent: Bool? = nil) {
         // Metadaten und Pfade speichern
         let noteFile = notesDirectory.appendingPathComponent("\(note.id).note")
         let imageFile = notesDirectory.appendingPathComponent("\(note.id).png")
         let textFile = notesDirectory.appendingPathComponent("\(note.id).text.json")
         let boxesFile = notesDirectory.appendingPathComponent("\(note.id).images.json")
 
-        try? note.drawingData.write(to: noteFile, options: .atomic)
-        if let imgData = note.croppedImageData {
-            try? imgData.write(to: imageFile, options: .atomic)
-        } else {
-            try? fileManager.removeItem(at: imageFile)
-        }
+        let visibleContent = hasVisibleContent ?? note.hasVisibleContent
 
-        if !note.textBoxes.isEmpty, let textData = try? JSONEncoder().encode(note.textBoxes) {
-            try? textData.write(to: textFile, options: .atomic)
-        } else {
-            try? fileManager.removeItem(at: textFile)
-        }
+        // Alle Dateioperationen (inkl. JSON-Encoding der Textfelder und
+        // Bildrahmen) laufen im Hintergrund – bei Notizen mit Bildern sind das
+        // schnell mehrere Megabyte.
+        writeQueue.async { [weak self] in
+            guard let self else { return }
+            let fileManager = self.fileManager
 
-        // Bilder (Rahmen + komprimierte Bilddaten) liegen in einer eigenen
-        // Datei, damit Textfelder und Zeichnung unabhängig davon lesbar
-        // bleiben – selbst wenn ein Bild einmal beschädigt wäre.
-        if !note.imageBoxes.isEmpty, let boxesData = try? JSONEncoder().encode(note.imageBoxes) {
-            try? boxesData.write(to: boxesFile, options: .atomic)
-        } else {
-            try? fileManager.removeItem(at: boxesFile)
+            try? note.drawingData.write(to: noteFile, options: .atomic)
+            if let imgData = note.croppedImageData {
+                try? imgData.write(to: imageFile, options: .atomic)
+            } else {
+                try? fileManager.removeItem(at: imageFile)
+            }
+
+            if !note.textBoxes.isEmpty, let textData = try? JSONEncoder().encode(note.textBoxes) {
+                try? textData.write(to: textFile, options: .atomic)
+            } else {
+                try? fileManager.removeItem(at: textFile)
+            }
+
+            // Bilder (Rahmen + komprimierte Bilddaten) liegen in einer eigenen
+            // Datei, damit Textfelder und Zeichnung unabhängig davon lesbar
+            // bleiben – selbst wenn ein Bild einmal beschädigt wäre.
+            if !note.imageBoxes.isEmpty, let boxesData = try? JSONEncoder().encode(note.imageBoxes) {
+                try? boxesData.write(to: boxesFile, options: .atomic)
+            } else {
+                try? fileManager.removeItem(at: boxesFile)
+            }
         }
 
         var metadata = loadNotesMetadata()
         var entry: [String: Any] = [
             "lineCount": note.lineCount,
             "updatedAt": note.updatedAt.timeIntervalSince1970,
-            "hasDrawing": note.hasVisibleContent,
-            "hasContent": note.hasVisibleContent,
+            "hasDrawing": visibleContent,
+            "hasContent": visibleContent,
             "hasPreviewImage": note.croppedImageData != nil,
             "textBoxCount": note.textBoxes.count,
             "imageBoxCount": note.imageBoxes.count,
@@ -254,7 +296,7 @@ public final class TimetableStorageService {
             entry["tagID"] = tagID.uuidString
         }
         metadata[note.id] = entry
-        defaults.set(metadata, forKey: Keys.notesMetadata)
+        storeNotesMetadata(metadata)
     }
 
     /// Ersetzt sämtliche Notizen auf einen Schlag (Import einer Sicherung).
@@ -331,32 +373,64 @@ public final class TimetableStorageService {
         let imageFile = notesDirectory.appendingPathComponent("\(noteKey).png")
         let textFile = notesDirectory.appendingPathComponent("\(noteKey).text.json")
         let boxesFile = notesDirectory.appendingPathComponent("\(noteKey).images.json")
-        try? fileManager.removeItem(at: noteFile)
-        try? fileManager.removeItem(at: imageFile)
-        try? fileManager.removeItem(at: textFile)
-        try? fileManager.removeItem(at: boxesFile)
+        // Dieselbe Queue wie das Speichern: Ein Löschen nach einem Speichern
+        // löscht wirklich den zuletzt geschriebenen Stand.
+        writeQueue.async { [weak self] in
+            guard let fileManager = self?.fileManager else { return }
+            try? fileManager.removeItem(at: noteFile)
+            try? fileManager.removeItem(at: imageFile)
+            try? fileManager.removeItem(at: textFile)
+            try? fileManager.removeItem(at: boxesFile)
+        }
 
         var metadata = loadNotesMetadata()
         metadata.removeValue(forKey: noteKey)
-        defaults.set(metadata, forKey: Keys.notesMetadata)
+        storeNotesMetadata(metadata)
     }
 
     /// Löscht sämtliche gespeicherten Notizen (Zeichnungen, Vorschaubilder
     /// und Textfelder) unwiderruflich.
     public func deleteAllLessonNotes() {
-        if let files = try? fileManager.contentsOfDirectory(
-            at: notesDirectory,
-            includingPropertiesForKeys: nil
-        ) {
-            for file in files {
-                try? fileManager.removeItem(at: file)
+        let directory = notesDirectory
+        writeQueue.async { [weak self] in
+            guard let fileManager = self?.fileManager else { return }
+            if let files = try? fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil
+            ) {
+                for file in files {
+                    try? fileManager.removeItem(at: file)
+                }
             }
         }
-        defaults.set([String: Any](), forKey: Keys.notesMetadata)
+        storeNotesMetadata([String: Any]())
     }
 
     public func loadNotesMetadata() -> [String: Any] {
-        return defaults.dictionary(forKey: Keys.notesMetadata) ?? [:]
+        metadataLock.lock()
+        if let cached = cachedNotesMetadata {
+            metadataLock.unlock()
+            return cached
+        }
+        metadataLock.unlock()
+
+        let loaded = defaults.dictionary(forKey: Keys.notesMetadata) ?? [:]
+        metadataLock.lock()
+        cachedNotesMetadata = loaded
+        metadataLock.unlock()
+        return loaded
+    }
+
+    /// Überschreibt die Notiz-Metadaten: Der Zwischenspeicher wird **sofort**
+    /// aktualisiert (damit direkt folgende Ladevorgänge den neuen Stand sehen),
+    /// das Schreiben selbst läuft im Hintergrund.
+    private func storeNotesMetadata(_ metadata: [String: Any]) {
+        metadataLock.lock()
+        cachedNotesMetadata = metadata
+        metadataLock.unlock()
+        writeQueue.async { [weak self] in
+            self?.defaults.set(metadata, forKey: Keys.notesMetadata)
+        }
     }
 
     /// Lädt nur das Preview-Bild einer Notiz (ohne vollständige Notiz zu laden)
@@ -368,14 +442,16 @@ public final class TimetableStorageService {
     /// Speichert nur das Preview-Bild einer Notiz (für Background-Updates)
     public func savePreviewImage(_ imageData: Data, for noteKey: String) {
         let imageFile = notesDirectory.appendingPathComponent("\(noteKey).png")
-        try? imageData.write(to: imageFile, options: .atomic)
-        
+        writeQueue.async {
+            try? imageData.write(to: imageFile, options: .atomic)
+        }
+
         // Metadata aktualisieren
         var metadata = loadNotesMetadata()
         if var entry = metadata[noteKey] as? [String: Any] {
             entry["hasPreviewImage"] = true
             metadata[noteKey] = entry
-            defaults.set(metadata, forKey: Keys.notesMetadata)
+            storeNotesMetadata(metadata)
         }
     }
 }

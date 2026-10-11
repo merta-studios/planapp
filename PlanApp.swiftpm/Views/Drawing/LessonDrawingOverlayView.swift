@@ -204,6 +204,10 @@ public struct LessonDrawingOverlayView: View {
     // Squeeze-Palette (Apple Pencil Pro): abgerundete Bogen-Werkzeugleiste
     // an der letzten Hover-Position des Stifts.
     @State private var isSqueezePaletteVisible = false
+    /// Die Palette blendet gerade aus, weil der **gehaltene** Rückgängig-Knopf
+    /// losgelassen wurde. Solange dieses Ausblenden läuft, bleiben die übrigen
+    /// Knöpfe verborgen – sie blitzen sonst während des Verschwindens kurz auf.
+    @State private var isDismissingPaletteAfterUndoScrub = false
     @State private var squeezeAnchor: CGPoint? = nil
     @State private var squeezeDirection = CGVector(dx: 0, dy: -1)
     @State private var drawingInputActivity = DrawingInputActivity()
@@ -239,7 +243,7 @@ public struct LessonDrawingOverlayView: View {
 
     /// Die **einzige** Rückgängig-Historie der Notiz: Zeichnung und
     /// Textfelder liegen als gemeinsame Zustände darin. Sie überlebt das
-    /// automatische Schließen (siehe `persistEditingHistory`), damit
+    /// automatische Schließen (siehe `saveAndDismiss`), damit
     /// Rückgängig auch nach dem erneuten Öffnen weitergeht.
     @State private var editingHistory = NoteEditingHistory(
         current: NoteHistorySnapshot(drawingData: Data(), textBoxes: [])
@@ -289,6 +293,9 @@ public struct LessonDrawingOverlayView: View {
     @State private var isResizing = false
     @State private var resizeStartHeight: CGFloat = 460
     @State private var resizeTopY: CGFloat = 0
+    /// Ob der Griff in dieser Geste schon einmal am Inhalt (Bild/Textfeld)
+    /// angestoßen ist – die Rückmeldung kommt nur einmal pro Geste.
+    @State private var didNotifyResizeBlockedByContent = false
 
     // Staged transition: card first moves/grows and turns grey, editor controls
     // become visible only afterwards.
@@ -480,7 +487,9 @@ public struct LessonDrawingOverlayView: View {
                             updateCircularUndoScrub(windowLocation: windowLocation)
                         },
                         onUndoScrubEnded: { endUndoScrub() },
-                        hidesNonUndoElements: isUndoScrubbing
+                        // Auch während des Ausblendens nach dem Loslassen
+                        // bleiben die übrigen Knöpfe verborgen (kein Aufblitzen).
+                        hidesNonUndoElements: isUndoScrubbing || isDismissingPaletteAfterUndoScrub
                     )
                     .zIndex(30)
                     .transition(.opacity)
@@ -1291,6 +1300,7 @@ public struct LessonDrawingOverlayView: View {
                         if !isResizing {
                             isResizing = true
                             resizeStartHeight = canvasHeight
+                            didNotifyResizeBlockedByContent = false
                             // Die Oberkante bleibt in Bildschirm-Koordinaten
                             // stehen; nur die Unterkante wandert.
                             resizeTopY = renderCenter(in: viewport).y - (panelHeight / 2)
@@ -1305,19 +1315,41 @@ public struct LessonDrawingOverlayView: View {
                             canvasHeight,
                             min(maximumCanvasHeight, maximumHeightAtCurrentTop)
                         )
-                        let newHeight = max(
-                            minimumCanvasHeight,
-                            min(upperLimit, requestedHeight)
+                        // Verkleinern: Bilder und Textfelder werden **nicht**
+                        // mehr nach oben geschoben. Der Griff stoppt an der
+                        // Unterkante des tiefsten Elements – kleiner geht es
+                        // erst, wenn man das Element zur Seite geräumt hat.
+                        // Beim Wachsen ist diese Grenze egal (und die Messung
+                        // der Texthöhen wird gespart).
+                        //
+                        // Die Grenze darf die Fläche nie von selbst
+                        // **vergrößern**: Ist der Zettel bereits kleiner als
+                        // sein Inhalt erlaubt (z. B. weil die Höhe beim Laden
+                        // aus der Zeilenzahl gerundet wurde), bleibt er
+                        // einfach stehen, bis das Element beiseite geräumt ist.
+                        let lowerLimit = requestedHeight < canvasHeight
+                            ? min(max(minimumCanvasHeight, canvasContentFloorHeight), canvasHeight)
+                            : minimumCanvasHeight
+
+                        if !didNotifyResizeBlockedByContent,
+                           InteractionPolicies.resizeBlockedByContent(
+                               requestedHeight: Double(requestedHeight),
+                               lowerLimit: Double(lowerLimit)
+                           ) {
+                            didNotifyResizeBlockedByContent = true
+                            Haptics.warning()
+                        }
+
+                        let newHeight = InteractionPolicies.resizedCanvasHeight(
+                            requestedHeight: Double(requestedHeight),
+                            lowerLimit: Double(lowerLimit),
+                            upperLimit: Double(upperLimit)
                         )
 
-                        canvasHeight = newHeight
+                        canvasHeight = CGFloat(newHeight)
                         // Nach dem Wachsen passt evtl. weniger Zoom auf den
                         // Bildschirm – der Zoom wird dann eingeklemmt.
-                        zoomScale = min(zoomScale, maximumZoomScale(for: newHeight, in: viewport))
-
-                        // Bilder und Textfelder, die jetzt außerhalb der
-                        // sichtbaren Fläche liegen, werden nach oben geschoben.
-                        clampContentToCanvasHeight()
+                        zoomScale = min(zoomScale, maximumZoomScale(for: canvasHeight, in: viewport))
 
                         var candidate = offset
                         candidate.height = resizeTopY
@@ -1328,6 +1360,7 @@ public struct LessonDrawingOverlayView: View {
                     .onEnded { _ in
                         isResizing = false
                         resizeStartHeight = canvasHeight
+                        didNotifyResizeBlockedByContent = false
                     }
             )
     }
@@ -1637,33 +1670,41 @@ public struct LessonDrawingOverlayView: View {
         offset = clampedOffset(candidate, in: viewport)
     }
 
-    /// Schiebt Bilder und Textfelder nach oben, wenn die Zeichenfläche
-    /// verkleinert wird und sie sonst außerhalb des sichtbaren Bereichs lägen.
-    /// Wird während des Resize-Gestens aufgerufen, damit die Elemente mit dem
-    /// unteren Rand mitgleiten.
-    private func clampContentToCanvasHeight() {
-        let contentHeight = canvasHeight - headerHeight
-        let margin: Double = 6
+    /// Kleinste Höhe der Zeichenfläche (inkl. Kopfzeile), bei der jedes Bild
+    /// und jedes Textfeld noch vollständig sichtbar ist.
+    ///
+    /// Früher wurden Bilder und Textfelder beim Verkleinern nach oben
+    /// **geschoben**, damit sie nicht aus der Fläche laufen. Der Inhalt
+    /// wanderte dabei unerwartet durch die Notiz. Jetzt blockiert das tiefste
+    /// Element den Zieh-Griff: Wer die Zeichenfläche kleiner haben will, räumt
+    /// das Bild bzw. Textfeld zuerst zur Seite.
+    private var canvasContentFloorHeight: CGFloat {
         let fontStyle = viewModel.drawingSettings.textFontStyle
+        var items: [InteractionPolicies.CanvasContentItem] = []
+        items.reserveCapacity(textBoxes.count + imageBoxes.count)
 
-        // Textfelder klemmen
-        for index in textBoxes.indices {
-            let box = textBoxes[index]
-            let boxHeight = estimatedTextBoxHeight(box, fontStyle: fontStyle)
-            let maxY = max(margin, Double(contentHeight) - boxHeight - margin)
-            if box.y > maxY {
-                textBoxes[index].y = maxY
-            }
+        for box in textBoxes {
+            items.append(
+                InteractionPolicies.CanvasContentItem(
+                    offsetY: box.y,
+                    height: Double(estimatedTextBoxHeight(box, fontStyle: fontStyle))
+                )
+            )
+        }
+        for box in imageBoxes {
+            items.append(
+                InteractionPolicies.CanvasContentItem(
+                    offsetY: box.y,
+                    height: box.height
+                )
+            )
         }
 
-        // Bilder klemmen
-        for index in imageBoxes.indices {
-            let box = imageBoxes[index]
-            let maxY = max(margin, Double(contentHeight) - box.height - margin)
-            if box.y > maxY {
-                imageBoxes[index].y = maxY
-            }
-        }
+        let requiredContent = InteractionPolicies.requiredContentHeight(
+            for: items,
+            minimum: Double(minimumCanvasHeight - headerHeight)
+        )
+        return headerHeight + CGFloat(requiredContent)
     }
 
     // MARK: - Rückgängig / Wiederholen (Zeichnung + Textfelder)
@@ -1809,10 +1850,6 @@ public struct LessonDrawingOverlayView: View {
                 )
             )
         }
-    }
-
-    private func persistEditingHistory() {
-        viewModel.saveUndoSession(editingHistory.persistedSession(for: lesson.noteKey))
     }
 
     /// Leert die Seite vollständig.
@@ -2226,6 +2263,9 @@ public struct LessonDrawingOverlayView: View {
 
         squeezeAnchor = resolvedAnchor
         squeezeDirection = direction
+        // Ein neues Öffnen beginnt immer mit der vollständigen Palette – auch
+        // wenn das letzte Schließen vom gehaltenen Rückgängig-Knopf kam.
+        isDismissingPaletteAfterUndoScrub = false
         withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
             isSqueezePaletteVisible = true
         }
@@ -2319,6 +2359,11 @@ public struct LessonDrawingOverlayView: View {
     private func saveAndDismiss() {
         guard viewModel.isDrawingOverlayPresented, isExpanded else { return }
         DrawingDiagnostics.dismiss.info("saveAndDismiss: Schließen beginnt")
+        // Feste Referenz auf das ViewModel: Teile des Schließens (Speichern,
+        // Vorschau-Update) laufen erst, nachdem dieses Overlay aus der
+        // Hierarchie entfernt wurde. Dann darf nicht mehr über die Umgebung
+        // danach gefragt werden.
+        let model = viewModel
         dismissSqueezePalette()
         // Ein noch offener Strich gehört in die Historie und in die
         // gespeicherte Sitzung, bevor die Notiz geschlossen wird.
@@ -2343,7 +2388,7 @@ public struct LessonDrawingOverlayView: View {
         let rawCanvasHeight = canvasHeight
         let backgroundStyle = noteBackgroundStyle
         let backgroundScale = noteBackgroundScale
-        let textFontStyle = viewModel.drawingSettings.textFontStyle
+        let textFontStyle = model.drawingSettings.textFontStyle
         let tagID = noteTagID
 
         // Schließen **sofort** sichtbar starten (unabhängig vom Rendern).
@@ -2364,15 +2409,29 @@ public struct LessonDrawingOverlayView: View {
         let finishDismiss: () -> Void = {
             guard !didFinishDismiss else { return }
             didFinishDismiss = true
-            persistEditingHistory()
 
-            // Das Overlay wird **sofort** ausgeblendet, sobald der Rückflug
-            // den Stundenblock erreicht hat – unabhängig davon, wie lange das
-            // anschließende Speichern/Rendern dauert. Vorher blieb die Notiz
-            // für die gesamte Renderzeit (bei großen Notizen mehrere Sekunden)
-            // sichtbar auf dem Block liegen und blockierte jede Eingabe.
+            // 0) Rückgängig-Verlauf als **Wert** sichern, bevor das Overlay
+            // abgebaut wird: Danach lebt der @State-Speicher dieser Ansicht
+            // nicht mehr – die Sitzung müsste sonst aus einem leeren Verlauf
+            // neu geschrieben werden und wäre verloren.
+            let undoSession = editingHistory.persistedSession(for: lesson.noteKey)
+
+            // 1) Overlay **zuerst** und ohne Verzögerung ausblenden.
+            //
+            // Diese Vollbild-Ebene liegt über dem Stundenplan und nimmt jede
+            // Berührung an. Solange sie hängt, ist die App nicht bedienbar –
+            // und genau das passierte früher: Erst wurde die Undo-Sitzung
+            // gespeichert (JSON-Encoding aller Rückgängig-Stände samt
+            // Zeichnungen und Bildern), dann das Overlay entfernt. Die Notiz
+            // lag dadurch noch rund zwei Sekunden sichtbar auf dem
+            // Stundenblock, während der Main Thread blockiert war.
             DrawingDiagnostics.dismiss.info("saveAndDismiss: Overlay wird ausgeblendet")
-            viewModel.closeNoteOverlay()
+            model.closeNoteOverlay()
+
+            // 2) Verlauf einspielen. Hier wird nur noch kopiert: Das
+            // Encodieren und Schreiben läuft im Hintergrund (siehe
+            // `TimetableStorageService`).
+            model.saveUndoSession(undoSession)
 
             // Immer die bekannte Papiergröße verwenden – `PKCanvasView.bounds`
             // kann beim ersten Öffnen noch winzig oder 0 sein und hat dann die
@@ -2398,11 +2457,21 @@ public struct LessonDrawingOverlayView: View {
             // persistent – ein sofortiges erneutes Öffnen sieht immer den
             // aktuellen Inhalt. Bis das neue Vorschau-Bild fertig ist, bleibt
             // das bisherige Vorschau-Bild als Platzhalter stehen.
+            //
+            // Günstig heißt hier: reine Wertarbeit im Speicher. Die Dateien
+            // schreibt der Speicher-Dienst im Hintergrund, und die
+            // Inhaltsprüfung bekommt die Striche direkt aus der Zeichnung
+            // (statt die eben serialisierten Daten wieder zu dekodieren).
             let croppedDrawing = currentDrawing.cropped(to: canvasRect)
             let drawingData = croppedDrawing.dataRepresentation()
-            let placeholderPreview = viewModel.noteFor(lesson: lesson)?.croppedImageData
+            // Reine Speicherabfrage: `noteFor` würde für eine noch nie
+            // gespeicherte Notiz synchron auf der Festplatte nachsehen und
+            // damit genau den Main Thread blockieren, der hier freigegeben
+            // werden soll. Liegt die Notiz nicht im Speicher, gibt es auch
+            // kein bisheriges Vorschaubild.
+            let placeholderPreview = model.lessonNotes[lesson.noteKey]?.croppedImageData
             DrawingDiagnostics.dismiss.info("saveAndDismiss: speichere Notiz (Zeichnungsdaten)")
-            let persistedUpdatedAt = viewModel.persistNote(
+            let persistedUpdatedAt = model.persistNote(
                 for: lesson,
                 drawingData: drawingData,
                 croppedImageData: placeholderPreview,
@@ -2411,7 +2480,8 @@ public struct LessonDrawingOverlayView: View {
                 imageBoxes: cleanedImageBoxes,
                 backgroundStyle: backgroundStyle,
                 backgroundScale: backgroundScale,
-                tagID: tagID
+                tagID: tagID,
+                hasInkContent: !croppedDrawing.strokes.isEmpty
             )
 
             // Phase 2 (Hintergrund, teuer): Das Vorschau-Bild rendern und
@@ -2434,7 +2504,7 @@ public struct LessonDrawingOverlayView: View {
                 guard let imageData = croppedImage?.pngData() else { return }
 
                 DispatchQueue.main.async {
-                    viewModel.updateNotePreview(
+                    model.updateNotePreview(
                         for: lesson,
                         expectedUpdatedAt: persistedUpdatedAt,
                         croppedImageData: imageData
@@ -3157,6 +3227,8 @@ public struct LessonDrawingOverlayView: View {
         // ohne Takt angewandt, damit der Zustand exakt dem Ziel entspricht.
         scrubStepWorkItem?.cancel()
         scrubStepWorkItem = nil
+        // Welche Bar gehalten wurde, steht schon vor dem Aufräumen fest.
+        let heldStyle = undoScrubSession?.style
         if let live = undoScrubSession {
             let delta = live.targetOffset - live.currentOffset
             if delta > 0 {
@@ -3169,6 +3241,17 @@ public struct LessonDrawingOverlayView: View {
         undoScrubRotation.reset()
         withAnimation(.easeOut(duration: 0.16)) {
             undoScrubSession = nil
+            // Kreis-Bar des Apple-Pencil-Squeeze: Nach dem Loslassen soll die
+            // Palette **nicht** mit allen Knöpfen wieder auftauchen (das sah
+            // aus, als wäre sie nie weg gewesen) – sie verschwindet zusammen
+            // mit dem Ring. Der lineare Balken der normalen Werkzeugleiste
+            // lässt die Leiste unverändert.
+            if InteractionPolicies.dismissesSqueezePaletteAfterUndoScrub(
+                isCircularScrub: heldStyle == .circular
+            ) {
+                isDismissingPaletteAfterUndoScrub = true
+                isSqueezePaletteVisible = false
+            }
         }
     }
 }

@@ -125,14 +125,18 @@ public final class NoteCacheService {
         return note
     }
     
-    /// Speichert eine Notiz und aktualisiert den Cache
-    public func saveNote(_ note: LessonNote) {
-        storage.saveLessonNote(note)
-        
+    /// Speichert eine Notiz und aktualisiert den Cache.
+    ///
+    /// - Parameter hasVisibleContent: Bekannter Inhalt (Striche/Text/Bilder).
+    ///   Die eigene Prüfung dekodiert die PencilKit-Daten und ist teuer; wer das
+    ///   Ergebnis schon kennt, gibt es mit.
+    public func saveNote(_ note: LessonNote, hasVisibleContent: Bool? = nil) {
+        storage.saveLessonNote(note, hasVisibleContent: hasVisibleContent)
+
         // Cache aktualisieren
         let cost = note.drawingData.count + (note.croppedImageData?.count ?? 0)
         cache.setObject(note, forKey: note.id, cost: cost)
-        
+
         // Metadata aktualisieren
         let metadata = NoteMetadata(
             id: note.id,
@@ -141,7 +145,7 @@ public final class NoteCacheService {
             backgroundStyle: note.backgroundStyle,
             backgroundScale: note.backgroundScale,
             tagID: note.tagID,
-            hasContent: note.hasVisibleContent,
+            hasContent: hasVisibleContent ?? note.hasVisibleContent,
             hasPreviewImage: note.croppedImageData != nil,
             textBoxCount: note.textBoxes.count,
             imageBoxCount: note.imageBoxes.count

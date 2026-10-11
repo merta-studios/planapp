@@ -124,4 +124,51 @@ public enum NoteUndoSessionPolicy {
         guard originY.isFinite, spacing > 0 else { return 0 }
         return max(0, Int(max(0, originY - 40) / spacing))
     }
+
+    // MARK: - Größe der gespeicherten Sitzung
+
+    /// Größenbudget eines persistierten Rückgängig-Stapels in Byte.
+    ///
+    /// Jeder Stand enthält die **komplette** Zeichnung, alle Textfelder und
+    /// alle Bilder der Notiz. Ohne Grenze schrieb das Schließen einer Notiz mit
+    /// Bildern schnell ein Vielfaches ihrer eigenen Größe als JSON in die
+    /// Einstellungen (40 Stände × mehrere Megabyte) – das war der Hauptgrund
+    /// dafür, dass die App nach dem Rückflug der Notiz in den Stundenblock
+    /// für Sekunden nicht bedienbar war. Reine Handschrift bleibt mit diesem
+    /// Budget praktisch immer vollständig erhalten.
+    public static let maximumPersistedStackBytes = 3 * 1024 * 1024
+
+    /// Obergrenze für einen **einzelnen** Stand.
+    ///
+    /// Der neueste Stand wird auch dann gesichert, wenn er das Stapel-Budget
+    /// für sich allein schon sprengt – sonst ginge die Historie bildreicher
+    /// Notizen vollständig verloren. Alles darüber hinaus bleibt ungesichert.
+    public static let maximumPersistedStepBytes = 8 * 1024 * 1024
+
+    /// Wie viele der **letzten** Schritte eines Stapels noch gespeichert
+    /// werden dürfen. `byteSizes` steht in Stapel-Reihenfolge (ältester Schritt
+    /// zuerst); das Ergebnis ist damit immer ein zusammenhängendes Ende des
+    /// Stapels. Gezählt wird vom neuesten Schritt rückwärts, solange das
+    /// Budget reicht. Ungültige (negative) Größen beenden das Zählen.
+    public static func persistedStepCount(
+        byteSizes: [Int],
+        budget: Int = maximumPersistedStackBytes,
+        stepCeiling: Int = maximumPersistedStepBytes
+    ) -> Int {
+        guard budget > 0, !byteSizes.isEmpty else { return 0 }
+        let ceiling = max(budget, stepCeiling)
+        var used = 0
+        var kept = 0
+        for size in byteSizes.reversed() {
+            guard size >= 0 else { break }
+            if kept == 0 {
+                guard size <= ceiling else { break }
+            } else {
+                guard used + size <= budget else { break }
+            }
+            used += size
+            kept += 1
+        }
+        return kept
+    }
 }
