@@ -559,4 +559,119 @@ expect(
     "Erneutes Setzen desselben Modus löscht keine frischen Filter"
 )
 
+// MARK: - Zeichenfläche verkleinern: Inhalt blockiert den Griff
+
+let canvasContent = [
+    InteractionPolicies.CanvasContentItem(offsetY: 40, height: 60),
+    InteractionPolicies.CanvasContentItem(offsetY: 200, height: 120)
+]
+expect(
+    InteractionPolicies.requiredContentHeight(for: canvasContent, minimum: 216) == 326,
+    "Das tiefste Element begrenzt die Zeichenfläche (200 + 120 + 6 Rand)"
+)
+expect(
+    InteractionPolicies.requiredContentHeight(for: [], minimum: 216) == 216,
+    "Ohne Inhalt gilt das absolute Minimum der Zeichenfläche"
+)
+expect(
+    InteractionPolicies.requiredContentHeight(
+        for: [
+            InteractionPolicies.CanvasContentItem(offsetY: .nan, height: 40),
+            InteractionPolicies.CanvasContentItem(offsetY: 30, height: .infinity)
+        ],
+        minimum: 216
+    ) == 216,
+    "Ungültige Maße blockieren den Griff nicht dauerhaft"
+)
+expect(
+    InteractionPolicies.resizedCanvasHeight(
+        requestedHeight: 300, lowerLimit: 390, upperLimit: 656
+    ) == 390,
+    "Nach oben ziehen stoppt am Bild/Textfeld, statt es zu verschieben"
+)
+expect(
+    InteractionPolicies.resizedCanvasHeight(
+        requestedHeight: 500, lowerLimit: 390, upperLimit: 656
+    ) == 500,
+    "Innerhalb der Grenzen folgt der Griff dem Finger"
+)
+expect(
+    InteractionPolicies.resizedCanvasHeight(
+        requestedHeight: 900, lowerLimit: 390, upperLimit: 656
+    ) == 656,
+    "Wachsen endet an der Bildschirmgrenze"
+)
+expect(
+    InteractionPolicies.resizedCanvasHeight(
+        requestedHeight: 100, lowerLimit: 280, upperLimit: 200
+    ) == 280,
+    "Der Inhalt gewinnt gegen eine zu kleine Obergrenze"
+)
+expect(
+    InteractionPolicies.resizedCanvasHeight(
+        requestedHeight: .nan, lowerLimit: 280, upperLimit: 656
+    ) == 280,
+    "Ungültige Anfrage fällt auf die Untergrenze zurück"
+)
+expect(
+    InteractionPolicies.resizeBlockedByContent(requestedHeight: 300, lowerLimit: 390),
+    "Anstoßen am Inhalt wird als Blockade gemeldet"
+)
+expect(
+    !InteractionPolicies.resizeBlockedByContent(requestedHeight: 390, lowerLimit: 390),
+    "Genau an der Inhaltsgrenze ist nichts blockiert"
+)
+expect(
+    !InteractionPolicies.resizeBlockedByContent(requestedHeight: .nan, lowerLimit: 390),
+    "Ungültige Werte lösen keine Rückmeldung aus"
+)
+
+// MARK: - Gehaltener Rückgängig-Knopf der Squeeze-Palette
+
+expect(
+    InteractionPolicies.dismissesSqueezePaletteAfterUndoScrub(isCircularScrub: true),
+    "Loslassen des gehaltenen Kreis-Knopfs lässt die Squeeze-Bar verschwinden"
+)
+expect(
+    !InteractionPolicies.dismissesSqueezePaletteAfterUndoScrub(isCircularScrub: false),
+    "Der Balken der Werkzeugleiste taucht danach nicht ab"
+)
+
+// MARK: - Größenbudget der gespeicherten Rückgängig-Sitzung
+
+expect(
+    NoteUndoSessionPolicy.persistedStepCount(byteSizes: [100, 200, 300], budget: 1000) == 3,
+    "Kleine Schritte bleiben vollständig erhalten"
+)
+expect(
+    NoteUndoSessionPolicy.persistedStepCount(
+        byteSizes: [1_000_000, 1_000_000, 1_000_000, 1_000_000]
+    ) == 3,
+    "Das Standard-Budget behält die drei neuesten Schritte"
+)
+expect(
+    NoteUndoSessionPolicy.persistedStepCount(
+        byteSizes: [1_000_000, 1_000_000, 5_000_000], budget: 3_000_000
+    ) == 1,
+    "Nur der neueste Schritt passt ins Budget"
+)
+expect(
+    NoteUndoSessionPolicy.persistedStepCount(
+        byteSizes: [1, 2, 4_000_000, 3], budget: 3_000_000
+    ) == 1,
+    "Ein übergroßer Schritt bläht die Datei nicht auf"
+)
+expect(
+    NoteUndoSessionPolicy.persistedStepCount(byteSizes: [], budget: 1000) == 0,
+    "Leerer Stapel bleibt leer"
+)
+expect(
+    NoteUndoSessionPolicy.persistedStepCount(byteSizes: [10, 20], budget: 0) == 0,
+    "Ohne Budget wird nichts gespeichert"
+)
+expect(
+    NoteUndoSessionPolicy.persistedStepCount(byteSizes: [10, -1, 20], budget: 1000) == 1,
+    "Ungültige Größen beenden das Zählen"
+)
+
 print("\(checks) Interaktions-/Sync-/Layout-Checks erfolgreich.")

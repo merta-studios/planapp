@@ -13,31 +13,47 @@
 
 ---
 
-## 2. Bilder/Text gleiten beim Verkleinern mit ✅
+## 2. Zeichenfläche verkleinern: Inhalt blockiert den Griff ✅
 
-**Problem:** Wenn man ein Bild/Text nach ganz unten schiebt und dann den unteren Rand nach oben zieht, bleibt das Bild/Text an der alten Position und ragt aus dem sichtbaren Bereich heraus.
+**Problem:** Beim Ziehen des runden Griffs nach oben (Zeichenfläche kleiner machen) wurden Bilder und Textfelder, die im Weg lagen, nach oben geschoben. Der Inhalt wanderte dadurch unerwartet durch die Notiz.
+
+**Gewünschtes Verhalten:** Die Zeichenfläche darf **nicht** über ein Bild oder Textfeld hinweg verkleinert werden. Der Griff stoppt an der Unterkante des tiefsten Elements; kleiner geht es erst, nachdem man das Element zur Seite geräumt hat.
 
 **Lösung:**
-- Neue Funktion `clampContentToCanvasHeight()` hinzugefügt
-- Wird während des Resize-Gestens aufgerufen
-- Schiebt alle Bilder und Textfelder automatisch nach oben, wenn sie sonst außerhalb des sichtbaren Bereichs liegen würden
-- Berechnet für jedes Element die maximale Y-Position basierend auf der aktuellen Canvas-Höhe
+- `clampContentToCanvasHeight()` (das Hochschieben des Inhalts) ist ersatzlos entfernt – Inhalt wird beim Verkleinern nie mehr bewegt
+- Neue berechnete Eigenschaft `canvasContentFloorHeight`: tiefste Unterkante aller Textfelder (inkl. geschätzter Texthöhe) und Bilder plus 6 pt Rand, mindestens die Inhaltshöhe des absoluten Minimums
+- Beim Verkleinern gilt `lowerLimit = min(max(minimumCanvasHeight, canvasContentFloorHeight), canvasHeight)`; beim Wachsen bleibt das bisherige Minimum (die Messung der Texthöhen entfällt dann)
+- Die Grenze vergrößert den Zettel nie von selbst: Ist er beim Laden aus der Zeilenzahl kleiner gerundet worden, als sein Inhalt erlaubt, bleibt er stehen, statt aufzuspringen
+- Neue, testbare Regeln in `InteractionPolicies`: `requiredContentHeight(for:margin:minimum:)`, `resizedCanvasHeight(requestedHeight:lowerLimit:upperLimit:)`, `resizeBlockedByContent(requestedHeight:lowerLimit:tolerance:)`
+- Ungültige Maße (NaN/∞) werden übersprungen, damit ein einzelner kaputter Rahmen den Griff nicht dauerhaft blockiert
+- Rückmeldung statt stiller Blockade: Steht der Griff am Inhalt an, gibt es **einmal pro Zieh-Geste** `Haptics.warning()`
 
-**Geänderte Datei:** `Views/Drawing/LessonDrawingOverlayView.swift`
+**Geänderte Dateien:** `Utils/InteractionPolicies.swift`, `Views/Drawing/LessonDrawingOverlayView.swift`, `Tests/InteractionRegressions/main.swift`
 
 ---
 
-## 3. Notiz-Schließen-Verzögerung behoben ✅
+## 3. Notiz-Schließen: kein Einfrieren mehr nach dem Rückflug ✅
 
-**Problem:** Beim Schließen einer Notiz gleitet sie zum Fach-Block zurück, bleibt dort aber für ~2 Sekunden sichtbar und blockiert die Bedienung.
+**Problem:** Beim Schließen einer Notiz glitt sie zum Fach-Block zurück und blieb dort rund zwei Sekunden liegen, in denen die ganze App nicht bedienbar war (Wochen wischen, Stunden antippen – nichts ging).
 
-**Lösung:**
-- Safety-Net-Delay von 1.2s auf 0.5s reduziert
-- Spring-Animation leicht beschleunigt (response: 0.36 → 0.32)
-- Completion-Handler wird jetzt schneller ausgelöst
-- Overlay verschwindet sofort nach Abschluss der Animation
+**Ursache:** Vor dem Abbauen des Overlays lief das komplette Speichern auf dem Main Thread:
+1. `persistEditingHistory()` → `saveNoteUndoSessions`: JSON-Encoding **aller** Rückgängig-Vollstände (bis zu 40 Schritte × 3 Notizen, jeder mit Zeichnung, Textfeldern und Bildern bis 3 MB) – bei bildreichen Notizen schnell zweistellige Megabyte, base64-kodiert ein Vielfaches davon
+2. erst danach das animierte `closeNoteOverlay()`
+3. danach `persistNote` → vier atomare Dateischreiben, kompletter Metadaten-Neuaufbau in `UserDefaults` plus `synchronize()` und zweimaliges Dekodieren der PencilKit-Daten für die Inhaltsprüfung
 
-**Geänderte Datei:** `Views/Drawing/LessonDrawingOverlayView.swift`
+Solange das Overlay hängt, nimmt diese Vollbild-Ebene jede Berührung an – die Bedienung war also genau während dieser Arbeit blockiert.
+
+**Lösung (neue Reihenfolge):**
+- Der Rückgängig-Verlauf wird **als Wert** gesichert, bevor das Overlay abgebaut wird (danach lebt der `@State`-Speicher dieser Ansicht nicht mehr)
+- `closeNoteOverlay()` kommt zuerst und läuft ohne Animation (`Transaction(disablesAnimations: true)`): Die Notiz ist in dem Moment im Block angekommen, in dem das Overlay verschwindet
+- `persistNote` bekommt den Strich-Inhalt direkt aus der Zeichnung im Speicher (`hasInkContent: !croppedDrawing.strokes.isEmpty`) statt die serialisierten Daten erneut zu dekodieren
+- Das bisherige Vorschaubild bleibt als Platzhalter stehen, bis Phase 2 (Vorschau rendern) im Hintergrund fertig ist und `updateNotePreview` einspielt
+- `TimetableStorageService` schreibt **alles** auf einer seriellen Hintergrund-Queue (`planapp.storage.writes`) und ohne `synchronize()`; die Reihenfolge der Schreibvorgänge bleibt erhalten
+- `NoteCacheService.saveNote(_:hasVisibleContent:)` übernimmt den bekannten Inhalt und spart so das PencilKit-Decoding
+- Größenbudget für die gespeicherte Sitzung: `NoteUndoSessionPolicy.maximumPersistedStackBytes` (3 MB) bzw. `maximumPersistedStepBytes` (8 MB) plus `persistedStepCount(byteSizes:budget:stepCeiling:)` und `NoteHistorySnapshot.approximateByteSize`. Gespeichert wird das zusammenhängende Ende jedes Stapels, das ins Budget passt – der pathologische Riesen-Schreibvorgang ist damit ausgeschlossen
+- `saveAndDismiss` hält eine feste Referenz (`let model = viewModel`): Teile des Schließens laufen erst, nachdem das Overlay die Hierarchie verlassen hat, und dürfen nicht mehr über die Umgebung danach fragen
+
+**Geänderte Dateien:** `Views/Drawing/LessonDrawingOverlayView.swift`, `ViewModels/TimetableViewModel.swift`, `Services/TimetableStorageService.swift`, `Services/NoteCacheService.swift`, `Models/NoteUndoHistory.swift`, `Utils/HeroTransitionPolicy.swift`
 
 ---
 
@@ -92,13 +108,46 @@
 
 ---
 
+## 5. Wochenwechsel ohne Verzögerung ✅
+
+**Problem:** Beim Wechsel der Woche ruckelte die App deutlich.
+
+**Ursachen und Lösung:**
+- **Formatter-Churn:** Jeder Datumshelfer in `Utils/DateExtensions.swift` baute pro Aufruf einen neuen `DateFormatter` (und `Calendar.germanCalendar` einen neuen `Calendar`) – bei 15 Tagesspalten × 3 Wochen mehrere hundert Instanzen pro Render-Durchlauf. Alle Formatter und der Kalender liegen jetzt einmalig in `PlanDateFormatting` (statische gespeicherte Eigenschaften sind in Extensions nicht erlaubt)
+- **Stunden-Suchen:** Jede `DayColumnView` lief für `lessonsFor(day:)` zweimal über **alle** Stunden, `hasLessons(inWeekStarting:)` zusätzlich ~16×. Beides ist jetzt pro Tagesschlüssel memoisiert (`lessonsByDayCache`, `lessonDayKeysCache`), ungültig gemacht über `lessonsRevision`
+- **Synchrones Lesen im Render-Pfad:** `LessonBlockView` rief `viewModel.noteFor(lesson:)` auf, das bei Bedarf vier Dateien liest und dekodiert – für bis zu ~120 Karten gleichzeitig, mitten in der Wisch-Animation. Neu: `renderedNote(for:)` liefert nur, was im Speicher liegt, und merkt Fehlendes vor; die vorgemerkten Notizen werden gebündelt (80 ms) im Hintergrund geladen und danach eingespielt. Angefordert wird nur, was wirklich angezeigt wird (eingeschaltete Vorschau + `visibleNoteKeys`)
+- **Metadaten-Aufbau:** `UserDefaults.dictionary(forKey:)` baute bei jedem `loadNote` ein neues `[String: Any]` je Notiz auf. Die Metadaten sind jetzt hinter `metadataLock` zwischengespeichert
+- **Schreiben auf dem Main Thread:** `syncWeek` speicherte Perioden, Stunden und Zugangsdaten synchron (JSON + `synchronize()` + atomare Sicherungskopie). Alles läuft auf der seriellen `writeQueue`
+
+**Geänderte Dateien:** `Utils/DateExtensions.swift`, `ViewModels/TimetableViewModel.swift`, `Views/Timetable/LessonBlockView.swift`, `Services/TimetableStorageService.swift`
+
+---
+
+## 6. Gehaltener Rückgängig-Knopf: Squeeze-Bar verschwindet ✅
+
+**Problem:** Wer in der Squeeze-Bar den Rückgängig-Knopf lange hielt (Scrubs-Geste) und losließ, bekam die komplette Bar mit allen Knöpfen wieder eingeblendet. Erwartet: Sie verschwindet.
+
+**Ursache:** `endUndoScrub()` setzte nur `undoScrubSession = nil`. Damit fiel `isUndoScrubing`/`hidesNonUndoElements` weg, und die Palette blendete Farbwahl, Bogen, Hintergrund und Elemente wieder ein.
+
+**Lösung:**
+- Der gehaltene Stil wird vor dem Aufräumen erfasst (`let heldStyle = undoScrubSession?.style`)
+- Bei `.circular` (Apple-Pencil-Squeeze-Palette) wird in derselben `.easeOut(0.16)`-Animation zusätzlich `isSqueezePaletteVisible = false` gesetzt, zusammen mit `isDismissingPaletteAfterUndoScrub = true` (in `hidesNonUndoElements` verodert, in `presentSqueezePalette` zurückgesetzt)
+- Der lineare Balken der normalen Werkzeugleiste bleibt unverändert – er gehört zur Leiste und soll nicht abtauchen
+- Regel testbar in `InteractionPolicies.dismissesSqueezePaletteAfterUndoScrub(isCircularScrub:)`
+
+**Geänderte Dateien:** `Views/Drawing/LessonDrawingOverlayView.swift`, `Utils/InteractionPolicies.swift`
+
+---
+
 ## Zusammenfassung
 
-Alle vier gemeldeten Probleme wurden behoben:
+Alle gemeldeten Probleme wurden behoben:
 
 1. ✅ **Crop-Handles** funktionieren jetzt korrekt - man kann direkt an den Ecken ziehen
-2. ✅ **Bilder/Text** gleiten automatisch mit, wenn der Rand nach oben gezogen wird
-3. ✅ **Notiz-Schließen** ist jetzt sofort nach der Animation abgeschlossen (keine 2s Wartezeit)
+2. ✅ **Zeichenfläche verkleinern** stoppt an Bildern/Textfeldern, statt sie zu verschieben
+3. ✅ **Notiz-Schließen** friert die App nicht mehr ein (Overlay zuerst weg, Speichern im Hintergrund, Größenbudget für die Undo-Sitzung)
 4. ✅ **Mobile Design** ist deutlich kompakter und besser für kleine Bildschirme optimiert
+5. ✅ **Wochenwechsel** läuft flüssig (Formatter-Cache, memoisierte Stunden, kein synchrones Notiz-Laden im Render-Pfad, Schreiben im Hintergrund)
+6. ✅ **Gehaltener Rückgängig-Knopf** lässt die Squeeze-Bar verschwinden statt wieder auftauchen
 
-Die Änderungen sind minimal-invasiv und bewahren die bestehende Funkktionalität auf iPad/Mac, während sie das iPhone-Erlebnis deutlich verbessern.
+Die Änderungen sind minimal-invasiv und bewahren die bestehende Funktionalität auf iPad/Mac, während sie das iPhone-Erlebnis deutlich verbessern. Logik-Regeln (Resize-Grenzen, Squeeze-Bar, Undo-Budget) sind in `Tests/InteractionRegressions/main.swift` abgesichert.

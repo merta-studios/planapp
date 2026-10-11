@@ -45,7 +45,10 @@ public final class TimetableViewModel: ObservableObject {
         }
     }
     @Published public var lessons: [Lesson] = [] {
-        didSet { notesOverviewRevision &+= 1 }
+        didSet {
+            notesOverviewRevision &+= 1
+            lessonsRevision &+= 1
+        }
     }
     @Published public var subjectCustomizations: [SubjectCustomization] = [] {
         didSet {
@@ -170,6 +173,38 @@ public final class TimetableViewModel: ObservableObject {
     /// Cache sichtbarer Notiz-Keys. Das vermeidet wiederholtes Decodieren großer
     /// PKDrawing-Daten während SwiftUI den Stundenplan neu rendert.
     private var visibleNoteKeys: Set<String> = []
+
+    // MARK: - Caches für den Stundenplan (Performance beim Wochenwechsel)
+
+    /// Zähler, der sich nur mit `lessons` ändert. Die Tages- und Wochen-Caches
+    /// gehören zu genau einer Revision und werden bei jeder Änderung der
+    /// Stunden-Daten vollständig verworfen.
+    private var lessonsRevision: UInt = 0
+    private var cachedLessonsRevision: UInt = 0
+    /// Ergebnis von `lessonsFor(day:)` je Tages-Schlüssel. Die Funktion wurde
+    /// pro Render-Durchlauf mehrfach für jede der 15 Spalten des
+    /// Drei-Wochen-Karussells aufgerufen und filterte, sortierte und verschmolz
+    /// dabei jedes Mal **alle** gespeicherten Stunden.
+    private var lessonsByDayCache: [String: [Lesson]] = [:]
+    /// Alle Tages-Schlüssel, an denen Unterricht gespeichert ist – für
+    /// `hasLessons(inWeekStarting:)` ohne erneuten Durchlauf über `lessons`.
+    private var lessonDayKeysCache: Set<String>? = nil
+
+    // MARK: - Asynchrones Nachladen von Notizen (Anzeige-Pfad)
+
+    /// Vorgemerkte Notiz-Keys, deren Laden noch nicht gestartet wurde.
+    private var pendingNoteLoadKeys: Set<String> = []
+    /// Keys, deren Hintergrund-Laden gerade läuft (keine doppelten Anfragen).
+    private var inFlightNoteLoadKeys: Set<String> = []
+    /// Keys, die laut Metadaten existieren sollten, aber nicht ladbar waren.
+    /// Sie werden nicht bei jedem Render-Durchlauf erneut angefordert.
+    private var unavailableNoteKeys: Set<String> = []
+    /// Ob der gesammelte Lade-Lauf bereits geplant ist.
+    private var isNoteLoadScheduled = false
+    /// Kurze Sammel-Verzögerung: Ein kompletter Render-Durchlauf (drei Wochen
+    /// à fünf Spalten) soll in **einem** Hintergrund-Lauf landen statt in
+    /// vielen einzelnen.
+    private static let noteLoadCoalescingDelay: TimeInterval = 0.08
     private var autoRefreshTimer: AnyCancellable? = nil
     private var applePencilBatteryMonitor: ApplePencilBatteryMonitor?
     private var applePencilBatteryObservation: AnyCancellable?
@@ -476,9 +511,16 @@ public final class TimetableViewModel: ObservableObject {
     }
 
     /// Ob es in der angegebenen Woche überhaupt gespeicherte Stunden gibt.
+    ///
+    /// Der Wert wird pro Render-Durchlauf für jede Spalte des Karussells
+    /// gelesen (Lade-Anzeige bzw. „Kein Unterricht“). Der Vergleich läuft
+    /// deshalb über die zwischengespeicherten Tages-Schlüssel statt jedes Mal
+    /// über alle gespeicherten Stunden.
     public func hasLessons(inWeekStarting weekStart: Date) -> Bool {
-        let dayKeys = Set(weekStart.schoolWeekDays().map { $0.yyyyMMddString })
-        return lessons.contains { dayKeys.contains($0.dateString) }
+        invalidateLessonCachesIfNeeded()
+        let dayKeys = lessonDayKeys()
+        guard !dayKeys.isEmpty else { return false }
+        return weekStart.schoolWeekDays().contains { dayKeys.contains($0.yyyyMMddString) }
     }
 
     /// Ob für diese Woche gerade Daten von der API geholt werden.
@@ -639,12 +681,24 @@ public final class TimetableViewModel: ObservableObject {
     // MARK: - Timetable Queries & Lesson Merging
 
     /// Gibt alle Unterrichtsstunden für einen bestimmten Tag zurück, zusammengefasst zu Doppelstunden
+    ///
+    /// Das Ergebnis wird je Tages-Schlüssel zwischengespeichert: Die Ansicht
+    /// ruft die Funktion mehrfach pro Spalte auf (Blöcke, „Kein Unterricht“,
+    /// Positions-Berechnung) und das Karussell rendert drei Wochen gleichzeitig.
+    /// Ohne Cache liefen dadurch bei jedem Wochenwechsel dutzende Filter- und
+    /// Sortier-Durchläufe über **alle** gespeicherten Stunden.
     public func lessonsFor(day: Date) -> [Lesson] {
+        invalidateLessonCachesIfNeeded()
         let dateStr = day.yyyyMMddString
+        if let cached = lessonsByDayCache[dateStr] {
+            return cached
+        }
+
         let dayLessons = lessons.filter { $0.dateString == dateStr }
         let sorted = dayLessons.sorted { $0.periodNumber < $1.periodNumber }
 
         var merged: [Lesson] = []
+        merged.reserveCapacity(sorted.count)
         var i = 0
         while i < sorted.count {
             var current = sorted[i]
@@ -661,7 +715,24 @@ public final class TimetableViewModel: ObservableObject {
             i += 1
         }
 
+        lessonsByDayCache[dateStr] = merged
         return merged
+    }
+
+    /// Verwirft die Tages-Caches, sobald sich die Stunden-Daten geändert haben.
+    private func invalidateLessonCachesIfNeeded() {
+        guard cachedLessonsRevision != lessonsRevision else { return }
+        cachedLessonsRevision = lessonsRevision
+        lessonsByDayCache.removeAll(keepingCapacity: true)
+        lessonDayKeysCache = nil
+    }
+
+    /// Alle Tages-Schlüssel (`yyyy-MM-dd`), an denen Unterricht gespeichert ist.
+    private func lessonDayKeys() -> Set<String> {
+        if let cached = lessonDayKeysCache { return cached }
+        let keys = Set(lessons.map(\.dateString))
+        lessonDayKeysCache = keys
+        return keys
     }
 
     /// Findet eine Stunde für einen bestimmten Tag und Stundennummer
@@ -824,6 +895,11 @@ public final class TimetableViewModel: ObservableObject {
     /// danach asynchron laufen darf (`updateNotePreview`). Der Rückgabewert
     /// ist der Zeitstempel der gespeicherten Notiz – nur mit genau ihm darf
     /// ein nachträgliches Vorschau-Update eingespielt werden.
+    ///
+    /// - Parameter hasInkContent: Bekannter Strich-Inhalt. Die eigene Prüfung
+    ///   dekodiert die PencilKit-Daten (bei großen Notizen mehrere hundert
+    ///   Millisekunden); der Editor kennt das Ergebnis beim Schließen bereits
+    ///   aus der Zeichnung im Speicher und gibt es deshalb mit.
     @discardableResult
     public func persistNote(
         for lesson: Lesson,
@@ -834,7 +910,8 @@ public final class TimetableViewModel: ObservableObject {
         imageBoxes: [NoteImageBox] = [],
         backgroundStyle: NoteBackgroundStyle = .blank,
         backgroundScale: Double = NoteBackgroundMetrics.defaultScale,
-        tagID: UUID? = nil
+        tagID: UUID? = nil,
+        hasInkContent: Bool? = nil
     ) -> Date {
         let key = lesson.noteKey
         // Ein Tag zählt nur, solange er im Tag-System noch existiert.
@@ -852,10 +929,18 @@ public final class TimetableViewModel: ObservableObject {
             updatedAt: Date()
         )
 
-        if note.hasVisibleContent {
+        // Dieselbe Regel wie `LessonNote.hasVisibleContent`, nur ohne das
+        // erneute Dekodieren der Zeichnungsdaten, wenn der Aufrufer sie kennt.
+        let visibleContent = NoteContentPolicy.shouldPersist(
+            hasInk: hasInkContent ?? note.hasInkContent,
+            hasText: note.hasTextContent
+        ) || note.hasImageContent
+
+        if visibleContent {
             self.lessonNotes[key] = note
             visibleNoteKeys.insert(key)
-            noteCache.saveNote(note)
+            unavailableNoteKeys.remove(key)
+            noteCache.saveNote(note, hasVisibleContent: true)
         } else {
             // Eine nur geöffnete, komplett geleerte oder nur mit Tag versehene
             // Seite bleibt wirklich "keine Notiz". Ein Tag ohne Inhalt wird
@@ -885,14 +970,24 @@ public final class TimetableViewModel: ObservableObject {
               note.updatedAt == expectedUpdatedAt else { return }
         note.croppedImageData = croppedImageData
         lessonNotes[key] = note
-        noteCache.saveNote(note)
+        // Die Notiz lag bereits sichtbar im Speicher – kein erneutes
+        // Dekodieren der Zeichnungsdaten für dieselbe Prüfung.
+        noteCache.saveNote(note, hasVisibleContent: true)
     }
 
     /// Blendet das Zeichen-Overlay sofort aus (ohne zu speichern). Das
     /// Speichern übernimmt `persistNote` – bei Bedarf auch erst danach.
+    ///
+    /// Bewusst **ohne** Animation: Das Overlay liegt beim Schließen als
+    /// Vollbild-Ansicht über dem Stundenplan. Jede Ausblendeverzögerung hält
+    /// diese Ebene – und damit die gesamte Bedienung – länger fest, als der
+    /// Rückflug in den Stundenblock dauert. Die Notiz ist in dem Moment
+    /// sichtbar im Block angekommen, in dem das Overlay verschwindet.
     public func closeNoteOverlay() {
         guard activeNotePresentation != nil else { return }
-        withAnimation(.easeOut(duration: 0.18)) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
             activeNotePresentation = nil
         }
     }
@@ -923,24 +1018,91 @@ public final class TimetableViewModel: ObservableObject {
         closeNoteOverlay()
     }
 
-    /// Gibt die Notiz für eine bestimmte Stunde zurück (mit Lazy Loading)
+    /// Gibt die Notiz für eine bestimmte Stunde zurück (mit Lazy Loading).
+    ///
+    /// **Achtung:** Diese Variante lädt synchron von der Festplatte und gehört
+    /// damit nicht in einen SwiftUI-`body`. Für die Anzeige im Stundenplan
+    /// `renderedNote(for:)` verwenden; diese hier ist für Stellen gedacht, die
+    /// die Notiz wirklich sofort brauchen (Editor öffnen, Nur-Notizen-Liste).
     public func noteFor(lesson: Lesson) -> LessonNote? {
         let key = lesson.noteKey
-        
+
         // Zuerst im Cache schauen
         if let cached = lessonNotes[key] {
             return cached
         }
-        
+
         // Lazy Loading: Notiz bei Bedarf laden
         if let note = noteCache.loadNote(for: key) {
             lessonNotes[key] = note
+            unavailableNoteKeys.remove(key)
             return note
         }
-        
+
         return nil
     }
-    
+
+    /// Notiz für die **Anzeige** im Stundenblock – ohne blockierendes Nachladen.
+    ///
+    /// Beim Wochenwechsel baute SwiftUI drei Wochen gleichzeitig auf. Jede
+    /// einzelne Karte las dafür synchron Zeichnungs-, Vorschau-, Text- und
+    /// Bilddatei und dekodiert sie – auf dem Main Thread, mitten in der
+    /// Wisch-Animation. Fehlt die Notiz noch im Speicher, wird sie hier nur
+    /// vorgemerkt und im Hintergrund geladen; die Karte zeigt die Vorschau,
+    /// sobald der Stand da ist.
+    public func renderedNote(for lesson: Lesson) -> LessonNote? {
+        let key = lesson.noteKey
+        if let cached = lessonNotes[key] {
+            return cached
+        }
+        // Ohne sichtbaren Inhalt zeigt keine Karte eine Vorschau – dann lohnt
+        // sich auch das Laden nicht. Ebenso ohne Metadaten-Eintrag (leere
+        // Stunde) oder für als nicht ladbar bekannte Keys.
+        guard visibleNoteKeys.contains(key),
+              notesMetadata[key] != nil,
+              !unavailableNoteKeys.contains(key) else {
+            return nil
+        }
+        requestNoteLoad(key)
+        return nil
+    }
+
+    /// Merkt eine Notiz fürs Nachladen im Hintergrund vor.
+    private func requestNoteLoad(_ key: String) {
+        guard lessonNotes[key] == nil else { return }
+        guard !inFlightNoteLoadKeys.contains(key) else { return }
+        guard pendingNoteLoadKeys.insert(key).inserted else { return }
+        guard !isNoteLoadScheduled else { return }
+
+        isNoteLoadScheduled = true
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + TimetableViewModel.noteLoadCoalescingDelay
+        ) { [weak self] in
+            self?.flushPendingNoteLoads()
+        }
+    }
+
+    /// Startet einen gesammelten Hintergrund-Lauf für alle vorgemerkten Notizen.
+    private func flushPendingNoteLoads() {
+        isNoteLoadScheduled = false
+        let keys = pendingNoteLoadKeys.subtracting(inFlightNoteLoadKeys)
+        pendingNoteLoadKeys.removeAll(keepingCapacity: true)
+        guard !keys.isEmpty else { return }
+        inFlightNoteLoadKeys.formUnion(keys)
+
+        noteCache.loadNotes(for: Array(keys)) { [weak self] loadedNotes in
+            guard let self else { return }
+            Task { @MainActor in
+                self.inFlightNoteLoadKeys.subtract(keys)
+                // Metadaten-Einträge ohne lesbare Datei: nicht bei jedem
+                // Render-Durchlauf erneut versuchen.
+                self.unavailableNoteKeys.formUnion(keys.subtracting(loadedNotes.keys))
+                guard !loadedNotes.isEmpty else { return }
+                self.lessonNotes.merge(loadedNotes) { _, new in new }
+            }
+        }
+    }
+
     /// Lädt Notizen für die aktuelle Woche im Hintergrund vor (Performance-Optimierung)
     @MainActor
     private func preloadCurrentWeekNotes() async {
@@ -1018,7 +1180,8 @@ public final class TimetableViewModel: ObservableObject {
         )
         lessonNotes[key] = pasted
         visibleNoteKeys.insert(key)
-        noteCache.saveNote(pasted)
+        unavailableNoteKeys.remove(key)
+        noteCache.saveNote(pasted, hasVisibleContent: true)
         successMessage = "Notiz eingefügt."
     }
 
@@ -1058,10 +1221,12 @@ public final class TimetableViewModel: ObservableObject {
         
         note.tagID = tagSettings.tag(withID: tagID)?.id
         note.updatedAt = Date()
-        if note.hasVisibleContent {
+        let visibleContent = note.hasVisibleContent
+        if visibleContent {
             lessonNotes[key] = note
             visibleNoteKeys.insert(key)
-            noteCache.saveNote(note)
+            unavailableNoteKeys.remove(key)
+            noteCache.saveNote(note, hasVisibleContent: true)
         } else {
             lessonNotes.removeValue(forKey: key)
             visibleNoteKeys.remove(key)
@@ -1109,7 +1274,9 @@ public final class TimetableViewModel: ObservableObject {
             note.tagID = nil
             if note.hasVisibleContent {
                 lessonNotes[key] = note
-                storage.saveLessonNote(note)
+                // Inhalt wurde gerade geprüft – nicht ein zweites Mal
+                // dekodieren lassen.
+                storage.saveLessonNote(note, hasVisibleContent: true)
             } else {
                 lessonNotes.removeValue(forKey: key)
                 visibleNoteKeys.remove(key)
@@ -1484,6 +1651,7 @@ public final class TimetableViewModel: ObservableObject {
             restoredNotes[note.id] = note
         }
         lessonNotes = restoredNotes
+        unavailableNoteKeys.removeAll()
         rebuildVisibleNoteCache()
 
         storage.saveCredentials(untisCredentials)

@@ -49,9 +49,16 @@ public struct LessonBlockView: View {
         let display = viewModel.resolveSubjectDisplay(for: lesson)
         let displayName = display.name
         let subjectColor = display.color
-        let note = viewModel.noteFor(lesson: lesson)
-        let hasVisibleNote = viewModel.hasVisibleNote(for: lesson)
         let settings = viewModel.displaySettings
+        let hasVisibleNote = viewModel.hasVisibleNote(for: lesson)
+        // Nie synchron von der Festplatte nachladen: Das Drei-Wochen-Karussell
+        // baut beim Wochenwechsel alle Karten gleichzeitig auf. Fehlende
+        // Vorschauen lädt das ViewModel im Hintergrund nach – die Karte
+        // aktualisiert sich dann von selbst. Ohne eingeschaltete Vorschau wird
+        // gar nichts angefordert.
+        let note = settings.showNotesPreview && hasVisibleNote
+            ? viewModel.renderedNote(for: lesson)
+            : nil
         let teacherDisplayName = viewModel.resolveTeacherName(lesson.teacherRaw)
         let originalTeacherDisplayName = lesson.originalTeacher.map { viewModel.resolveTeacherName($0) }
         let isActive = viewModel.isDrawingOverlayPresented

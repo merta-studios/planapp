@@ -117,6 +117,84 @@ public enum InteractionPolicies {
         newMode == "notesOnly" && previousMode != "notesOnly"
     }
 
+    // MARK: - Zeichenfläche verkleinern: Inhalt blockiert den Griff
+
+    /// Ein Element (Bild oder Textfeld) auf der Zeichenfläche. Beim
+    /// Verkleinern der Fläche darf es **nicht** verschoben werden – der
+    /// Zieh-Griff stoppt stattdessen an seiner Unterkante.
+    public struct CanvasContentItem {
+        /// Oberkante in Punkt-Koordinaten der Zeichenfläche (unskaliert).
+        public let offsetY: Double
+        /// Höhe des Elements in denselben Koordinaten.
+        public let height: Double
+
+        public init(offsetY: Double, height: Double) {
+            self.offsetY = offsetY
+            self.height = height
+        }
+    }
+
+    /// Rand, der zwischen dem tiefsten Element und der Unterkante der
+    /// Zeichenfläche erhalten bleibt.
+    public static let canvasContentMargin: Double = 6
+
+    /// Höhe der Zeichenfläche (ohne Kopfzeile), die mindestens nötig ist, damit
+    /// jedes Bild und jedes Textfeld vollständig sichtbar bleibt. Ungültige
+    /// Maße (NaN/∞) werden übersprungen, damit ein einzelner kaputter Rahmen
+    /// den Griff nicht dauerhaft blockiert.
+    public static func requiredContentHeight(
+        for items: [CanvasContentItem],
+        margin: Double = canvasContentMargin,
+        minimum: Double = 0
+    ) -> Double {
+        let minimumHeight = minimum.isFinite ? max(0, minimum) : 0
+        let usedMargin = margin.isFinite ? max(0, margin) : 0
+        var required = minimumHeight
+        for item in items {
+            guard item.offsetY.isFinite, item.height.isFinite else { continue }
+            required = max(required, item.offsetY + item.height + usedMargin)
+        }
+        return required
+    }
+
+    /// Neue Höhe der Zeichenfläche beim Ziehen am runden Griff.
+    ///
+    /// `lowerLimit` ist die Inhaltsgrenze (siehe `requiredContentHeight`) und
+    /// damit **stärker** als das absolute Minimum: Der Rand lässt sich nicht
+    /// über ein Bild oder Textfeld hinweg nach oben ziehen – man räumt das
+    /// Element zuerst zur Seite. `upperLimit` begrenzt nach oben (Bildschirm).
+    /// Liegt die obere Grenze unter der unteren, gewinnt der Inhalt: Die
+    /// Zeichenfläche bleibt dann einfach stehen, statt den Inhalt zu schieben.
+    public static func resizedCanvasHeight(
+        requestedHeight: Double,
+        lowerLimit: Double,
+        upperLimit: Double
+    ) -> Double {
+        let lower = lowerLimit.isFinite ? max(0, lowerLimit) : 0
+        let upper = upperLimit.isFinite ? max(lower, upperLimit) : lower
+        guard requestedHeight.isFinite else { return lower }
+        return min(max(requestedHeight, lower), upper)
+    }
+
+    /// Ob der Griff gerade am Inhalt ansteht – für eine kurze Rückmeldung
+    /// (Haptik) statt einer stillen Blockade.
+    public static func resizeBlockedByContent(
+        requestedHeight: Double,
+        lowerLimit: Double,
+        tolerance: Double = 0.5
+    ) -> Bool {
+        guard requestedHeight.isFinite, lowerLimit.isFinite else { return false }
+        return requestedHeight < lowerLimit - max(0, tolerance)
+    }
+
+    /// Loslassen des **gehaltenen** Rückgängig-Knopfs: Der Kreis der
+    /// Apple-Pencil-Squeeze-Palette verschwindet danach vollständig, statt mit
+    /// allen Knöpfen wieder aufzutauchen. Der lineare Balken gehört dagegen zur
+    /// normalen Werkzeugleiste und lässt sie unverändert.
+    public static func dismissesSqueezePaletteAfterUndoScrub(isCircularScrub: Bool) -> Bool {
+        isCircularScrub
+    }
+
     // MARK: - Stiftdicke: gemessenes Verhältnis
 
     /// Gemessenes Verhältnis zwischen einem echten PencilKit-Strich und einer

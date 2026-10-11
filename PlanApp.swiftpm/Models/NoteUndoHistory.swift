@@ -27,6 +27,16 @@ public struct NoteHistorySnapshot: Codable, Equatable {
         images = try container.decodeIfPresent([NoteImageBox].self, forKey: .images) ?? []
     }
 
+    /// Ungefähre Größe des Standes in Byte. Grundlage für das Speicher-Budget
+    /// einer persistierten Sitzung (siehe
+    /// `NoteUndoSessionPolicy.persistedStepCount`): Die Zeichnungs- und
+    /// Bilddaten zählen wirklich, der Text nur als grobe Näherung.
+    public var approximateByteSize: Int {
+        drawingData.count
+            + textBoxes.reduce(0) { $0 + $1.text.utf8.count }
+            + images.reduce(0) { $0 + $1.imageData.count }
+    }
+
     /// Die gespeicherte Zeichnung – `nil`, wenn kein gültiger Stand vorliegt.
     ///
     /// Leere Daten sind **kein** leerer Zettel, sondern ein fehlender Stand
@@ -139,15 +149,32 @@ public final class NoteEditingHistory {
         return next
     }
 
+    /// Die zu speichernde Sitzung: höchstens `maximumSteps` Schritte je
+    /// Richtung und zusätzlich nur so viele **neueste** Schritte, wie ins
+    /// Größenbudget passen. Ohne die Größenbegrenzung wurde beim Schließen
+    /// einer Notiz mit Bildern ein Vielfaches der Notizgröße geschrieben –
+    /// die App war danach für Sekunden blockiert.
     public func persistedSession(for noteKey: String) -> PersistedNoteUndoSession {
         let capped = NoteUndoSessionPolicy.cappedStacks(undo: undoStack, redo: redoStack)
         return PersistedNoteUndoSession(
             noteKey: noteKey,
-            undoStack: capped.undo,
-            redoStack: capped.redo,
+            undoStack: Self.withinStorageBudget(capped.undo),
+            redoStack: Self.withinStorageBudget(capped.redo),
             current: current,
             updatedAt: Date()
         )
+    }
+
+    /// Behält die neuesten Stände, die zusammen ins Budget passen.
+    private static func withinStorageBudget(
+        _ snapshots: [NoteHistorySnapshot]
+    ) -> [NoteHistorySnapshot] {
+        guard !snapshots.isEmpty else { return snapshots }
+        let kept = NoteUndoSessionPolicy.persistedStepCount(
+            byteSizes: snapshots.map(\.approximateByteSize)
+        )
+        guard kept < snapshots.count else { return snapshots }
+        return Array(snapshots.suffix(kept))
     }
 }
 

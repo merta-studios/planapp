@@ -1,10 +1,85 @@
 import Foundation
 
+/// Gemeinsame, wiederverwendete Kalender und Datums-Formatierer.
+///
+/// `DateFormatter` und `Calendar(identifier:)` sind im Anlegen teuer: Locale,
+/// Kalender und Zeichensatz werden dabei jedes Mal neu aufgebaut. Beim
+/// Wochenwechsel werden allein für die Spaltenköpfe und Tages-Schlüssel des
+/// Drei-Wochen-Karussells weit über hundert Datumsangaben formatiert – das
+/// Anlegen der Formatierer war ein wesentlicher Teil der Ruckler.
+///
+/// `DateFormatter` ist seit iOS 7 thread-sicher, die gemeinsame Nutzung also
+/// unbedenklich (Notizen werden auch aus Hintergrund-Queues geladen).
+/// `TimeZone.autoupdatingCurrent` sorgt dafür, dass ein Zeitzonenwechsel
+/// während der Laufzeit trotz gecachter Instanzen berücksichtigt wird.
+enum PlanDateFormatting {
+    /// Deutscher Kalender mit Montag als erstem Wochentag.
+    static let germanCalendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "de_DE")
+        calendar.firstWeekday = 2 // Montag
+        calendar.timeZone = TimeZone.autoupdatingCurrent
+        return calendar
+    }()
+
+    /// „YYYY-MM-DD“ – der Tages-/Wochenschlüssel der App (Notiz-IDs,
+    /// Wochen-Cache, API-Abfragen). Derselbe Formatierer schreibt und liest,
+    /// damit aus einem Schlüssel immer wieder dasselbe Datum wird.
+    static let isoDay: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.autoupdatingCurrent
+        return formatter
+    }()
+
+    /// Deutsches Datum, z. B. „01.10.2026“.
+    static let germanDate: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "de_DE")
+        formatter.dateFormat = "dd.MM.yyyy"
+        formatter.timeZone = TimeZone.autoupdatingCurrent
+        return formatter
+    }()
+
+    /// Ausgeschriebener Wochentag, z. B. „Montag“.
+    static let weekdayLong: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "de_DE")
+        formatter.dateFormat = "EEEE"
+        formatter.timeZone = TimeZone.autoupdatingCurrent
+        return formatter
+    }()
+
+    /// Kurzes Datum für den Spaltenkopf, z. B. „30. Sep“.
+    static let headerDate: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "de_DE")
+        formatter.dateFormat = "d. MMM"
+        formatter.timeZone = TimeZone.autoupdatingCurrent
+        return formatter
+    }()
+
+    /// Sehr kurzes Datum für schmale Spalten, z. B. „30.09.“.
+    static let compactHeaderDate: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "de_DE")
+        formatter.dateFormat = "dd.MM."
+        formatter.timeZone = TimeZone.autoupdatingCurrent
+        return formatter
+    }()
+}
+
 extension Date {
     /// Gibt den Montag (00:00 Uhr) der aktuellen Kalenderwoche zurück
     public func startOfWeek(using calendar: Calendar = .germanCalendar) -> Date {
         var cal = calendar
-        cal.firstWeekday = 2 // Montag
+        // Der deutsche Kalender der App hat Montag bereits als ersten
+        // Wochentag. Nur fremde Kalender werden umgestellt – das erspart beim
+        // häufigen Aufruf eine überflüssige Kalender-Kopie.
+        if cal.firstWeekday != 2 {
+            cal.firstWeekday = 2 // Montag
+        }
         let comps = cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: self)
         return cal.date(from: comps) ?? self
     }
@@ -13,6 +88,7 @@ extension Date {
     public func schoolWeekDays(using calendar: Calendar = .germanCalendar) -> [Date] {
         let monday = self.startOfWeek(using: calendar)
         var days: [Date] = []
+        days.reserveCapacity(5)
         for i in 0..<5 {
             if let d = calendar.date(byAdding: .day, value: i, to: monday) {
                 days.append(d)
@@ -82,27 +158,17 @@ extension Date {
 
     /// Formatiert Datum zu "YYYY-MM-DD"
     public var yyyyMMddString: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        return formatter.string(from: self)
+        PlanDateFormatting.isoDay.string(from: self)
     }
 
     /// Parst einen "YYYY-MM-DD"-String zurück in ein Datum
     public static func fromYyyyMMdd(_ string: String) -> Date? {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone.current
-        return formatter.date(from: string)
+        PlanDateFormatting.isoDay.date(from: string)
     }
 
     /// Deutsches Datumsformat, z.B. "01.10.2026"
     public var germanDateString: String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "de_DE")
-        formatter.dateFormat = "dd.MM.yyyy"
-        return formatter.string(from: self)
+        PlanDateFormatting.germanDate.string(from: self)
     }
 
     /// Relative, deutsche Beschreibung des Tages, z.B. "Heute", "Morgen",
@@ -155,26 +221,17 @@ extension Date {
 
     /// Wochentagsname (z.B. "Montag", "Dienstag")
     public var weekdayLongString: String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "de_DE")
-        formatter.dateFormat = "EEEE"
-        return formatter.string(from: self).capitalized
+        PlanDateFormatting.weekdayLong.string(from: self).capitalized
     }
 
     /// Datum kurz für den Spalten-Header (z.B. "30. Sep" oder "14. Okt")
     public var headerDateString: String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "de_DE")
-        formatter.dateFormat = "d. MMM"
-        return formatter.string(from: self)
+        PlanDateFormatting.headerDate.string(from: self)
     }
 
     /// Sehr kurzes Datum für schmale Spalten (z.B. "30.09.")
     public var compactHeaderDateString: String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "de_DE")
-        formatter.dateFormat = "dd.MM."
-        return formatter.string(from: self)
+        PlanDateFormatting.compactHeaderDate.string(from: self)
     }
 
     /// Vollständiger Wochenbereich für den Header (z.B. "30.09. – 04.10.2026")
@@ -182,24 +239,17 @@ extension Date {
         let monday = self.startOfWeek(using: calendar)
         let friday = calendar.date(byAdding: .day, value: 4, to: monday) ?? monday
 
-        let startFormatter = DateFormatter()
-        startFormatter.locale = Locale(identifier: "de_DE")
-        startFormatter.dateFormat = "dd.MM."
-
-        let endFormatter = DateFormatter()
-        endFormatter.locale = Locale(identifier: "de_DE")
-        endFormatter.dateFormat = "dd.MM.yyyy"
-
-        return "\(startFormatter.string(from: monday)) – \(endFormatter.string(from: friday))"
+        return "\(PlanDateFormatting.compactHeaderDate.string(from: monday)) – \(PlanDateFormatting.germanDate.string(from: friday))"
     }
 }
 
 extension Calendar {
+    /// Deutscher Kalender mit Montag als erstem Wochentag.
+    ///
+    /// Die Instanz wird geteilt (siehe `PlanDateFormatting`): Früher wurde bei
+    /// jedem Zugriff ein neuer Kalender samt `Locale` gebaut – und dieser
+    /// Zugriff steckt in fast jeder Datumsrechnung der App.
     public static var germanCalendar: Calendar {
-        var cal = Calendar(identifier: .gregorian)
-        cal.locale = Locale(identifier: "de_DE")
-        cal.firstWeekday = 2 // Montag
-        cal.timeZone = TimeZone.current
-        return cal
+        PlanDateFormatting.germanCalendar
     }
 }

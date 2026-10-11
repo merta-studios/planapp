@@ -100,12 +100,18 @@ public func noteFor(lesson: Lesson) -> LessonNote? {
     // Lazy Loading: Notiz bei Bedarf laden
     if let note = noteCache.loadNote(for: key) {
         lessonNotes[key] = note
+        unavailableNoteKeys.remove(key)
         return note
     }
     
     return nil
 }
 ```
+
+> **Wichtig:** `noteFor(lesson:)` lädt synchron und ist damit nur für Stellen
+> gedacht, die den Wert sofort brauchen (Notiz-Übersicht, Editor beim Öffnen).
+> Der **Render-Pfad** der Stundenblöcke nutzt `renderedNote(for:)` – siehe
+> [Wochenwechsel](#-wochenwechsel--notiz-schließen-nacharbeit).
 
 #### Background Preloading
 ```swift
@@ -331,6 +337,140 @@ private func preloadCurrentWeekNotes() async {
 
 ---
 
+## ⚡ Wochenwechsel & Notiz-Schließen (Nacharbeit)
+
+Beide Abläufe fühlten sich blockiert an: der Wochenwechsel ruckelte, und nach
+dem Rückflug einer Notiz in den Stundenblock ging rund zwei Sekunden lang
+nichts mehr. In beiden Fällen arbeitete der Main Thread – nicht der Compositor.
+
+### 1. Datum-Formatter und Kalender wiederverwenden
+
+`Utils/DateExtensions.swift` baute **pro Aufruf** einen neuen `DateFormatter`
+(`DateFormatter` ist teuer: Locale, Kalender, Ziffernblätter) und
+`Calendar.germanCalendar` einen neuen `Calendar`. Beim Render eines
+Drei-Wochen-Karussells (15 Tagesspalten plus Kopfzeile) kamen so mehrere
+hundert Instanzen pro Durchlauf zusammen.
+
+```swift
+enum PlanDateFormatting {          // file scope, keine Extension:
+    static let weekdayShort: DateFormatter = { ... }()   // statische
+    static let dayMonth: DateFormatter = { ... }()       // gespeicherte
+    static let germanCalendar: Calendar = { ... }()      // Eigenschaften sind
+}                                                        // in Extensions
+                                                         // nicht erlaubt
+```
+
+### 2. Stunden pro Tag memoisieren
+
+Jede `DayColumnView` lief für `lessonsFor(day:)` zweimal über **alle** Stunden
+(lineare Suche), `hasLessons(inWeekStarting:)` zusätzlich rund 16×.
+
+```swift
+private var lessonsRevision = 0                     // zählt bei jeder Änderung
+private var lessonsByDayCache: [String: [Lesson]] = [:]
+private var lessonDayKeysCache: Set<String>? = nil
+
+public func lessonsFor(day dateString: String) -> [Lesson] {
+    if lessonsByDayCache.count != lessonsRevision { /* Cache verwerfen */ }
+    if let cached = lessonsByDayCache[dateString] { return cached }
+    ...
+}
+```
+
+`hasLessons(inWeekStarting:)` schneidet jetzt nur noch die Tagesschlüssel der
+Woche mit `lessonDayKeys()` – einmal gebaut, dann O(1) pro Woche.
+
+### 3. Kein synchrones Notiz-Laden im Render-Pfad
+
+Früher: `LessonBlockView.body` → `viewModel.noteFor(lesson:)` →
+`NoteCacheService.loadNote` → **vier** `Data(contentsOf:)` plus Dekodieren plus
+ein kompletter Metadaten-Neuaufbau in `UserDefaults` – für bis zu ~120 Karten
+gleichzeitig, mitten in der Wisch-Animation.
+
+Jetzt:
+
+```swift
+public func renderedNote(for lesson: Lesson) -> LessonNote? {
+    let key = lesson.noteKey
+    if let cached = lessonNotes[key] { return cached }      // nur Speicher
+    guard visibleNoteKeys.contains(key),                    // wird angezeigt?
+          notesMetadata[key] != nil,                        // existiert sie?
+          !unavailableNoteKeys.contains(key) else { return nil }
+    requestNoteLoad(key)                                    // vormerken
+    return nil
+}
+```
+
+- Vormerkungen werden **80 ms** gesammelt (`noteLoadCoalescingDelay`), dann in
+  einem Lauf über `NoteCacheService.loadNotes` im Hintergrund geladen und auf
+  dem Main Actor zusammengeführt (`inFlightNoteLoadKeys` verhindert Doppelarbeit,
+  `unavailableNoteKeys` verhindert Wiederholungen für fehlende Dateien)
+- Angefordert wird nur, was die Karte wirklich anzeigt
+  (`settings.showNotesPreview && hasVisibleNote`)
+- `UserDefaults.dictionary(forKey:)` baute bei jedem `loadNote` ein neues
+  `[String: Any]` mit einem eigenen Wörterbuch je Notiz auf – die Metadaten
+  liegen jetzt hinter `metadataLock` zwischengespeichert
+
+### 4. Schreiben in den Hintergrund
+
+`TimetableStorageService` schrieb synchron auf dem Main Thread: JSON-Encoding,
+`UserDefaults.set`, `synchronize()` und eine atomare Sicherungskopie – bei
+Stunden, Notizen und Undo-Sitzungen schnell mehrere hundert Millisekunden.
+
+```swift
+private let writeQueue = DispatchQueue(label: "planapp.storage.writes",
+                                       qos: .userInitiated)
+
+private func persist<T: Encodable>(_ value: T, key: String) {
+    writeQueue.async { [weak self] in
+        guard let self, let data = try? JSONEncoder().encode(value) else { return }
+        self.defaults.set(data, forKey: key)          // ohne synchronize()
+        try? data.write(to: ..., options: .atomic)
+    }
+}
+```
+
+Die **serielle** Queue erhält die Reihenfolge (Speichern → Löschen → Speichern
+wirkt wie bisher); `UserDefaults` ist thread-safe, gelesen wird aus dem
+Speicher bzw. aus Dateien, die diese Queue selbst geschrieben hat.
+
+Zwei Punkte zur Sicherheit:
+
+- **Sofortiges Wiederöffnen** einer Notiz liest nie eine halb geschriebene
+  Datei: Der Inhalt steht im ViewModel (`lessonNotes`) und die
+  Rückgängig-Sitzungen im `NoteUndoSessionStore` – beide im Speicher.
+- **Hintergrundwechsel** direkt nach dem Schließen: iOS lässt die App nach dem
+  Wechsel in den Hintergrund noch mehrere Sekunden weiterlaufen, die Queue mit
+  `.userInitiated` ist im Leerlauf sofort bedient – die Schreibvorgänge landen
+  also auch dann noch, wenn das Gerät gleich gesperrt wird.
+
+### 5. Undo-Sitzung mit Größenbudget
+
+Jeder Vollstand enthält Zeichnung, Textfelder **und** Bilder. Ohne Grenze
+wurden bis zu 40 Schritte × mehrere Megabyte als eine JSON-Datei geschrieben.
+
+```swift
+NoteUndoSessionPolicy.maximumPersistedStackBytes  // 3 MB pro Stapel
+NoteUndoSessionPolicy.maximumPersistedStepBytes   // 8 MB für den neuesten Stand
+NoteUndoSessionPolicy.persistedStepCount(byteSizes:budget:stepCeiling:)
+NoteHistorySnapshot.approximateByteSize
+```
+
+Gespeichert wird das zusammenhängende **Ende** jedes Stapels, das ins Budget
+passt (`Array(snapshots.suffix(kept))`); der neueste Stand bleibt auch dann,
+wenn er das Stapel-Budget allein sprengt – sonst ginge die Historie bildreicher
+Notizen komplett verloren.
+
+### 6. Overlay zuerst abbauen
+
+`closeNoteOverlay()` läuft jetzt **vor** dem Speichern und ohne Animation. Damit
+ist die Vollbild-Ebene (die jede Berührung annimmt) weg, bevor im Hintergrund
+geschrieben und gerendert wird. Das bisherige Vorschaubild bleibt als
+Platzhalter im Block stehen, bis `updateNotePreview` die neu gerenderte
+Vorschau einspielt.
+
+---
+
 ## ✅ Vorteile
 
 1. **Sofortiger App-Start** - Keine Wartezeit mehr
@@ -344,11 +484,15 @@ private func preloadCurrentWeekNotes() async {
 
 ## 🎯 Nächste Schritte (optional)
 
-1. **Progressive Loading** - Notizen in Batches laden
-2. **Predictive Prefetching** - Nächste Woche vorladen
+1. ~~**Progressive Loading** - Notizen in Batches laden~~ ✅ umgesetzt (siehe
+   `renderedNote(for:)` + 80-ms-Bündelung)
+2. **Predictive Prefetching** - Nächste Woche vorladen (die Karten der
+   Nachbarwochen werden schon beim Aufbau vorgemerkt)
 3. **Compression** - Drawing-Daten komprimieren
 4. **Database** - Migration zu SQLite für bessere Performance
 5. **Background Refresh** - Notizen im Hintergrund aktualisieren
+6. **EquatableView / @Observable** - Spalten nur bei echten Änderungen neu
+   aufbauen; bewusst nicht umgesetzt, weil ohne Gerät nicht messbar
 
 ---
 
@@ -357,3 +501,11 @@ private func preloadCurrentWeekNotes() async {
 Die Performance-Optimierungen reduzieren die App-Startzeit um **95%** und den Speicherverbrauch um **50-75%**. Durch Lazy Loading und intelligentes Caching ist die App jetzt auch mit hunderten Notizen sofort einsatzbereit und bleibt responsive.
 
 **Alle Änderungen sind abwärtskompatibel** - bestehende Notizen werden automatisch migriert und funktionieren ohne Änderungen.
+
+Die Nacharbeit zu Wochenwechsel und Notiz-Schließen (Abschnitt
+[⚡ Wochenwechsel & Notiz-Schließen](#-wochenwechsel--notiz-schließen-nacharbeit))
+verlagert zusätzlich alle blockierenden Lese- und Schreibvorgänge aus dem
+Render-Pfad: Datum-Formatter und Stunden-Suchen sind zwischengespeichert,
+Notiz-Vorschauen werden gebündelt im Hintergrund geladen, und sämtliche
+Schreibvorgänge laufen auf einer seriellen Queue. Details stehen in
+`FIXES_SUMMARY.md` (Punkte 2, 3, 5 und 6).
