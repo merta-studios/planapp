@@ -31,9 +31,9 @@ public struct LessonBlockView: View {
         self.isCompact = isCompact
     }
 
-    private var contentPadding: CGFloat { isCompact ? 5 : 8 }
-    private var titleFontSize: CGFloat { isCompact ? 11 : 15 }
-    private var detailFontSize: CGFloat { isCompact ? 9 : 12 }
+    private var contentPadding: CGFloat { isCompact ? 4 : 8 }
+    private var titleFontSize: CGFloat { isCompact ? 10 : 15 }
+    private var detailFontSize: CGFloat { isCompact ? 8 : 12 }
 
     /// Modus "Notizen hervorgehoben": Blöcke ohne sichtbare Notiz werden stark
     /// aufgehellt. Während eine Notiz geöffnet ist, nie aufhellen.

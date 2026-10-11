@@ -62,29 +62,30 @@ public struct NoteHeaderContent<Accessory: View>: View {
 
     /// Datum unter statt neben dem Fach: So bleibt der Titel auch in drei
     /// Spalten lesbar, ohne die 64-pt-Kopfzeile der Zeichenfläche zu ändern.
+    /// Auf dem iPhone noch kompakter: kleinere Schriften, engerer Abstand.
     private var compactHeader: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 5) {
                 Text(display.name)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .strikethrough(lesson.isCancelled, color: .red)
                     .lineLimit(1)
                 accessory
                 Spacer(minLength: 0)
                 Text("\(lesson.periodNumber). Std.")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .strikethrough(lesson.isCancelled, color: .red)
                     .fixedSize()
             }
             if hasHeaderDetails { headerDetails }
             Text(headerDateText)
-                .font(.system(size: 10))
+                .font(.system(size: 9))
                 .opacity(0.78)
                 .strikethrough(lesson.isCancelled, color: .red)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
         }
-        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
     }
 
     private var regularHeader: some View {

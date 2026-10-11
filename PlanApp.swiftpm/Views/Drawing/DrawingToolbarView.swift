@@ -152,7 +152,7 @@ public struct DrawingToolbarView: View {
     /// Auf dem iPhone ist die Leiste bewusst noch einmal kleiner, damit
     /// wirklich alle Werkzeuge Platz haben.
     private var buttonSize: CGFloat {
-        if isPhoneLayout { return isCompactToolbar ? 28 : 32 }
+        if isPhoneLayout { return isCompactToolbar ? 26 : 30 }
         return isCompactToolbar ? 32 : 40
     }
     private var buttonCornerRadius: CGFloat {

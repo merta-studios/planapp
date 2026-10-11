@@ -111,7 +111,7 @@ public struct DayColumnView: View {
         VStack(spacing: isCompact ? 1 : 3) {
             HStack(spacing: 4) {
                 Text(isCompact ? String(day.weekdayLongString.prefix(2)) : day.weekdayLongString)
-                    .font(.system(size: isCompact ? 12 : 14, weight: isCompact && isHighlightedDay ? .semibold : .regular, design: .default))
+                    .font(.system(size: isCompact ? 11 : 14, weight: isCompact && isHighlightedDay ? .semibold : .regular, design: .default))
                     .foregroundColor(isHighlightedDay ? highlightTextColor : .primary)
 
                 if isHighlightedDay, !isCompact {
@@ -124,7 +124,7 @@ public struct DayColumnView: View {
             }
 
             Text(isCompact ? day.compactHeaderDateString : day.headerDateString)
-                .font(.system(size: isCompact ? 9 : 12, weight: .regular, design: .default))
+                .font(.system(size: isCompact ? 8 : 12, weight: .regular, design: .default))
                 .foregroundColor(isHighlightedDay ? highlightTextColor.opacity(0.85) : .secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)

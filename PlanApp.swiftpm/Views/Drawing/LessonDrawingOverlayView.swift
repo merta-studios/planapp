@@ -1241,7 +1241,7 @@ public struct LessonDrawingOverlayView: View {
                 }
             }
         )
-        .padding(.horizontal, isPhoneLayout ? 12 : 20)
+        .padding(.horizontal, isPhoneLayout ? 10 : 20)
         .frame(width: scaledPaperWidth, height: headerHeight)
         .contentShape(Rectangle())
         .gesture(
@@ -1314,6 +1314,10 @@ public struct LessonDrawingOverlayView: View {
                         // Nach dem Wachsen passt evtl. weniger Zoom auf den
                         // Bildschirm – der Zoom wird dann eingeklemmt.
                         zoomScale = min(zoomScale, maximumZoomScale(for: newHeight, in: viewport))
+
+                        // Bilder und Textfelder, die jetzt außerhalb der
+                        // sichtbaren Fläche liegen, werden nach oben geschoben.
+                        clampContentToCanvasHeight()
 
                         var candidate = offset
                         candidate.height = resizeTopY
@@ -1631,6 +1635,35 @@ public struct LessonDrawingOverlayView: View {
         var candidate = offset
         candidate.height = offset.height - (boxBottom - limit)
         offset = clampedOffset(candidate, in: viewport)
+    }
+
+    /// Schiebt Bilder und Textfelder nach oben, wenn die Zeichenfläche
+    /// verkleinert wird und sie sonst außerhalb des sichtbaren Bereichs lägen.
+    /// Wird während des Resize-Gestens aufgerufen, damit die Elemente mit dem
+    /// unteren Rand mitgleiten.
+    private func clampContentToCanvasHeight() {
+        let contentHeight = canvasHeight - headerHeight
+        let margin: Double = 6
+        let fontStyle = viewModel.drawingSettings.textFontStyle
+
+        // Textfelder klemmen
+        for index in textBoxes.indices {
+            let box = textBoxes[index]
+            let boxHeight = estimatedTextBoxHeight(box, fontStyle: fontStyle)
+            let maxY = max(margin, Double(contentHeight) - boxHeight - margin)
+            if box.y > maxY {
+                textBoxes[index].y = maxY
+            }
+        }
+
+        // Bilder klemmen
+        for index in imageBoxes.indices {
+            let box = imageBoxes[index]
+            let maxY = max(margin, Double(contentHeight) - box.height - margin)
+            if box.y > maxY {
+                imageBoxes[index].y = maxY
+            }
+        }
     }
 
     // MARK: - Rückgängig / Wiederholen (Zeichnung + Textfelder)
@@ -2411,7 +2444,7 @@ public struct LessonDrawingOverlayView: View {
         }
 
         withAnimation(
-            .spring(response: 0.36, dampingFraction: 0.9),
+            .spring(response: 0.32, dampingFraction: 0.88),
             completionCriteria: .logicallyComplete
         ) {
             isExpanded = false
@@ -2422,8 +2455,9 @@ public struct LessonDrawingOverlayView: View {
 
         // Sicherheitsnetz: Kommt die Abschluss-Meldung nicht (etwa weil die
         // Animation verworfen wurde), wird die Notiz trotzdem gespeichert.
-        // Die Abschluss-Funktion läuft nur einmal.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+        // Die Abschluss-Funktion läuft nur einmal. Reduziert auf 0.5 Sekunden,
+        // damit die Notiz nicht lange blockiert.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             finishDismiss()
         }
     }
