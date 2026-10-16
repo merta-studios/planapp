@@ -1,3 +1,6 @@
+# ACHTUNG: Diese Datei ist nur eine Sicherungskopie. Der aktive Workflow liegt
+# unter .github/workflows/build-ipa.yml – Änderungen bitte dort machen und ggf.
+# hierher spiegeln (GitHub liest ausschließlich .github/workflows/).
 name: Build IPA (Sideload)
 
 # Baut aus dem Swift-Package ein unsigniertes .ipa, das z. B. mit

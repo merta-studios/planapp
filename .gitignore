@@ -11,3 +11,6 @@ DerivedData/
 
 # Swift Playgrounds local user state
 .swiftpm/configuration/
+
+# Zusammenfassung der Swift-Prüfung (wird nur in CI erzeugt)
+.swift-check-summary.md

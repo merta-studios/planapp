@@ -1,0 +1,89 @@
+name: Swift-Code-Prüfung
+
+# Prüft den Swift-Code ohne Mac und ohne Xcode – läuft auf Linux-Runnern in
+# einem offiziellen Swift-Container. Damit fallen Syntax- und Typfehler schon
+# im Branch auf, statt erst beim IPA-Build auf dem (teuren) macOS-Runner oder
+# beim Start in Swift Playgrounds.
+#
+# Drei Prüfungen:
+#   1. Syntax      – jede .swift-Datei wird geparst (auch UIKit/SwiftUI/PencilKit).
+#   2. Typ-Prüfung – der UIKit-freie Teil wird wirklich übersetzt.
+#   3. Regression  – Tests/run-regressions.sh (Logik-Tests ohne iOS-SDK).
+#
+# Details und wie man die Prüfung lokal startet: CONTRIBUTING.md
+
+on:
+  push:
+    branches:
+      - main
+      - 'arena/**'
+      - 'ai/**'
+      - 'agent/**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swift-check-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  # Neueres/älteres Image? → Repo-Variable SWIFT_IMAGE setzen (kein Codeänderung nötig).
+  SWIFT_IMAGE: ${{ vars.SWIFT_IMAGE || 'swift:6.2-noble' }}
+
+jobs:
+  syntax:
+    name: Syntax (alle Swift-Dateien)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Swift-Version anzeigen
+        run: ci/run-swift.sh swift --version
+
+      - name: Alle .swift-Dateien parsieren
+        run: ci/run-swift.sh ci/swift-check.sh parse
+
+  typecheck:
+    name: Typ-Prüfung (Linux-taugliche Dateien)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Typ-Prüfung ausführen
+        id: typecheck
+        # Nicht sofort blockieren: Meldungen zu iOS-only-APIs sind unter Linux
+        # normal. Die Bewertung passiert im nächsten Schritt.
+        continue-on-error: true
+        run: ci/run-swift.sh ci/swift-check.sh typecheck
+
+      - name: Ergebnis bewerten
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.typecheck.outcome }}" = "success" ]; then
+            echo "Typ-Prüfung bestanden."
+            exit 0
+          fi
+          echo "::warning::Typ-Prüfung hat Fehler gefunden – siehe Schritt „Typ-Prüfung ausführen“."
+          if [ "${{ vars.SWIFT_TYPECHECK_BLOCKING }}" = "true" ]; then
+            echo "::error::SWIFT_TYPECHECK_BLOCKING=true → dieser Job blockiert den Merge."
+            exit 1
+          fi
+          echo "Dieser Job blockiert den Merge nicht (Repo-Variable SWIFT_TYPECHECK_BLOCKING=true aktiviert das)."
+
+  regressions:
+    name: Regressionstests (ohne iOS-SDK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Tests/run-regressions.sh ausführen
+        run: ci/run-swift.sh Tests/run-regressions.sh
