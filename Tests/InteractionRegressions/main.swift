@@ -674,4 +674,55 @@ expect(
     "Ungültige Größen beenden das Zählen"
 )
 
+// MARK: - Schultage, Wochenende und Schulwoche
+
+if let monday, let friday, let saturday,
+   let sunday = germanCalendar.date(byAdding: .day, value: 1, to: saturday),
+   let nextMonday = germanCalendar.date(byAdding: .day, value: 7, to: monday),
+   let previousFriday = germanCalendar.date(byAdding: .day, value: -3, to: monday) {
+    expect(SchoolWeekPolicy.isSchoolDay(monday, calendar: germanCalendar), "Montag ist ein Schultag")
+    expect(SchoolWeekPolicy.isSchoolDay(friday, calendar: germanCalendar), "Freitag ist ein Schultag")
+    expect(!SchoolWeekPolicy.isSchoolDay(saturday, calendar: germanCalendar), "Samstag ist kein Schultag")
+    expect(!SchoolWeekPolicy.isSchoolDay(sunday, calendar: germanCalendar), "Sonntag ist kein Schultag")
+
+    let afterFriday = SchoolWeekPolicy.nextSchoolDay(after: friday, calendar: germanCalendar)
+    expect(germanCalendar.isDate(afterFriday, inSameDayAs: nextMonday), "Nach dem Freitag folgt der Montag")
+    let afterSaturday = SchoolWeekPolicy.nextSchoolDay(after: saturday, calendar: germanCalendar)
+    expect(germanCalendar.isDate(afterSaturday, inSameDayAs: nextMonday), "Nach dem Samstag folgt der Montag")
+    let afterSunday = SchoolWeekPolicy.nextSchoolDay(after: sunday, calendar: germanCalendar)
+    expect(germanCalendar.isDate(afterSunday, inSameDayAs: nextMonday), "Nach dem Sonntag folgt der Montag")
+    let afterMonday = SchoolWeekPolicy.nextSchoolDay(after: monday, calendar: germanCalendar)
+    expect(
+        germanCalendar.isDate(afterMonday, inSameDayAs: germanCalendar.date(byAdding: .day, value: 1, to: monday)!),
+        "Unter der Woche folgt der nächste Tag"
+    )
+
+    let beforeMonday = SchoolWeekPolicy.previousSchoolDay(before: monday, calendar: germanCalendar)
+    expect(germanCalendar.isDate(beforeMonday, inSameDayAs: previousFriday), "Vor dem Montag kommt der Freitag")
+    let beforeSaturday = SchoolWeekPolicy.previousSchoolDay(before: saturday, calendar: germanCalendar)
+    expect(germanCalendar.isDate(beforeSaturday, inSameDayAs: friday), "Vor dem Samstag kommt der Freitag")
+
+    let week = SchoolWeekPolicy.schoolDays(inWeekOf: saturday, calendar: germanCalendar)
+    expect(week.count == 5, "Eine Schulwoche hat fünf Tage")
+    if week.count == 5 {
+        expect(germanCalendar.isDate(week[0], inSameDayAs: monday), "Die Schulwoche beginnt am Montag")
+        expect(germanCalendar.isDate(week[4], inSameDayAs: friday), "Die Schulwoche endet am Freitag")
+        var weekendInside = false
+        for day in week where !SchoolWeekPolicy.isSchoolDay(day, calendar: germanCalendar) {
+            weekendInside = true
+        }
+        expect(!weekendInside, "Die Schulwoche enthält kein Wochenende")
+    }
+
+    // `Date.schoolWeekDays` benutzt dieselbe Regel – auch am Wochenende.
+    let weekFromDate = saturday.schoolWeekDays(using: germanCalendar)
+    expect(weekFromDate.count == 5, "Date.schoolWeekDays nutzt dieselbe Regel")
+    if let firstSchoolDay = weekFromDate.first {
+        expect(
+            firstSchoolDay == monday.startOfWeek(using: germanCalendar),
+            "Am Wochenende bleibt der Wochenanfang der Montag"
+        )
+    }
+}
+
 print("\(checks) Interaktions-/Sync-/Layout-Checks erfolgreich.")
