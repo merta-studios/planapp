@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// WebUntis JSON-RPC 2.0 API Client
 public final class WebUntisService {

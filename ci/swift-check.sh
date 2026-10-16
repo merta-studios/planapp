@@ -225,7 +225,14 @@ portable_files() {
         # those definitions Swift also emits misleading Equatable/inference
         # errors. Keep this model covered by syntax and the real iOS build.
         case "$f" in
-            ./PlanApp.swiftpm/Models/DrawingSettings.swift) continue ;;
+            ./PlanApp.swiftpm/Models/DrawingSettings.swift|\
+            ./PlanApp.swiftpm/Services/AppBackupService.swift|\
+            ./PlanApp.swiftpm/Services/TimetableStorageService.swift)
+                # Backup/storage also depend on LessonNote and other UIKit
+                # models; NSData compression is Apple-only as well.
+                printf '  Skip (transitive iOS dependencies): %s\n' "$f" >&2
+                continue ;;
+
         esac
         imports=$(grep -E '^[[:space:]]*(@preconcurrency[[:space:]]+)?import[[:space:]]+' "$f" \
             | sed -E 's/^[[:space:]]*(@preconcurrency[[:space:]]+)?import[[:space:]]+//; s/[[:space:]].*$//')
@@ -242,7 +249,7 @@ portable_files() {
 
 run_typecheck() {
     log "Typ-Prüfung (nur Linux-taugliche Dateien)"
-    local -a probes=(Foundation Dispatch CoreGraphics Combine CryptoKit os)
+    local -a probes=(Foundation FoundationNetworking Dispatch CoreGraphics Combine CryptoKit os)
     local m
     for m in "${probes[@]}"; do
         if probe_module "$m"; then
