@@ -53,12 +53,15 @@ jobs:
     name: Auto-Merge (main)
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-    # Bei Kommentaren nur auf "/automerge" von Repo-Mitgliedern reagieren.
+    # Zwei Bedingungen:
+    #  • Kommentare zählen nur als "/automerge" von Repo-Mitgliedern,
+    #  • Läufe auf main (also nach einem erfolgten Merge) interessieren nicht.
     if: >-
-      github.event_name != 'issue_comment' ||
-      (github.event.issue.pull_request != null &&
-       contains(github.event.comment.body, '/automerge') &&
-       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+      (github.event_name != 'issue_comment' ||
+       (github.event.issue.pull_request != null &&
+        contains(github.event.comment.body, '/automerge') &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))) &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.head_branch != 'main')
     steps:
       - name: Repository auschecken
         uses: actions/checkout@v4
