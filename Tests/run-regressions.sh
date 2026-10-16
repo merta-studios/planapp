@@ -18,6 +18,8 @@ sources=(
     PlanApp.swiftpm/Views/Drawing/SqueezePaletteLayout.swift
     PlanApp.swiftpm/Utils/InteractionPolicies.swift
     PlanApp.swiftpm/Utils/SchoolWeekPolicy.swift
+    PlanApp.swiftpm/Models/Period.swift
+    PlanApp.swiftpm/Utils/CurrentPeriodPolicy.swift
     PlanApp.swiftpm/Utils/DateExtensions.swift
     Tests/InteractionRegressions/main.swift
 )
