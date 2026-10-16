@@ -33,6 +33,8 @@
 #   AUTOMERGE_DISPATCH_BUILD  1 = nach dem Merge den IPA-Build anstoßen
 #   AUTOMERGE_DISPATCH_CHECK  1 = nach dem Merge die Swift-Code-Prüfung auf dem
 #                             Zielbranch anstoßen (Standard: wie AUTOMERGE_DISPATCH_BUILD)
+#   AUTOMERGE_CANCEL_RETRIES  Wie oft eine abgebrochene Prüfung neu gestartet
+#                             wird, bevor aufgegeben wird (Standard: 2)
 #   AUTOMERGE_DRY_RUN         1 = nur anzeigen, nichts mergen/anlegen
 #
 # Rückgabewert: 0 = gemergt oder nichts zu tun, 1 = nicht gemergt (Grund im Log).
@@ -59,6 +61,7 @@ DISPATCH_BUILD="${AUTOMERGE_DISPATCH_BUILD:-0}"
 # Wer den IPA-Build nach dem Merge anstoßen will, will in der Regel auch die
 # Prüfung – deshalb erbt der Schalter den Wert von AUTOMERGE_DISPATCH_BUILD.
 DISPATCH_CHECK="${AUTOMERGE_DISPATCH_CHECK:-$DISPATCH_BUILD}"
+CANCEL_RETRIES="${AUTOMERGE_CANCEL_RETRIES:-2}"
 CHECK_WORKFLOW="${AUTOMERGE_CHECK_WORKFLOW:-build-check.yml}"
 BUILD_WORKFLOW="${AUTOMERGE_BUILD_WORKFLOW:-build-ipa.yml}"
 
@@ -84,6 +87,19 @@ warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 err() { printf '  \033[31m✗\033[0m %s\n' "$*"; }
 
 gh_quiet() { gh "$@" 2>/dev/null; }
+
+# Hängt einen Wert an eine kommagetrennte Liste an. Prüfungsnamen enthalten
+# Leerzeichen („Typ-Prüfung (Linux-taugliche Dateien)“) – deshalb Komma statt
+# Leerzeichen als Trenner, sonst zerlegt die Wortzerlegung die Namen.
+list_add() { # list_add <variablenname> <wert>
+    local var="$1" value="$2" current
+    current="${!var:-}"
+    if [ -z "$current" ]; then
+        printf -v "$var" '%s' "$value"
+    else
+        printf -v "$var" '%s,%s' "$current" "$value"
+    fi
+}
 
 # Ein Name kommt als kommagetrennte Liste vor?
 list_contains() { # list_contains <liste> <name>
@@ -269,9 +285,12 @@ check_state_for() { # check_state_for <sha> → setzt globale Zähler
     local sha="$1"
     CHECKS_PENDING=0
     CHECKS_PASSED=0
+    CHECKS_PASSED_NAMES=""
     CHECKS_FAILED=""
     CHECKS_FAILED_IDS=""
     CHECKS_ADVISORY=""
+    CHECKS_CANCELLED=""
+    CHECKS_CANCELLED_NAMES=""
     CHECKS_SEEN=0
 
     local id status name conclusion
@@ -291,8 +310,18 @@ check_state_for() { # check_state_for <sha> → setzt globale Zähler
         case "$status" in
             completed)
                 case "$conclusion" in
-                    success|neutral|skipped) CHECKS_PASSED=$((CHECKS_PASSED + 1)) ;;
-                    cancelled) CHECKS_PASSED=$((CHECKS_PASSED + 1)); note "Prüfung „$name“ wurde abgebrochen (gilt als neutral)." ;;
+                    success|neutral|skipped)
+                        CHECKS_PASSED=$((CHECKS_PASSED + 1))
+                        list_add CHECKS_PASSED_NAMES "$name"
+                        ;;
+                    cancelled)
+                        # Abgebrochen ist kein Ergebnis, sondern das Fehlen
+                        # eines solchen. Erst sammeln: ob der Abbruch
+                        # belanglos ist, entscheidet sich am Ende daran, ob
+                        # ein anderer Lauf mit demselben Namen erfolgreich
+                        # war – die Reihenfolge der Check-Runs ist beliebig.
+                        list_add CHECKS_CANCELLED_NAMES "$name"
+                        ;;
                     *)
                         CHECKS_FAILED="$CHECKS_FAILED $name($conclusion)"
                         [ -n "$id" ] && CHECKS_FAILED_IDS="$CHECKS_FAILED_IDS $id"
@@ -302,6 +331,29 @@ check_state_for() { # check_state_for <sha> → setzt globale Zähler
             *) CHECKS_PENDING=$((CHECKS_PENDING + 1)) ;;
         esac
     done < <(pending_checks "$sha")
+
+    # Abbrüche bewerten: Wurde die Prüfung zu demselben Commit anderweitig
+    # erfolgreich abgeschlossen, ist der abgebrochene Lauf belanglos (das ist
+    # der Normalfall – die Concurrency-Gruppe bricht einen Lauf ab, sobald ein
+    # jüngerer ihn ersetzt). Sonst fehlt ein Ergebnis und es muss neu geprüft
+    # werden, damit nicht ohne Prüfergebnis gemergt wird.
+    if [ -n "$CHECKS_CANCELLED_NAMES" ]; then
+        local -a items=()
+        IFS=',' read -r -a items <<< "$CHECKS_CANCELLED_NAMES"
+        local n
+        for n in "${items[@]}"; do
+            # Ränder trimmen – genau wie in list_contains.
+            n="${n#"${n%%[![:space:]]*}"}"
+            n="${n%"${n##*[![:space:]]}"}"
+            [ -n "$n" ] || continue
+            if list_contains "$CHECKS_PASSED_NAMES" "$n"; then
+                note "Prüfung „$n“: ein Lauf abgebrochen, ein anderer erfolgreich – belanglos."
+            else
+                CHECKS_CANCELLED="$CHECKS_CANCELLED $n"
+                note "Prüfung „$n“ wurde abgebrochen – ohne Ergebnis."
+            fi
+        done
+    fi
 }
 
 comment_once() { # comment_once <marker> <text>
@@ -323,6 +375,7 @@ else
     log "Warte auf die Prüfungen von ${HEAD_SHA:0:8} (max. ${TIMEOUT}s)"
     started=$SECONDS
     dispatched=0
+    cancel_retries=0
     while :; do
         check_state_for "$HEAD_SHA"
         elapsed=$((SECONDS - started))
@@ -339,6 +392,26 @@ Details im Tab **Actions** – [Lauf öffnen]($URL/checks). Nach einem Fix wird 
 
 Erzwingen (ohne Prüfungen): Kommentar \`/automerge\`."
             exit 1
+        fi
+
+        # Abgebrochen heißt „kein Ergebnis“ – nicht „bestanden“. Also die
+        # Prüfung neu starten und erst mergen, wenn sie wirklich grün ist.
+        if [ -n "$CHECKS_CANCELLED" ]; then
+            if [ "$cancel_retries" -ge "$CANCEL_RETRIES" ]; then
+                err "Prüfung(en) ohne Ergebnis (abgebrochen):$CHECKS_CANCELLED"
+                comment_once "<!-- automerge-abbruch -->" "### 🤖 Auto-Merge: nicht gemergt\n\nDiese Prüfung(en) wurden abgebrochen und liefern kein Ergebnis:$CHECKS_CANCELLED\n\n\`$CHECK_WORKFLOW\` wurde $cancel_retries× neu gestartet – ohne Erfolg. Bitte im Tab **Actions** nachsehen ([Lauf öffnen]($URL/checks)). Ein erneuter Push startet einen neuen Versuch.\n\nOhne Prüfung mergen: Kommentar \\`/automerge\\`."
+                exit 1
+            fi
+            cancel_retries=$((cancel_retries + 1))
+            warn "Prüfung(en) abgebrochen – kein Ergebnis:$CHECKS_CANCELLED"
+            warn "Starte „$CHECK_WORKFLOW“ für $HEAD_BRANCH neu (Versuch $cancel_retries/$CANCEL_RETRIES)."
+            if gh_quiet workflow run "$CHECK_WORKFLOW" --repo "$REPO" --ref "$HEAD_BRANCH" >/dev/null; then
+                ok "Prüf-Workflow neu angestoßen."
+            else
+                warn "Prüf-Workflow konnte nicht gestartet werden (Rechte? Datei vorhanden?)."
+            fi
+            sleep "$POLL"
+            continue
         fi
 
         if [ "$CHECKS_PENDING" -eq 0 ] && [ "$CHECKS_SEEN" -gt 0 ]; then
