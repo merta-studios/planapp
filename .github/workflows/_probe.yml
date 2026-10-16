@@ -4,9 +4,11 @@ on:
     branches: ['arena/**']
   workflow_dispatch:
 jobs:
-  probe:
+  probe-ubuntu:
     runs-on: ubuntu-latest
     steps:
       - run: echo "hallo von ubuntu-latest"
-      - run: uname -a
-      - run: docker --version || echo "kein docker"
+  probe-macos:
+    runs-on: macos-26
+    steps:
+      - run: echo "hallo von macos-26"
