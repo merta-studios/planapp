@@ -96,6 +96,28 @@ die nie starten.
 3. Erst wenn alles grün ist, landet der Stand in `main`; danach baut Actions
    automatisch ein neues `PlanApp.ipa`.
 
+### Vollständige Logs sind nicht abrufbar
+
+In Sandboxen ist der Log-Download (`results-receiver.actions.githubusercontent.com`)
+häufig gesperrt – `gh run view --log` bleibt dann leer. Job-Schritte und
+Check-Run-Annotationen helfen weiter und zeigen auch, ob der **einzelne
+Schritt** grün ist und nicht nur der Job:
+
+```sh
+gh api repos/<owner>/<repo>/actions/runs/<id>/jobs \
+  --jq '.jobs[] | [.name, (.steps|length), .conclusion] | @tsv'
+gh api repos/<owner>/<repo>/actions/runs/<id>/jobs \
+  --jq '.jobs[] | (.name), [.steps[] | "    " + (.number|tostring) + ". " + .name + " -> " + (.conclusion // "?")]'
+gh api repos/<owner>/<repo>/commits/<sha>/check-runs \
+  --jq '.check_runs[] | [.name, (.conclusion // "pending"), (.id|tostring)] | @tsv'
+gh api repos/<owner>/<repo>/check-runs/<check-run-id>/annotations --jq '.[].message'
+```
+
+**Falle:** Ein Schritt mit `continue-on-error: true` (z. B. „Typ-Prüfung
+ausführen“) meldet in der API immer `success` – auch bei echten Typfehlern.
+Das wirkliche Ergebnis steht im auswertenden Folgeschritt („Ergebnis
+bewerten“) und in den Annotationen.
+
 ## Nützliche Befehle
 
 ```sh
