@@ -24,6 +24,7 @@
 #   AUTOMERGE_TIMEOUT         Sekunden warten auf Prüfungen (Standard: 2700)
 #   AUTOMERGE_POLL            Sekunden zwischen zwei Abfragen (Standard: 20)
 #   AUTOMERGE_CHECK_GRACE     Wartezeit, bis überhaupt Prüfungen auftauchen (Standard: 90)
+#   AUTOMERGE_NO_CHECK_TIMEOUT  Abbruch, wenn gar keine Prüfung startet (Standard: 900)
 #   AUTOMERGE_FORCE           1 = Prüfungen ignorieren
 #   AUTOMERGE_CREATE_PR       1 = Pull Request anlegen, wenn keiner existiert
 #   AUTOMERGE_ADVISORY_CHECKS Prüfungen, deren Fehler nur gewarnt wird (kommagetrennt)
@@ -48,6 +49,7 @@ BRANCHES="${AUTOMERGE_BRANCHES:-arena/*,ai/*,agent/*}"
 TIMEOUT="${AUTOMERGE_TIMEOUT:-2700}"
 POLL="${AUTOMERGE_POLL:-20}"
 GRACE="${AUTOMERGE_CHECK_GRACE:-90}"
+NO_CHECK_TIMEOUT="${AUTOMERGE_NO_CHECK_TIMEOUT:-900}"
 ADVISORY="${AUTOMERGE_ADVISORY_CHECKS:-}"
 SKIP="${AUTOMERGE_SKIP_CHECKS:-}"
 SELF_NAME="${AUTOMERGE_SELF_NAME:-Auto-Merge}"
@@ -226,12 +228,36 @@ fi
 
 # ------------------------------------------------------------- Auf Checks warten
 
-pending_checks() { # pending_checks <sha>  →  "status<TAB>name<TAB>conclusion"
+pending_checks() { # pending_checks <sha>  →  "id<TAB>status<TAB>name<TAB>conclusion"
     gh api --paginate "repos/$REPO/commits/$1/check-runs?per_page=100" \
-        --jq '.check_runs[] | [.status, .name, (.conclusion // "pending")] | @tsv' 2>/dev/null
+        --jq '.check_runs[] | [(.id|tostring), .status, .name, (.conclusion // "pending")] | @tsv' 2>/dev/null
     gh api "repos/$REPO/commits/$1/status" \
-        --jq '.statuses[] | [(if .state == "pending" then "in_progress" else "completed" end), .context, (if .state == "success" then "success" else "failure" end)] | @tsv' 2>/dev/null
+        --jq '.statuses[] | ["", (if .state == "pending" then "in_progress" else "completed" end), .context, (if .state == "success" then "success" else "failure" end)] | @tsv' 2>/dev/null
     return 0
+}
+
+# Startet ein Job gar nicht (z. B. weil das Actions-Kontingent oder die
+# Abrechnung des Accounts nicht in Ordnung ist), steht der Grund in den
+# Annotationen der Prüfung. Das ist die einzige Stelle, an der GitHub das
+# erklärt – deshalb wird sie hier mit ausgegeben.
+explain_failures() {
+    local id message
+    for id in $CHECKS_FAILED_IDS; do
+        while IFS= read -r message; do
+            [ -n "$message" ] || continue
+            warn "GitHub zu „$id“: $message"
+            case "$message" in
+                *"spending limit"*|*"payments have failed"*|*"Billing"*|*"not started because"*)
+                    err "Die Actions-Jobs starten nicht! GitHub nennt das Kontingent bzw. die Abrechnung:"
+                    err "https://github.com/settings/billing  („Billing & plans“) prüfen."
+                    warn "Bis das geklärt ist, startet auch der IPA-Build nicht. Der Pull Request kann in"
+                    warn "der Zwischenzeit direkt gemergt werden: gh pr merge $PR --merge --repo $REPO"
+                    BILLING_PROBLEM=1
+                    ;;
+            esac
+        done < <(gh api "repos/$REPO/check-runs/$id/annotations" \
+                    --jq '.[].message' 2>/dev/null)
+    done
 }
 
 check_state_for() { # check_state_for <sha> → setzt globale Zähler
@@ -239,11 +265,12 @@ check_state_for() { # check_state_for <sha> → setzt globale Zähler
     CHECKS_PENDING=0
     CHECKS_PASSED=0
     CHECKS_FAILED=""
+    CHECKS_FAILED_IDS=""
     CHECKS_ADVISORY=""
     CHECKS_SEEN=0
 
-    local status name conclusion
-    while IFS=$'\t' read -r status name conclusion; do
+    local id status name conclusion
+    while IFS=$'\t' read -r id status name conclusion; do
         [ -n "${name:-}" ] || continue
         case "$name" in *"$SELF_NAME"*) note "eigene Prüfung übersprungen: $name"; continue ;; esac
         list_contains "$SKIP" "$name" && { note "Prüfung übersprungen (AUTOMERGE_SKIP_CHECKS): $name"; continue; }
@@ -261,7 +288,10 @@ check_state_for() { # check_state_for <sha> → setzt globale Zähler
                 case "$conclusion" in
                     success|neutral|skipped) CHECKS_PASSED=$((CHECKS_PASSED + 1)) ;;
                     cancelled) CHECKS_PASSED=$((CHECKS_PASSED + 1)); note "Prüfung „$name“ wurde abgebrochen (gilt als neutral)." ;;
-                    *) CHECKS_FAILED="$CHECKS_FAILED $name($conclusion)" ;;
+                    *)
+                        CHECKS_FAILED="$CHECKS_FAILED $name($conclusion)"
+                        [ -n "$id" ] && CHECKS_FAILED_IDS="$CHECKS_FAILED_IDS $id"
+                        ;;
                 esac
                 ;;
             *) CHECKS_PENDING=$((CHECKS_PENDING + 1)) ;;
@@ -294,9 +324,11 @@ else
 
         if [ -n "$CHECKS_FAILED" ]; then
             err "Rote Prüfung(en):$CHECKS_FAILED"
+            explain_failures
             comment_once "<!-- automerge-rot -->" "### 🤖 Auto-Merge: nicht gemergt
 
 Die Prüfungen sind rot:$CHECKS_FAILED
+$( [ "${BILLING_PROBLEM:-0}" = "1" ] && printf '\n**Achtung:** GitHub startet die Jobs nicht – laut Annotation ist das Actions-Kontingent bzw. die Abrechnung des Accounts das Problem (https://github.com/settings/billing). Solange das so ist, startet auch der IPA-Build nicht.\n' )
 
 Details im Tab **Actions** – [Lauf öffnen]($URL/checks). Nach einem Fix wird automatisch erneut geprüft.
 
@@ -328,6 +360,22 @@ Erzwingen (ohne Prüfungen): Kommentar \`/automerge\`."
             comment_once "<!-- automerge-timeout -->" "### 🤖 Auto-Merge: Zeitüberschreitung
 
 Nach ${TIMEOUT}s waren die Prüfungen noch nicht fertig – es wurde **nicht** gemergt. Der nächste Push startet einen neuen Versuch."
+            exit 1
+        fi
+
+        # Es taucht überhaupt keine Prüfung auf: dann läuft die CI nicht
+        # (Actions blockiert, Workflow fehlt, Kontingent aufgebraucht).
+        # Nicht die volle Zeit absitzen, sondern klar melden.
+        if [ "$CHECKS_SEEN" -eq 0 ] && [ "$elapsed" -ge "$NO_CHECK_TIMEOUT" ]; then
+            err "Nach ${NO_CHECK_TIMEOUT}s ist keine einzige Prüfung aufgetaucht – es wurde nicht gemergt."
+            warn "Meistens: Actions startet keine Jobs (Abrechnung/Kontingent: https://github.com/settings/billing),"
+            warn "fehlender Workflow oder fehlende Rechte für $CHECK_WORKFLOW."
+            warn "Direkt mergen (überspringt die Prüfungen): gh pr merge $PR --merge --repo $REPO"
+            comment_once "<!-- automerge-keine-checks -->" "### 🤖 Auto-Merge: keine Prüfungen gefunden
+
+Auf diesem Commit ist nach ${NO_CHECK_TIMEOUT}s keine Prüfung gestartet – deshalb wurde **nicht** gemergt. Häufigste Ursache: GitHub Actions startet keine Jobs (Abrechnung/Aktionskontingent, siehe *Billing & plans* im GitHub-Account) oder der Workflow „Swift-Code-Prüfung“ fehlt.
+
+Ohne Prüfungen mergen: \`/automerge\` als Kommentar."
             exit 1
         fi
 

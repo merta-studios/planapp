@@ -35,6 +35,26 @@ Beide Befehle brauchen Docker (oder lokal installiertes Swift,
 `SWIFT_IMAGE=local`). Beim Push passiert genau dasselbe auf dem Linux-Runner –
 was hier grün ist, ist dort auch grün.
 
+## Wenn GitHub Actions gerade keine Jobs startet
+
+Symptom: Der Lauf ist nach wenigen Sekunden rot, **jeder** Job hat 0 Schritte und die
+Annotation lautet „The job was not started because recent account payments have failed or your
+spending limit needs to be increased“ – GitHub drosselt den Account (Aktionsminuten /
+Abrechnung, privates Repo). Dann startet auch der IPA-Build nicht.
+
+Prüfen mit:
+
+```sh
+gh api repos/<owner>/<repo>/actions/runs/<id>/jobs --jq '.jobs[] | [.name, (.steps|length)] | @tsv'
+gh api repos/<owner>/<repo>/check-runs/<job-check-run-id>/annotations --jq '.[].message'
+```
+
+In diesem Fall **nicht** endlos warten: den Pull Request direkt mergen
+(`gh pr merge <nr> --merge --repo <owner>/<repo>`) und dem Menschen im Ergebnis sagen, dass
+das Actions-Kontingent bzw. die Abrechnung unter <https://github.com/settings/billing> geprüft
+werden muss. Der Workflow `Auto-Merge → main` wartet sonst bis zu 15 Minuten auf Prüfungen,
+die nie starten.
+
 ## Wenn die Prüfung rot ist
 
 1. `gh run list --branch <branch>` und `gh run view <id> --log-failed` lesen.

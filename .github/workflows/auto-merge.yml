@@ -51,7 +51,7 @@ concurrency:
 jobs:
   auto-merge:
     name: Auto-Merge (main)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     # Bei Kommentaren nur auf "/automerge" von Repo-Mitgliedern reagieren.
     if: >-

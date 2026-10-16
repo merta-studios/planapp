@@ -136,6 +136,8 @@ Alle Schalter, die `ci/auto-merge.sh` kennt, stehen im Kopf der Datei.
 | Symptom | Ursache / Lösung |
 | --- | --- |
 | PR wird nicht automatisch gemergt, Job ist rot mit „Rote Prüfung(en)“ | Der Code ist fehlerhaft – Log öffnen, Fehler beheben, erneut pushen. Kein Handgriff nötig. |
+| **Jobs starten gar nicht**: Lauf ist nach Sekunden rot, alle Jobs haben 0 Schritte, als Annotation steht „The job was not started because recent account payments have failed or your spending limit needs to be increased“ | Das ist kein Codefehler: GitHub blockiert die **Actions-Minuten des Accounts** (privates Repo). Unter <https://github.com/settings/billing> → *Billing & plans* Zahlungsart/Spending Limit prüfen. Betrifft **alle** GitHub-Runner – auch den IPA-Build. Übergangsweise direkt mergen: `gh pr merge <nr> --merge` (die Arena-Session macht das auf Wunsch auch selbst). |
+| „Nach 900s ist keine einzige Prüfung aufgetaucht“ | Wie oben (Actions blockiert), oder `.github/workflows/build-check.yml` fehlt im Branch. |
 | „Konflikt mit main“ | Der Branch ist veraltet. In der Arena-Session neu aufsetzen lassen (Rebase) – dann wieder automatisch. |
 | „Branch-Schutz verhindert den Merge“ | Review-Pflicht aktiv: Entweder die Regel unter Settings → Branches lockern oder `AUTOMERGE_TOKEN` hinterlegen. |
 | „Pull Request konnte nicht angelegt werden“ | PR einmal selbst anlegen (oder die Workflow-Permissions-Option oben aktivieren) – der Rest bleibt automatisch. |

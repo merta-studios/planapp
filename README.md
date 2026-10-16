@@ -72,6 +72,13 @@ fehlgeschlagenen Prüfungen, die Fehler stehen als Annotation an der betroffenen
 `main` bleibt unangetastet. Bewusst abschalten lässt sich die Automatik mit dem Label
 `no-automerge`, erzwingen mit dem Kommentar `/automerge`.
 
+> **Wichtig – Actions-Kontingent:** Läuft das monatliche Aktionskontingent eines privaten
+> Repos voll (oder ist die Zahlungsart abgelehnt), startet GitHub **keine** Jobs mehr – auch
+> nicht den macOS-Build. Sichtbar wird das als Lauf, der nach Sekunden rot ist und dessen Jobs
+> 0 Schritte haben („The job was not started because recent account payments have failed…“).
+> Prüfen: <https://github.com/settings/billing> → *Billing & plans*. Übergangsweise lässt sich
+> ein PR direkt mergen (`gh pr merge <nr> --merge`); die Arena-Session erledigt das auf Wunsch.
+
 Vollständige Anleitung, alle Schalter und die Fehlerbehebung stehen in
 [`CONTRIBUTING.md`](CONTRIBUTING.md); die Kurzfassung für Assistenten in [`AGENTS.md`](AGENTS.md).
 
