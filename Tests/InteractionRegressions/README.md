@@ -31,7 +31,12 @@ die vorhandenen Tastatur-Layout-Tests, dann:
   lässt, der Balken der Werkzeugleiste sie aber unverändert lässt;
 - das **Größenbudget der gespeicherten Rückgängig-Sitzung**: zusammenhängendes
   Ende des Stapels innerhalb des Budgets, neuester Stand auch dann, wenn er das
-  Stapel-Budget allein sprengt, leerer Stapel, Budget 0 und ungültige Größen.
+  Stapel-Budget allein sprengt, leerer Stapel, Budget 0 und ungültige Größen;
+- die **laufende Stunde im Stundenraster** (`CurrentPeriodPolicy`): vor der
+  ersten Stunde, in der Stunde (Beginn inklusive, Ende exklusiv), Pause mit
+  Verweis auf die nächste Stunde, nach der letzten Stunde, leeres Raster,
+  ignorierte ungültige Stunden, Überlappungen nach Beginn und der auf 0…1
+  begrenzte Fortschritt.
 
 Mit `TYPE_CHECK_ONLY=1 ./Tests/run-regressions.sh` werden dieselben Dateien nur
 übersetzt, ohne die Tests auszuführen – gedacht für einen Build-Check in CI

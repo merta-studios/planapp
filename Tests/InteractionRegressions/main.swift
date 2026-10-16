@@ -725,4 +725,73 @@ if let monday, let friday, let saturday,
     }
 }
 
+// MARK: - Laufende Stunde im Stundenraster
+
+let grid = Period.defaultPeriods
+func slotAt(_ minutes: Int) -> CurrentPeriodSlot? {
+    CurrentPeriodPolicy.slot(atMinutes: minutes, in: grid)
+}
+
+expect(slotAt(7 * 60 + 59) == .beforeFirstPeriod, "Vor 08:00 hat der Schultag nicht begonnen")
+expect(slotAt(8 * 60) == .inPeriod(grid[0]), "08:00 beginnt die erste Stunde")
+expect(slotAt(8 * 60 + 44) == .inPeriod(grid[0]), "Eine Minute vor dem Ende läuft die Stunde noch")
+expect(slotAt(8 * 60 + 45) == .inBreak(next: grid[1]), "Die Endzeit gehört zur folgenden Pause")
+expect(slotAt(8 * 60 + 49) == .inBreak(next: grid[1]), "Die ganze Pause verweist auf die nächste Stunde")
+expect(slotAt(8 * 60 + 50) == .inPeriod(grid[1]), "08:50 beginnt die zweite Stunde")
+expect(slotAt(9 * 60 + 40) == .inBreak(next: grid[2]), "Lange Pause nach der zweiten Stunde")
+expect(slotAt(16 * 60 + 54) == .inPeriod(grid[9]), "Die letzte Stunde läuft bis 16:55")
+expect(slotAt(16 * 60 + 55) == .afterLastPeriod, "Nach der letzten Stunde ist der Schultag vorbei")
+expect(slotAt(23 * 60 + 59) == .afterLastPeriod, "Auch kurz vor Mitternacht bleibt es „danach“")
+expect(CurrentPeriodPolicy.slot(atMinutes: 8 * 60, in: []) == nil, "Ein leeres Raster hat keinen Slot")
+
+// Ungültige Stunden (Ende ≤ Beginn) werden ignoriert und verschieben die
+// Auswertung nicht.
+let brokenGrid = [
+    Period(periodNumber: 2, startTime: "09:00", endTime: "08:00"),
+    Period(periodNumber: 1, startTime: "08:00", endTime: "08:45"),
+    Period(periodNumber: 3, startTime: "09:30", endTime: "09:30")
+]
+expect(
+    CurrentPeriodPolicy.slot(atMinutes: 8 * 60 + 10, in: brokenGrid) == .inPeriod(brokenGrid[1]),
+    "Auch in einem gemischten Raster wird die gültige Stunde gefunden"
+)
+expect(
+    CurrentPeriodPolicy.slot(atMinutes: 8 * 60 + 50, in: brokenGrid) == .afterLastPeriod,
+    "Nach der einzigen gültigen Stunde ist der Schultag vorbei"
+)
+
+// Überlappende Stunden werden nach Beginn aufgelöst: die früheste gewinnt.
+let overlappingGrid = [
+    Period(periodNumber: 2, startTime: "08:30", endTime: "09:30"),
+    Period(periodNumber: 1, startTime: "08:00", endTime: "09:00")
+]
+expect(
+    CurrentPeriodPolicy.slot(atMinutes: 8 * 60 + 45, in: overlappingGrid) == .inPeriod(overlappingGrid[1]),
+    "Bei einer Überlappung gewinnt die früher beginnende Stunde"
+)
+
+// Fortschritt: nur innerhalb einer Stunde und auf 0…1 begrenzt.
+let runningSlot = slotAt(8 * 60 + 22)
+expect(runningSlot == .inPeriod(grid[0]), "08:22 liegt in der ersten Stunde")
+if let runningSlot,
+   let runningProgress = CurrentPeriodPolicy.progress(of: runningSlot, atMinutes: 8 * 60 + 22) {
+    expect(abs(runningProgress - 22.0 / 45.0) < 0.0001, "Der Fortschritt misst sich an der Stundenlänge")
+} else {
+    expect(false, "Eine laufende Stunde hat einen Fortschritt")
+}
+expect(
+    CurrentPeriodPolicy.progress(of: .beforeFirstPeriod, atMinutes: 7 * 60) == nil,
+    "Außerhalb einer Stunde gibt es keinen Fortschritt"
+)
+
+// Die Date-Variante benutzt dasselbe Raster und denselben Kalender der App.
+if let lessonDate = germanCalendar.date(
+    from: DateComponents(calendar: germanCalendar, year: 2026, month: 10, day: 12, hour: 8, minute: 30)
+) {
+    expect(
+        CurrentPeriodPolicy.slot(at: lessonDate, in: grid, calendar: germanCalendar) == .inPeriod(grid[0]),
+        "Ein Date wird in Minuten seit Mitternacht übersetzt"
+    )
+}
+
 print("\(checks) Interaktions-/Sync-/Layout-Checks erfolgreich.")
