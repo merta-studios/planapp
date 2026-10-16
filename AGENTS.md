@@ -17,7 +17,9 @@ Repository ankommen. Ausführlich: [`CONTRIBUTING.md`](CONTRIBUTING.md).
 3. **Branch nicht löschen und `main` nicht umschreiben** – die laufende Session
    arbeitet auf dem Branch weiter.
 4. Kein `--admin`, kein Force-Merge über rote Prüfungen. Wenn eine Prüfung rot
-   ist: Ursache im Log beheben und erneut pushen.
+   ist: Ursache im Log beheben und erneut pushen. Eine **abgebrochene**
+   Prüfung gilt nicht als bestanden – `ci/auto-merge.sh` startet sie neu
+   (`AUTOMERGE_CANCEL_RETRIES`) und mergt erst, wenn ein Ergebnis vorliegt.
 
 ## Prüfungen, die den Merge blockieren
 
