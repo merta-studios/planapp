@@ -82,7 +82,7 @@ jobs:
         run: |
           set -euo pipefail
           pr="${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}"
-          branch="${{ github.event.pull_request.head.ref || github.event.workflow_run.head_branch || inputs.branch }}"
+          branch="${{ github.event.pull_request.head.ref || github.event.workflow_run.head_branch || inputs.branch || (github.event_name == 'push' && github.ref_name) }}"
           if [ -z "$pr" ]; then pr="$branch"; fi
           # Ein Kommentar nennt den PR über die Issue-Nummer.
           if [ "${{ github.event_name }}" = "issue_comment" ]; then
