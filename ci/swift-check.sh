@@ -219,6 +219,14 @@ module_available() {
 portable_files() {
     local f imports
     while IFS= read -r f; do
+        # Foundation-only imports do not imply a portable dependency graph:
+        # DrawingSettings uses NoteTextFontStyle (UIKit/SwiftUI), NoteTextBox
+        # (CoreGraphics), and NoteBackgroundMetrics (CoreGraphics). Without
+        # those definitions Swift also emits misleading Equatable/inference
+        # errors. Keep this model covered by syntax and the real iOS build.
+        case "$f" in
+            ./PlanApp.swiftpm/Models/DrawingSettings.swift) continue ;;
+        esac
         imports=$(grep -E '^[[:space:]]*(@preconcurrency[[:space:]]+)?import[[:space:]]+' "$f" \
             | sed -E 's/^[[:space:]]*(@preconcurrency[[:space:]]+)?import[[:space:]]+//; s/[[:space:]].*$//')
         local skip=0 m
