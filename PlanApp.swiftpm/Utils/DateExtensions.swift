@@ -86,15 +86,9 @@ extension Date {
 
     /// Gibt die 5 Schultage (Montag bis Freitag) der Woche zurück
     public func schoolWeekDays(using calendar: Calendar = .germanCalendar) -> [Date] {
-        let monday = self.startOfWeek(using: calendar)
-        var days: [Date] = []
-        days.reserveCapacity(5)
-        for i in 0..<5 {
-            if let d = calendar.date(byAdding: .day, value: i, to: monday) {
-                days.append(d)
-            }
-        }
-        return days
+        // Die Regel „Montag bis Freitag“ steht in `SchoolWeekPolicy` – so gilt
+        // sie an jeder Stelle gleich, auch für das Wochenende als Ausgangspunkt.
+        SchoolWeekPolicy.schoolDays(inWeekOf: self, calendar: calendar)
     }
 
     /// Prüft, ob dieses Datum der heutige Tag ist
