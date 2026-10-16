@@ -79,6 +79,10 @@ jobs:
           AUTOMERGE_FORCE: ${{ (github.event_name == 'issue_comment' || inputs.force) && '1' || '0' }}
           AUTOMERGE_CREATE_PR: ${{ github.event_name == 'push' && '1' || '0' }}
           AUTOMERGE_DISPATCH_BUILD: ${{ secrets.AUTOMERGE_TOKEN == '' && '1' || '0' }}
+          # Prüfung gilt erst recht: ohne AUTOMERGE_TOKEN löst der Merge selbst
+          # keine Workflows aus – dann muss die Swift-Prüfung hier angestoßen
+          # werden, sonst bleibt main ungeprüft.
+          AUTOMERGE_DISPATCH_CHECK: ${{ secrets.AUTOMERGE_TOKEN == '' && '1' || '0' }}
         run: |
           set -euo pipefail
           pr="${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}"

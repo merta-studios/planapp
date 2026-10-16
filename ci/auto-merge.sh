@@ -31,6 +31,8 @@
 #   AUTOMERGE_SKIP_CHECKS     Prüfungen, die ignoriert werden (kommagetrennt)
 #   AUTOMERGE_SELF_NAME       eigener Jobname, wird nicht als Prüfung gezählt
 #   AUTOMERGE_DISPATCH_BUILD  1 = nach dem Merge den IPA-Build anstoßen
+#   AUTOMERGE_DISPATCH_CHECK  1 = nach dem Merge die Swift-Code-Prüfung auf dem
+#                             Zielbranch anstoßen (Standard: wie AUTOMERGE_DISPATCH_BUILD)
 #   AUTOMERGE_DRY_RUN         1 = nur anzeigen, nichts mergen/anlegen
 #
 # Rückgabewert: 0 = gemergt oder nichts zu tun, 1 = nicht gemergt (Grund im Log).
@@ -54,6 +56,9 @@ ADVISORY="${AUTOMERGE_ADVISORY_CHECKS:-}"
 SKIP="${AUTOMERGE_SKIP_CHECKS:-}"
 SELF_NAME="${AUTOMERGE_SELF_NAME:-Auto-Merge}"
 DISPATCH_BUILD="${AUTOMERGE_DISPATCH_BUILD:-0}"
+# Wer den IPA-Build nach dem Merge anstoßen will, will in der Regel auch die
+# Prüfung – deshalb erbt der Schalter den Wert von AUTOMERGE_DISPATCH_BUILD.
+DISPATCH_CHECK="${AUTOMERGE_DISPATCH_CHECK:-$DISPATCH_BUILD}"
 CHECK_WORKFLOW="${AUTOMERGE_CHECK_WORKFLOW:-build-check.yml}"
 BUILD_WORKFLOW="${AUTOMERGE_BUILD_WORKFLOW:-build-ipa.yml}"
 
@@ -427,7 +432,22 @@ comment_once "<!-- automerge-gruen -->" "### 🤖 Auto-Merge: in \`$BASE_BRANCH\
 Der nächste Push auf diesen Branch landet wieder automatisch hier."
 ok "Merge-Commit: ${MERGE_SHA:0:8}"
 
-# ------------------------------------------------------- Folge-Build anstoßen
+# ------------------------------------------- Folge-Läufe auf dem Zielbranch
+
+# Ein Merge mit dem normalen GITHUB_TOKEN löst – eine Eigenheit von GitHub –
+# selbst keine Workflows aus. Ohne die beiden Aufrufe unten bliebe
+# $BASE_BRANCH nicht nur ohne IPA, sondern auch ohne die Swift-Prüfung: Die
+# Prüfungen im Pull Request gelten für den Branch, und der macOS-Build
+# übersetzt danach nur. Erst diese beiden Läufe sagen „main ist grün“.
+
+if [ "$DISPATCH_CHECK" = "1" ]; then
+    log "Swift-Code-Prüfung auf $BASE_BRANCH anstoßen"
+    if gh_quiet workflow run "$CHECK_WORKFLOW" --repo "$REPO" --ref "$BASE_BRANCH" >/dev/null; then
+        ok "Prüf-Workflow gestartet (Ergebnis nach ein paar Minuten im Tab Actions)."
+    else
+        warn "Prüf-Workflow konnte nicht gestartet werden – ggf. manuell über Actions starten."
+    fi
+fi
 
 if [ "$DISPATCH_BUILD" = "1" ]; then
     log "IPA-Build auf $BASE_BRANCH anstoßen"

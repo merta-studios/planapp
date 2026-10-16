@@ -114,9 +114,12 @@ pushen kann.
 ### Nach dem Merge
 
 Wird mit dem normalen `GITHUB_TOKEN` gemergt, löst das – eine Eigenheit von
-GitHub – selbst keine Workflows aus. Deshalb startet das Skript den IPA-Build
-auf `main` in diesem Fall explizit. Mit einem eigenen Token
-(`AUTOMERGE_TOKEN`) läuft alles über die normalen Push-Events.
+GitHub – selbst keine Workflows aus. Deshalb startet das Skript in diesem Fall
+explizit **zwei** Läufe auf `main`: die Swift-Code-Prüfung (`build-check.yml`)
+und den IPA-Build (`build-ipa.yml`). Ohne den ersten bliebe `main` ungeprüft –
+die Prüfungen im Pull Request gelten für den Branch, und der macOS-Build
+übersetzt danach nur. Mit einem eigenen Token (`AUTOMERGE_TOKEN`) läuft alles
+über die normalen Push-Events.
 
 ## Optionale Einrichtung (empfohlen)
 
@@ -128,6 +131,7 @@ auf `main` in diesem Fall explizit. Mit einem eigenen Token
 | 🐳 Variable `SWIFT_IMAGE` (z. B. `swift:6.3-noble`) | Settings → … → Variables | Neuere Swift-Version oder schnelleres Image. |
 | 🚫 Variable `AUTOMERGE_BRANCHES` (z. B. `arena/*`) | Settings → … → Variables | Nur Arena-Branches automatisch mergen. |
 | 🔔 Variable `AUTOMERGE_DISPATCH_BUILD=0` | Settings → … → Variables | Keinen IPA-Build nach dem Merge starten (spart macOS-Minuten). |
+| 🔍 Variable `AUTOMERGE_DISPATCH_CHECK=0` | Settings → … → Variables | Keine Swift-Prüfung nach dem Merge auf `main` starten (spart Linux-Minuten). |
 
 Alle Schalter, die `ci/auto-merge.sh` kennt, stehen im Kopf der Datei.
 

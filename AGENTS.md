@@ -5,8 +5,12 @@ Repository ankommen. Ausführlich: [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Grundregeln
 
-1. **Branches:** `arena/<session-id>-planapp` (oder `ai/*`, `agent/*`). Immer
-   nur auf den eigenen Branch pushen – niemals direkt auf `main`.
+1. **Branches:** `arena/<session-id>-planapp` (oder `ai/*`, `agent/*`) ist der
+   Standardweg – nur auf den eigenen Branch pushen.
+   **Ausnahme:** Gibt der Mensch der Session den Repo-Zugriff ausdrücklich
+   frei, darf direkt auf `main` gepusht werden (siehe „Direkt auf `main`
+   arbeiten“ weiter unten). `main` dabei nie umschreiben: kein Force-Push,
+   kein Rebase von `main`.
 2. **Kein manueller Pull Request nötig.** Ein Push auf `arena/*` legt den PR
    automatisch an und mergt ihn nach grünen Prüfungen in `main`
    (`.github/workflows/auto-merge.yml` → `ci/auto-merge.sh`).
@@ -34,6 +38,35 @@ ci/run-swift.sh Tests/run-regressions.sh   # Logik-Tests
 Beide Befehle brauchen Docker (oder lokal installiertes Swift,
 `SWIFT_IMAGE=local`). Beim Push passiert genau dasselbe auf dem Linux-Runner –
 was hier grün ist, ist dort auch grün.
+
+Fehlt in der Sandbox beides (kein Docker, keine Swift-Toolchain), ist GitHub
+Actions die Prüfinstanz – siehe den nächsten Abschnitt.
+
+## Direkt auf `main` arbeiten (nur mit ausdrücklicher Freigabe)
+
+Gibt der Mensch der Session den Repo-Zugriff frei, geht es auch ohne Pull
+Request:
+
+```sh
+git push origin HEAD:main     # Fast-Forward, niemals --force
+gh run list --limit 5         # Swift-Code-Prüfung + Build IPA starten von selbst
+```
+
+Ein Push auf `main` löst `build-check.yml` **und** `build-ipa.yml` aus (beide
+haben `push: [main]`) – genau die beiden Prüfungen, die lokal fehlen. Der
+Auto-Merge bleibt dabei außen vor, weil er nur auf `arena/**`, `ai/**`,
+`agent/**` reagiert.
+
+**Prüfschleife – so lange wiederholen, bis alles grün ist:**
+
+1. `gh run watch <id>` (oder `gh run list --limit 5`): warten, bis beide
+   Workflows abgeschlossen sind.
+2. Rot? Job-Schritte und Check-Run-Annotationen lesen (Befehle unten), Ursache
+   im Code beheben, erneut pushen. Jeder Push prüft wieder alles.
+3. Fertig ist der Stand erst, wenn **beide** Läufe grün sind:
+   `Swift-Code-Prüfung` *und* `Build IPA (Sideload)`.
+
+Keinen roten Lauf stehen lassen, nichts forcieren, kein `--admin`.
 
 ## Wenn GitHub Actions gerade keine Jobs startet
 
@@ -67,6 +100,7 @@ die nie starten.
 
 ```sh
 gh run list --limit 10                     # letzte Läufe
+gh run watch <id>                          # Lauf live verfolgen
 gh pr list --state open                    # offene Pull Requests
 gh pr view <nr> --json statusCheckRollup   # Prüfungsstand
 ```
