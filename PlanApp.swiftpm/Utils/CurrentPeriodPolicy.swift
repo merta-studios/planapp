@@ -27,7 +27,14 @@ public enum CurrentPeriodPolicy {
     public static func validPeriods(sorted periods: [Period]) -> [Period] {
         periods
             .filter { $0.endMinutes > $0.startMinutes }
-            .sorted { $0.startMinutes < $1.startMinutes }
+            .sorted {
+                if $0.startMinutes != $1.startMinutes {
+                    return $0.startMinutes < $1.startMinutes
+                }
+                // Make malformed duplicate-start grids deterministic: prefer
+                // the shorter interval rather than input order.
+                return $0.endMinutes < $1.endMinutes
+            }
     }
 
     /// In welchem Slot liegt `minutesSinceMidnight` innerhalb von `periods`?

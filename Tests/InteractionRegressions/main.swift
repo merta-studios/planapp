@@ -770,6 +770,17 @@ expect(
     "Bei einer Überlappung gewinnt die früher beginnende Stunde"
 )
 
+// Gleiche Startzeiten in defekten Importdaten werden reproduzierbar
+// aufgelöst: die kürzere Stunde steht im sortierten Raster zuerst.
+let duplicateStartGrid = [
+    Period(periodNumber: 1, startTime: "08:00", endTime: "09:00"),
+    Period(periodNumber: 2, startTime: "08:00", endTime: "08:30")
+]
+expect(
+    CurrentPeriodPolicy.slot(atMinutes: 8 * 60 + 15, in: duplicateStartGrid) == .inPeriod(duplicateStartGrid[1]),
+    "Bei identischem Beginn gewinnt deterministisch das kürzere Intervall"
+)
+
 // Fortschritt: nur innerhalb einer Stunde und auf 0…1 begrenzt.
 let runningSlot = slotAt(8 * 60 + 22)
 expect(runningSlot == .inPeriod(grid[0]), "08:22 liegt in der ersten Stunde")
