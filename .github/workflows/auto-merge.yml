@@ -1,0 +1,95 @@
+name: Auto-Merge → main
+
+# Mergt Änderungen automatisch nach main – ohne Klick, ohne manuellen PR.
+#
+# Ablauf:
+#   • Push auf einen arena-/ai-/agent-Branch  → Pull Request anlegen (falls nötig)
+#     und sofort nach grünen Prüfungen nach main mergen.
+#   • Jeder Pull Request mit passendem Branch oder Label „automerge“ → ebenso.
+#   • Kommentar „/automerge“ im Pull Request → erzwingt den Merge ohne Warten.
+#
+# Die Logik steckt in ci/auto-merge.sh (dort auch alle Schalter).
+# Überspringen: Label „no-automerge“ setzen oder AUTOMERGE_BRANCHES einschränken.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
+  push:
+    branches:
+      - 'arena/**'
+      - 'ai/**'
+      - 'agent/**'
+  workflow_run:
+    workflows:
+      - Swift-Code-Prüfung
+      - Build IPA (Sideload)
+    types: [completed]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Nummer des Pull Requests (leer = über Branch suchen)'
+        required: false
+      branch:
+        description: 'Head-Branch (leer = kein PR anlegen)'
+        required: false
+      force:
+        description: 'Prüfungen ignorieren'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.head.ref || github.event.workflow_run.head_branch || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  auto-merge:
+    name: Auto-Merge (main)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    # Bei Kommentaren nur auf "/automerge" von Repo-Mitgliedern reagieren.
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request != null &&
+       contains(github.event.comment.body, '/automerge') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Auto-Merge ausführen
+        env:
+          # Ohne eigenes Token wird das GITHUB_TOKEN benutzt. Es darf mergen,
+          # löst aber selbst keine Workflows aus – deshalb startet das Skript
+          # den IPA-Build nach dem Merge selbst.
+          GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          AUTOMERGE_FORCE: ${{ (github.event_name == 'issue_comment' || inputs.force) && '1' || '0' }}
+          AUTOMERGE_CREATE_PR: ${{ github.event_name == 'push' && '1' || '0' }}
+          AUTOMERGE_DISPATCH_BUILD: ${{ secrets.AUTOMERGE_TOKEN == '' && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          pr="${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}"
+          branch="${{ github.event.pull_request.head.ref || github.event.workflow_run.head_branch || inputs.branch }}"
+          if [ -z "$pr" ]; then pr="$branch"; fi
+          # Ein Kommentar nennt den PR über die Issue-Nummer.
+          if [ "${{ github.event_name }}" = "issue_comment" ]; then
+            branch=""
+            pr="${{ github.event.issue.number }}"
+          fi
+          if [ -n "$pr" ] && [[ "$pr" =~ ^[0-9]+$ ]]; then
+            ci/auto-merge.sh --pr "$pr"
+          elif [ -n "$branch" ]; then
+            ci/auto-merge.sh --branch "$branch"
+          else
+            echo "Kein Pull Request und kein Branch im Event – nichts zu tun."
+          fi

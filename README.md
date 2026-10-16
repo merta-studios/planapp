@@ -20,16 +20,18 @@ Das Repository enthält das fertige App-Package **`PlanApp.swiftpm`**, welches a
 ## 📲 Als „richtige“ App aufs iPad – kostenlos per Windows-PC (Sideload, 7 Tage)
 
 iOS-Apps lassen sich nicht unter Windows kompilieren. Deshalb baut die GitHub-Actions-Pipeline
-[`ci/build-ipa.yml`](ci/build-ipa.yml) auf einem GitHub-macOS-Runner ein unsigniertes
-**`PlanApp.ipa`**, das anschließend mit **Sideloadly** und einer kostenlosen Apple-ID auf dem
-iPad installiert wird. Die App erscheint dann mit eigenem Icon auf dem Home-Screen und läuft
-**7 Tage** – verlängerbar per Sideloadly-Auto-Refresh oder AltStore (WLAN-Refresh).
-Name und Icon der Sideload-App werden in `PlanApp.swiftpm/Package.swift` bzw.
+[`.github/workflows/build-ipa.yml`](.github/workflows/build-ipa.yml) auf einem GitHub-macOS-Runner
+ein unsigniertes **`PlanApp.ipa`**, das anschließend mit **Sideloadly** und einer kostenlosen
+Apple-ID auf dem iPad installiert wird. Die App erscheint dann mit eigenem Icon auf dem
+Home-Screen und läuft **7 Tage** – verlängerbar per Sideloadly-Auto-Refresh oder AltStore
+(WLAN-Refresh). Name und Icon der Sideload-App werden in `PlanApp.swiftpm/Package.swift` bzw.
 `PlanApp.swiftpm/Assets.xcassets` konfiguriert; aktuell heißt sie **„Untis Planner PLUS“**.
 
-**Einmalige Einrichtung:** Die Datei [`ci/build-ipa.yml`](ci/build-ipa.yml) im GitHub-Webinterface
-nach `.github/workflows/build-ipa.yml` kopieren (*Add file → Create new file*, Pfad exakt so
-eintippen, Dateiinhalt einfügen, committen). Danach steht der Workflow im Tab **Actions** bereit.
+Der Workflow liegt fertig im Repository und läuft **automatisch nach jeder Änderung auf
+`main`** – also auch nach jedem automatischen Merge (siehe nächster Abschnitt). Die Datei
+[`ci/build-ipa.yml`](ci/build-ipa.yml) ist nur noch eine Sicherungskopie, falls der Workflow
+im GitHub-Webinterface einmal neu angelegt werden muss (*Settings → Actions* oder
+*Add file → Create new file* mit dem Pfad `.github/workflows/build-ipa.yml`).
 
 **IPA bauen & installieren:**
 
@@ -43,6 +45,42 @@ eintippen, Dateiinhalt einfügen, committen). Danach steht der Workflow im Tab *
 > Beim Löschen einer abgelaufenen App gehen lokal gespeicherte Stundenpläne und Notizen verloren –
 > also rechtzeitig refreshen statt neu installieren. Auf privaten Repos kostet jeder Build
 > Actions-Minuten (macOS zählt 10×, ein Build ≈ 30–60 der 2.000 Gratis-Minuten pro Monat).
+
+---
+
+## 🤖 Automatisch ändern: Auto-Merge + Swift-Prüfung auf Linux
+
+Änderungen landen **ohne manuellen Pull Request und ohne Klick** in `main` – und werden vorher
+auf Linux-Runnern geprüft, obwohl iOS-Apps nur auf macOS bauen. Damit lässt sich auch von
+Windows oder aus einer KI-Session heraus sicher am Swift-Code arbeiten.
+
+| Baustein | Datei | Aufgabe |
+| --- | --- | --- |
+| 🔍 **Swift-Code-Prüfung** | [`.github/workflows/build-check.yml`](.github/workflows/build-check.yml) | Syntax aller `.swift`-Dateien, echte Typ-Prüfung des UIKit-freien Teils und `Tests/run-regressions.sh` – alles im offiziellen Swift-Container (`swift:6.2-noble`) auf Ubuntu, also **1×** statt 10× Aktionsminuten |
+| 🚀 **Auto-Merge** | [`.github/workflows/auto-merge.yml`](.github/workflows/auto-merge.yml) + [`ci/auto-merge.sh`](ci/auto-merge.sh) | Legt für `arena/*`-Pushes automatisch den Pull Request an, wartet auf die Prüfungen und mergt mit Merge-Commit nach `main`; danach startet der IPA-Build |
+| 🧰 **Lokale Helfer** | [`ci/swift-check.sh`](ci/swift-check.sh), [`ci/run-swift.sh`](ci/run-swift.sh) | Dieselben Prüfungen am eigenen Rechner: `ci/run-swift.sh ci/swift-check.sh all` |
+
+**Ohne Mac prüfen:**
+
+```sh
+ci/run-swift.sh ci/swift-check.sh all      # Syntax (alle Dateien) + Typ-Prüfung
+ci/run-swift.sh Tests/run-regressions.sh   # Logik-Tests aus Tests/
+```
+
+Bei roten Prüfungen wird **nicht** gemergt: Der Pull Request bekommt einen Kommentar mit den
+fehlgeschlagenen Prüfungen, die Fehler stehen als Annotation an der betroffenen Code-Zeile, und
+`main` bleibt unangetastet. Bewusst abschalten lässt sich die Automatik mit dem Label
+`no-automerge`, erzwingen mit dem Kommentar `/automerge`.
+
+> **Wichtig – Actions-Kontingent:** Läuft das monatliche Aktionskontingent eines privaten
+> Repos voll (oder ist die Zahlungsart abgelehnt), startet GitHub **keine** Jobs mehr – auch
+> nicht den macOS-Build. Sichtbar wird das als Lauf, der nach Sekunden rot ist und dessen Jobs
+> 0 Schritte haben („The job was not started because recent account payments have failed…“).
+> Prüfen: <https://github.com/settings/billing> → *Billing & plans*. Übergangsweise lässt sich
+> ein PR direkt mergen (`gh pr merge <nr> --merge`); die Arena-Session erledigt das auf Wunsch.
+
+Vollständige Anleitung, alle Schalter und die Fehlerbehebung stehen in
+[`CONTRIBUTING.md`](CONTRIBUTING.md); die Kurzfassung für Assistenten in [`AGENTS.md`](AGENTS.md).
 
 ---
 
@@ -262,3 +300,14 @@ die App-Dateien. Hardware- und Sichtprüfungen für Handballen, Pencil Pro,
 Liquid Glass, Tastendruck-Feedback und die Jetzt-Linie stehen unter
 [`Tests/InteractionRegressions/README.md`](Tests/InteractionRegressions/README.md).
 Ein vollständiger App-Build benötigt weiterhin Xcode oder Swift Playgrounds.
+
+Ohne Mac reicht für die Tests Docker:
+
+```sh
+ci/run-swift.sh Tests/run-regressions.sh
+```
+
+In CI laufen dieselben Tests – zusammen mit der Syntax- und Typ-Prüfung – in
+[`.github/workflows/build-check.yml`](.github/workflows/build-check.yml) auf
+Linux und blockieren bei Fehlern den automatischen Merge
+(siehe [`CONTRIBUTING.md`](CONTRIBUTING.md)).
