@@ -52,6 +52,13 @@ set -e
 if [ "$compile_status" -ne 0 ]; then
     # Fehlertext zusätzlich in die GitHub-Zusammenfassung schreiben, damit
     # die Ursache auch ohne Log-Download sichtbar ist.
+    # Einzelne Fehlerzeilen als Annotation – so ist die Ursache auch in der
+    # Weboberfläche der Prüfung sichtbar, ohne das Protokoll herunterzuladen.
+    if [ -n "${GITHUB_ACTIONS:-}" ] && [ -f "$compile_log" ]; then
+        grep -E "error:" "$compile_log" | head -10 | while IFS= read -r line; do
+            echo "::error::${line//$'\n'/ }"
+        done
+    fi
     if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "$compile_log" ]; then
         {
             echo "## Regressionstests: Übersetzen fehlgeschlagen"
