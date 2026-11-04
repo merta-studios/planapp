@@ -42,7 +42,24 @@ fi
 test_dir="$(mktemp -d "${TMPDIR:-/tmp}/planapp-regressions.XXXXXX")"
 trap 'rm -rf "$test_dir"' EXIT
 
+compile_log="$test_dir/compile.log"
+set +e
 "$compiler" \
     "${sources[@]}" \
-    -o "$test_dir/interaction-regressions"
+    -o "$test_dir/interaction-regressions" 2>&1 | tee "$compile_log"
+compile_status=${PIPESTATUS[0]}
+set -e
+if [ "$compile_status" -ne 0 ]; then
+    # Fehlertext zusätzlich in die GitHub-Zusammenfassung schreiben, damit
+    # die Ursache auch ohne Log-Download sichtbar ist.
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "$compile_log" ]; then
+        {
+            echo "## Regressionstests: Übersetzen fehlgeschlagen"
+            echo '```'
+            head -80 "$compile_log"
+            echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+    fi
+    exit "$compile_status"
+fi
 "$test_dir/interaction-regressions"
