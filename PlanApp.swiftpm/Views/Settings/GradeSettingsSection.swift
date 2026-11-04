@@ -171,7 +171,9 @@ struct GradeSettingsSection: View {
             Slider(
                 value: Binding(
                     get: { Double(draft.maximumPoints) },
-                    set: { update { $0.maximumPoints = Int($0.maximumPoints.rounded()) } }
+                    set: { newValue in
+                        update { $0.maximumPoints = Int(newValue.rounded()) }
+                    }
                 ),
                 in: Double(GradeSettings.minimumPointsLimit)...Double(GradeSettings.maximumPointsLimit),
                 step: 1
