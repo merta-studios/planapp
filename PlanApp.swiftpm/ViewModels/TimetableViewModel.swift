@@ -814,6 +814,26 @@ public final class TimetableViewModel: ObservableObject {
     /// Cache für TeacherName (Performance-Optimierung)
     private var teacherNameCache: [String: String] = [:]
     
+    /// Ermittelt Anzeigename und Farben direkt aus einem Eintrag in
+    /// „Fächer & Farben“ (für die Noten-Ansicht, die ohne Stunde arbeitet).
+    public func resolveSubjectDisplay(for subject: SubjectCustomization) -> SubjectDisplay {
+        let original = subject.originalSubject.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let cached = subjectDisplayCache[original] {
+            return cached
+        }
+        let name = subject.customName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? original
+            : subject.customName
+        let result = SubjectDisplay(
+            name: name,
+            colorHex: subject.colorHex,
+            color: Color(hex: subject.colorHex).pastel,
+            gradientEndColor: subject.gradientEndHex.map { Color(hex: $0).pastel }
+        )
+        subjectDisplayCache[original] = result
+        return result
+    }
+
     public func resolveSubjectDisplay(for lesson: Lesson) -> SubjectDisplay {
         let raw = lesson.subjectRaw.trimmingCharacters(in: .whitespacesAndNewlines)
         

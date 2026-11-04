@@ -195,7 +195,8 @@ public struct DrawingToolbarView: View {
         canPasteNote: Bool = false,
         onCopyNote: @escaping () -> Void = {},
         onPasteNote: @escaping () -> Void = {},
-        onAddImage: @escaping (NoteImageSource) -> Void = { _ in }
+        onAddImage: @escaping (NoteImageSource) -> Void = { _ in },
+        onDone: @escaping () -> Void = {}
     ) {
         _toolSelection = toolSelection
         _penWidth = penWidth
@@ -229,6 +230,7 @@ public struct DrawingToolbarView: View {
         self.onCopyNote = onCopyNote
         self.onPasteNote = onPasteNote
         self.onAddImage = onAddImage
+        self.onDone = onDone
     }
 
     public var body: some View {
