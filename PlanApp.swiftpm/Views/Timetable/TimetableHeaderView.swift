@@ -119,7 +119,10 @@ public struct TimetableHeaderView: View {
 
     @ViewBuilder
     private var viewModeMenuItems: some View {
-        ForEach(TimetableViewMode.allCases) { mode in
+        // „Noten & Punkte“ steht zwischen „Nur Notizen“ und dem Filter –
+        // und nur dann in der Liste, wenn das Modul in den Einstellungen
+        // aktiviert ist.
+        ForEach(TimetableViewMode.selectableModes(gradesModuleEnabled: viewModel.isGradesModuleEnabled)) { mode in
             Button {
                 Haptics.select()
                 viewModel.setViewMode(mode)
@@ -143,6 +146,31 @@ public struct TimetableHeaderView: View {
                 }
             } label: {
                 Label(tagFilterMenuTitle, systemImage: "line.3.horizontal.decrease")
+            }
+        }
+
+        // Im Modus „Noten & Punkte“ steht an der Stelle der Tag-Filter-
+        // Auswahl die Sortierung der Fächer.
+        if viewModel.viewMode == .gradesAndPoints {
+            Divider()
+            Menu {
+                ForEach(GradeSubjectSort.allCases) { sort in
+                    Button {
+                        Haptics.select()
+                        viewModel.gradeSubjectSort = sort
+                        if sort == .random {
+                            viewModel.gradeRandomSeed = UInt64.random(in: 1...UInt64.max)
+                        }
+                    } label: {
+                        if viewModel.gradeSubjectSort == sort {
+                            Label(sort.title, systemImage: "checkmark")
+                        } else {
+                            Text(sort.title)
+                        }
+                    }
+                }
+            } label: {
+                Label("Sortieren nach", systemImage: "arrow.up.arrow.down")
             }
         }
     }

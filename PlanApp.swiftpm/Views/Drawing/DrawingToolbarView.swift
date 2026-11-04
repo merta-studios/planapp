@@ -58,6 +58,10 @@ public struct DrawingToolbarView: View {
     public let onPasteNote: () -> Void
     /// „Bild hinzufügen“ (Datei / Fotos / Kamera) aus dem Mehr-Optionen-Menü.
     public let onAddImage: (NoteImageSource) -> Void
+    /// Schließt die Notiz und speichert sie. Der grüne „Fertig“-Knopf sitzt
+    /// ganz rechts in der Leiste – so endet jeder Arbeitsgang mit demselben,
+    /// sofort erkennbaren Ziel wie auf dem iPhone.
+    public var onDone: () -> Void = {}
 
     @State private var showThicknessSlider = false
     @State private var showBackgroundScalePanel = false
@@ -276,6 +280,8 @@ public struct DrawingToolbarView: View {
                 historyControls
                 toolbarDivider
                 moreOptionsButton
+                toolbarDivider
+                doneButton
             } else {
                 penControls
                 toolbarDivider
@@ -290,6 +296,8 @@ public struct DrawingToolbarView: View {
                 historyControls
                 toolbarDivider
                 moreOptionsButton
+                toolbarDivider
+                doneButton
             }
         }
         .padding(.horizontal, isCompactToolbar ? 8 : (isPhoneLayout ? 10 : 12))
@@ -1017,6 +1025,34 @@ public struct DrawingToolbarView: View {
             BackgroundScalePanel(scale: $backgroundScale, style: backgroundStyle)
                 .presentationCompactAdaptation(.popover)
         }
+    }
+
+    // MARK: - Fertig
+
+    /// Grüner „Fertig“-Knopf: schließt die Notiz und speichert sie.
+    ///
+    /// Bewusst als beschrifteter Knopf (nicht als Symbol) – er ist das Ende
+    /// jedes Arbeitsgangs und soll ohne Suchen gefunden werden.
+    private var doneButton: some View {
+        Button {
+            Haptics.success()
+            onDone()
+        } label: {
+            Text("Fertig")
+                .font(.system(size: (isCompactToolbar || isPhoneLayout) ? 13 : 15, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.horizontal, (isCompactToolbar || isPhoneLayout) ? 10 : 14)
+                .frame(height: buttonSize)
+                .background(
+                    RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous)
+                        .fill(Color.green)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: buttonCornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+        .accessibilityLabel("Fertig")
+        .accessibilityHint("Speichert die Notiz und schließt sie")
     }
 
     private var toolbarDivider: some View {

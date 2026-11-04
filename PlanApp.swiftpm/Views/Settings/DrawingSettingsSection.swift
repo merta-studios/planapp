@@ -30,6 +30,15 @@ public struct DrawingSettingsSection: View {
                     .foregroundColor(.primary)
             }
 
+            // iPhone: Die Zeichenfläche kennt kein Zoomen, Verschieben oder
+            // Größe-Ziehen mehr – sie ist immer so hoch wie nötig und so
+            // schmal wie das Gerät. Einstellbar ist dort genau eine Sache:
+            // die Schriftgröße der Handy-Notiz.
+            if isPhone {
+                phoneFontSizeCard
+            }
+
+            if !isPhone {
             // 1. STANDARD-DICKEN
             VStack(alignment: .leading, spacing: 14) {
                 if !isPhone {
@@ -328,6 +337,8 @@ public struct DrawingSettingsSection: View {
             .padding(DeviceLayout.settingsInnerPadding)
             .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
 
+            } // Ende: nur iPad-Einstellungen der Zeichenfläche
+
             // 6. AUTOMATISCHES AUFRÄUMEN & ALLES LÖSCHEN
             VStack(alignment: .leading, spacing: 12) {
                 Toggle(isOn: Binding(
@@ -390,6 +401,45 @@ public struct DrawingSettingsSection: View {
         } message: {
             Text("Möchtest du wirklich alle handschriftlichen Notizen und Textfelder zu sämtlichen Stunden unwiderruflich löschen?")
         }
+    }
+
+    // MARK: - iPhone-Schriftgröße
+
+    /// Die einzige Zeichenflächen-Einstellung auf dem iPhone: wie groß der
+    /// Text einer neuen Handy-Notiz startet.
+    private var phoneFontSizeCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "textformat.size")
+                    .font(.system(size: 14, weight: .regular, design: .default))
+                    .foregroundColor(.blue)
+                Text("Standard-Schriftgröße für Notizen")
+                    .font(.system(size: 14, weight: .regular, design: .default))
+                Spacer(minLength: 8)
+                Text("\(Int(draftSettings.defaultPhoneFontSize)) pt")
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+
+            Slider(
+                value: draftBinding(\.defaultPhoneFontSize),
+                in: NoteTextBox.minimumPhoneFontSize...NoteTextBox.maximumPhoneFontSize,
+                step: 1,
+                onEditingChanged: handleSliderEditingChanged
+            )
+
+            Text("Neue Notizen auf dem iPhone starten mit dieser Schriftgröße. Die Größe lässt sich in der Notiz jederzeit mit − und + ändern; passt der Text nicht mehr in die Höhe, wird die Schrift automatisch kleiner, bis er hineinpasst.")
+                .font(.system(size: 12, weight: .regular, design: .default))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("Beispieltext")
+                .font(.system(size: CGFloat(draftSettings.defaultPhoneFontSize), weight: .regular, design: .default))
+                .foregroundColor(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(DeviceLayout.settingsInnerPadding)
+        .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
     }
 
     // MARK: - Hilfselemente

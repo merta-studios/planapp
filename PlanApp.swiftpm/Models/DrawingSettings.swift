@@ -9,6 +9,11 @@ public struct DrawingSettings: Codable, Equatable {
     public var eraserWidth: Double           // Standard-Dicke Radierer
     public var defaultCanvasHeight: Double   // Standard-Höhe der Zeichenfläche beim Öffnen
     public var defaultTextFontSize: Double   // Standard-Schriftgröße neuer Textfelder
+    /// Standard-Schriftgröße einer **Handy-Notiz** (schlichter Fließtext auf
+    /// dem iPhone). Auf dem iPhone lässt sich nur dieser Wert in den
+    /// Einstellungen festlegen – Zeichenfläche, Zoom und Höhe gibt es dort
+    /// nicht mehr.
+    public var defaultPhoneFontSize: Double
     /// Schriftart aller Textfelder (Einstellungen → Zeichnen).
     public var textFontStyle: NoteTextFontStyle
     public var autoDeletePastNotes: Bool     // Notizen vergangener Stunden automatisch löschen
@@ -56,6 +61,7 @@ public struct DrawingSettings: Codable, Equatable {
         eraserWidth: Double = 24,
         defaultCanvasHeight: Double = 460,
         defaultTextFontSize: Double = NoteTextBox.defaultFontSize,
+        defaultPhoneFontSize: Double = NoteTextBox.defaultFontSize,
         textFontStyle: NoteTextFontStyle = .system,
         autoDeletePastNotes: Bool = false,
         defaultBackgroundStyle: NoteBackgroundStyle = .blank,
@@ -73,6 +79,7 @@ public struct DrawingSettings: Codable, Equatable {
         self.eraserWidth = eraserWidth
         self.defaultCanvasHeight = defaultCanvasHeight
         self.defaultTextFontSize = Self.clampedTextFontSize(defaultTextFontSize)
+        self.defaultPhoneFontSize = Self.clampedPhoneFontSize(defaultPhoneFontSize)
         self.textFontStyle = textFontStyle
         self.autoDeletePastNotes = autoDeletePastNotes
         self.defaultBackgroundStyle = defaultBackgroundStyle
@@ -88,6 +95,7 @@ public struct DrawingSettings: Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case penWidth, markerWidth, eraserWidth, defaultCanvasHeight, defaultTextFontSize, textFontStyle, autoDeletePastNotes
+        case defaultPhoneFontSize
         case defaultBackgroundStyle
         case penColorSlots, markerColorSlots
         case applePencilOnly, autoDeselectEraser
@@ -105,6 +113,11 @@ public struct DrawingSettings: Codable, Equatable {
         let decodedTextFontSize = try container.decodeIfPresent(Double.self, forKey: .defaultTextFontSize)
             ?? NoteTextBox.defaultFontSize
         self.defaultTextFontSize = Self.clampedTextFontSize(decodedTextFontSize)
+        // Ältere Speicherstände kennen die Handy-Schriftgröße noch nicht –
+        // sie startet dann mit dem Standardwert.
+        let decodedPhoneFontSize = try container.decodeIfPresent(Double.self, forKey: .defaultPhoneFontSize)
+            ?? NoteTextBox.defaultFontSize
+        self.defaultPhoneFontSize = Self.clampedPhoneFontSize(decodedPhoneFontSize)
         self.textFontStyle = try container.decodeIfPresent(NoteTextFontStyle.self, forKey: .textFontStyle) ?? .system
         self.autoDeletePastNotes = try container.decodeIfPresent(Bool.self, forKey: .autoDeletePastNotes) ?? false
         self.defaultBackgroundStyle = try container.decodeIfPresent(NoteBackgroundStyle.self, forKey: .defaultBackgroundStyle) ?? .blank
@@ -148,6 +161,7 @@ public struct DrawingSettings: Codable, Equatable {
         try container.encode(eraserWidth, forKey: .eraserWidth)
         try container.encode(defaultCanvasHeight, forKey: .defaultCanvasHeight)
         try container.encode(defaultTextFontSize, forKey: .defaultTextFontSize)
+        try container.encode(defaultPhoneFontSize, forKey: .defaultPhoneFontSize)
         try container.encode(textFontStyle, forKey: .textFontStyle)
         try container.encode(autoDeletePastNotes, forKey: .autoDeletePastNotes)
         try container.encode(defaultBackgroundStyle, forKey: .defaultBackgroundStyle)
@@ -159,6 +173,14 @@ public struct DrawingSettings: Codable, Equatable {
         try container.encode(defaultBackgroundScale, forKey: .defaultBackgroundScale)
         try container.encode(squeezeAction, forKey: .squeezeAction)
         try container.encode(doubleTapAction, forKey: .doubleTapAction)
+    }
+
+    private static func clampedPhoneFontSize(_ value: Double) -> Double {
+        guard value.isFinite else { return NoteTextBox.defaultFontSize }
+        return min(
+            max(NoteTextBox.minimumPhoneFontSize, value),
+            NoteTextBox.maximumPhoneFontSize
+        )
     }
 
     private static func clampedTextFontSize(_ value: Double) -> Double {

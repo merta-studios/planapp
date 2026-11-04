@@ -2,60 +2,68 @@ import Foundation
 import Combine
 import CryptoKit
 
-/// Konfiguration der Datei-Synchronisation über iCloud Drive.
+/// Konfiguration des Ordner-Syncs über iCloud Drive.
 ///
 /// Die App besitzt (Swift Playgrounds / Sideloadly) keine iCloud-Berechtigung
-/// und kann deshalb kein CloudKit nutzen. Stattdessen wählt man einmalig eine
-/// Textdatei in iCloud Drive (oder einen Ordner dafür) über die
-/// Dateien-Auswahl. iCloud Drive hält diese Datei auf allen Geräten aktuell;
-/// diese Klasse schreibt den lokalen Stand hinein und übernimmt fremde
-/// Stände – zusammengeführt, nicht überschrieben, sodass keine Daten
-/// verloren gehen.
+/// und kann kein CloudKit nutzen. Stattdessen wählt man einmalig **einen
+/// Ordner** in iCloud Drive; darin legt die App viele kleine Dateien an (siehe
+/// ``FolderSyncDocuments``). iCloud Drive hält diese Dateien auf allen Geräten
+/// aktuell – ohne dass zwei Geräte sich gegenseitig mit einer riesigen Datei
+/// überschreiben.
 public struct FileSyncConfiguration: Codable, Equatable {
     /// Ob die Synchronisation aktiv ist (Standard: aus).
     public var isEnabled: Bool
-    /// Sicherheits-B Bookmark (mit Zugriffsrecht) auf die Sync-Datei oder –
-    /// bei „neue Datei anlegen“ – auf den gewählten Ordner.
+    /// Sicherheits-Bookmark (mit Zugriffsrecht) auf den Sync-Ordner.
     public var locationBookmark: Data?
-    /// `true`, wenn das Bookmark einen Ordner (statt der Datei direkt) meint.
+    /// `true`, wenn das Bookmark einen Ordner meint (immer der Fall beim
+    /// Ordner-Sync; bleibt für alte Konfigurationen erhalten).
     public var locationIsDirectory: Bool
-    /// Dateiname der Sync-Datei.
+    /// Anzeigename des Ordners (nur für die Einstellungen).
     public var fileName: String
     /// Stabile Kennung dieses Geräts (für Diagnose-Zwecke).
     public var deviceID: String
-    /// Semantischer Hash des zuletzt synchronisierten Stands (ohne
-    /// Erstelldatum). Verhindert sinnlose Schreib-/Lese-Schleifen.
-    public var lastSyncedHash: String?
     /// Zeitpunkt der letzten erfolgreichen Synchronisation.
     public var lastSyncDate: Date?
     /// Gelöschte Notizen (Notiz-ID → Löschdatum). Ohne diese „Grabsteine“
-    /// würde eine anderswo noch vorhandene Notiz eine lokale Löschung beim
+    /// würde eine anderswo noch vorhandene Datei eine lokale Löschung beim
     /// Zusammenführen wieder auferstehen lassen.
     public var deletedNoteIDs: [String: Date]
+    /// Notiz-Schlüssel, die zuletzt im Ordner lagen. Fehlt einer davon später,
+    /// wurde er auf einem anderen Gerät gelöscht – das ist der einzige
+    /// verlässliche Weg, eine Löschung ohne Grabstein zu erkennen.
+    public var knownRemoteKeys: Set<String>
+    /// Ob der zuletzt benutzte Speicherort das alte Ein-Datei-Format war.
+    /// Solche Verknüpfungen werden beim nächsten Sync automatisch auf den
+    /// Ordner umgestellt (die alte Datei bleibt unangetastet).
+    public var usesLegacyFile: Bool
 
     public init(
         isEnabled: Bool = false,
         locationBookmark: Data? = nil,
         locationIsDirectory: Bool = false,
-        fileName: String = FileSyncService.defaultFileName,
+        fileName: String = FileSyncService.defaultFolderName,
         deviceID: String = UUID().uuidString,
-        lastSyncedHash: String? = nil,
         lastSyncDate: Date? = nil,
-        deletedNoteIDs: [String: Date] = [:]
+        deletedNoteIDs: [String: Date] = [:],
+        knownRemoteKeys: Set<String> = [],
+        usesLegacyFile: Bool = false
     ) {
         self.isEnabled = isEnabled
         self.locationBookmark = locationBookmark
         self.locationIsDirectory = locationIsDirectory
         self.fileName = fileName
         self.deviceID = deviceID
-        self.lastSyncedHash = lastSyncedHash
         self.lastSyncDate = lastSyncDate
         self.deletedNoteIDs = deletedNoteIDs
+        self.knownRemoteKeys = knownRemoteKeys
+        self.usesLegacyFile = usesLegacyFile
     }
 
     private enum CodingKeys: String, CodingKey {
         case isEnabled, locationBookmark, locationIsDirectory, fileName
-        case deviceID, lastSyncedHash, lastSyncDate, deletedNoteIDs
+        case deviceID, lastSyncDate, deletedNoteIDs, knownRemoteKeys, usesLegacyFile
+        // Alte Schlüssel – werden nur noch gelesen, nie geschrieben.
+        case lastSyncedHash
     }
 
     public init(from decoder: Decoder) throws {
@@ -63,11 +71,30 @@ public struct FileSyncConfiguration: Codable, Equatable {
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false
         locationBookmark = try container.decodeIfPresent(Data.self, forKey: .locationBookmark)
         locationIsDirectory = try container.decodeIfPresent(Bool.self, forKey: .locationIsDirectory) ?? false
-        fileName = try container.decodeIfPresent(String.self, forKey: .fileName) ?? FileSyncService.defaultFileName
+        fileName = try container.decodeIfPresent(String.self, forKey: .fileName) ?? FileSyncService.defaultFolderName
         deviceID = try container.decodeIfPresent(String.self, forKey: .deviceID) ?? UUID().uuidString
-        lastSyncedHash = try container.decodeIfPresent(String.self, forKey: .lastSyncedHash)
         lastSyncDate = try container.decodeIfPresent(Date.self, forKey: .lastSyncDate)
         deletedNoteIDs = try container.decodeIfPresent([String: Date].self, forKey: .deletedNoteIDs) ?? [:]
+        knownRemoteKeys = try container.decodeIfPresent(Set<String>.self, forKey: .knownRemoteKeys) ?? []
+        usesLegacyFile = try container.decodeIfPresent(Bool.self, forKey: .usesLegacyFile) ?? false
+        // Ein alter Stand ohne `knownRemoteKeys` und ohne `usesLegacyFile`, der
+        // eine Datei statt eines Ordners meint, stammt aus dem Ein-Datei-Sync.
+        if !locationIsDirectory, locationBookmark != nil {
+            usesLegacyFile = true
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(isEnabled, forKey: .isEnabled)
+        try container.encodeIfPresent(locationBookmark, forKey: .locationBookmark)
+        try container.encode(locationIsDirectory, forKey: .locationIsDirectory)
+        try container.encode(fileName, forKey: .fileName)
+        try container.encode(deviceID, forKey: .deviceID)
+        try container.encodeIfPresent(lastSyncDate, forKey: .lastSyncDate)
+        try container.encode(deletedNoteIDs, forKey: .deletedNoteIDs)
+        try container.encode(knownRemoteKeys, forKey: .knownRemoteKeys)
+        try container.encode(usesLegacyFile, forKey: .usesLegacyFile)
     }
 }
 
@@ -96,7 +123,7 @@ public struct FileSyncSafetyBackup: Codable, Identifiable, Equatable {
     }
 }
 
-/// Ergebnis des Verknüpfens mit einer Sync-Datei.
+/// Ergebnis des Verknüpfens mit einem Sync-Ordner.
 public enum FileSyncLinkOutcome {
     /// Verknüpft und aktiv – mit Beschreibung dessen, was übernommen wurde.
     case linked(message: String)
@@ -104,100 +131,39 @@ public enum FileSyncLinkOutcome {
     case failed(message: String)
 }
 
-/// Reine Zusammenführungs-Logik zweier Sicherungen (lokal + Datei).
+/// Ordner-Synchronisation über iCloud Drive.
 ///
-/// *Notizen* werden pro Notiz zusammengeführt (neuer gewinnt, beide Seiten
-/// bleiben erhalten); alles andere (Stundenplan, Einstellungen, Tags, …)
-/// übernimmt den neueren Gesamtstand. Gelöschte Notizen (Grabsteine) stehen
-/// nicht wieder auf – außer sie wurden nach dem Löschen anderswo bearbeitet,
-/// dann gewinnt die Bearbeitung (kein Datenverlust).
-public enum FileSyncMerge {
-    public static func merge(
-        local: AppBackup,
-        remote: AppBackup,
-        deletedNoteIDs: [String: Date]
-    ) -> AppBackup {
-        let remoteIsNewer = remote.createdAt > local.createdAt
-
-        var notesByID: [String: LessonNote] = [:]
-        for note in local.notes {
-            notesByID[note.id] = note
-        }
-        for note in remote.notes {
-            if let existing = notesByID[note.id] {
-                notesByID[note.id] = note.updatedAt > existing.updatedAt ? note : existing
-            } else {
-                notesByID[note.id] = note
-            }
-        }
-        // Grabsteine anwenden: Eine Notiz, die nach ihrer letzten Änderung
-        // gelöscht wurde, bleibt gelöscht.
-        let mergedNotes = notesByID.values.filter { note in
-            guard let deletedAt = deletedNoteIDs[note.id] else { return true }
-            return note.updatedAt > deletedAt
-        }
-
-        let base = remoteIsNewer ? remote : local
-        return AppBackup(
-            createdAt: Date(),
-            credentials: base.credentials,
-            subjectCustomizations: base.subjectCustomizations,
-            teacherNameCustomizations: base.teacherNameCustomizations,
-            displaySettings: base.displaySettings,
-            drawingSettings: base.drawingSettings,
-            periods: base.periods,
-            lessons: base.lessons,
-            notes: mergedNotes.sorted { $0.id < $1.id },
-            viewMode: base.viewMode,
-            appearance: base.appearance,
-            tagSettings: base.tagSettings
-        )
-    }
-
-    /// Stabiler Hash über den *inhaltlichen* Stand (ohne Erstelldatum).
-    /// Zwei Sicherungen mit gleichem Hash sind inhaltlich identisch – egal
-    /// auf welchem Gerät und wann sie erzeugt wurden.
-    public static func semanticHash(_ backup: AppBackup) -> String {
-        var copy = backup
-        copy.createdAt = Date(timeIntervalSince1970: 0)
-        copy.notes.sort { $0.id < $1.id }
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(copy) else { return UUID().uuidString }
-        let digest = SHA256.hash(data: data)
-        return digest.map { String(format: "%02x", $0) }.joined()
-    }
-
-    public static func backupsSemanticallyEqual(_ lhs: AppBackup, _ rhs: AppBackup) -> Bool {
-        semanticHash(lhs) == semanticHash(rhs)
-    }
-}
-
-/// Datei-Synchronisation über eine vom Nutzer gewählte Textdatei in
-/// iCloud Drive.
+/// **Warum Ordner statt einer Datei?** (Antwort auf den Absturz mit großen
+/// Textdateien und die ständigen gegenseitigen Überschreibungen)
 ///
-/// Robustheit im Überblick:
-/// - Es wird nie blind überschrieben: Fremde Stände werden **zusammengeführt**.
-/// - Vor jeder Übernahme wird der lokale Stand als Sicherheitskopie behalten.
-/// - Ungültige oder fremde Datei-Inhalte werden nie übernommen und nie
-///   stillschweigend überschrieben.
-/// - Verschwindet die Datei, wird sie aus dem lokalen Stand neu erstellt.
-/// - Zugriffsprobleme melden sich als Fehler; lokale Daten bleiben immer unangetastet.
+/// * Eine einzige Textdatei wächst mit jedem Vorschaubild auf mehrere Megabyte.
+///   Beim Schreiben muss sie komplett neu entstehen – bei jedem Gerät und
+///   jeder kleinen Änderung. Zwei Geräte, die das gleichzeitig tun,
+///   überschreiben sich gegenseitig.
+/// * Der Ordner enthält **eine Datei pro Notiz** plus ein kleines
+///   `settings.json`. Geschrieben wird nur, was sich geändert hat. iCloud lädt
+///   beim anderen Gerät nur diese eine Datei.
+/// * Jede Datei trägt ihren eigenen Zeitstempel. Beim Zusammenführen gewinnt
+///   pro Notiz der neuere Stand – ein Konflikt betrifft höchstens eine Notiz,
+///   niemals den gesamten Bestand.
+/// * Löschungen werden über Grabsteine und die Liste der zuletzt im Ordner
+///   gesehenen Dateien erkannt, damit nichts „wieder aufersteht“.
+///
+/// So arbeiten auch professionelle Notiz-Apps (ein Dokument pro Notiz,
+/// dateiweiser Abgleich) – genau deshalb ist die Kopie des Ordners per Hand
+/// ebenfalls einfach: Es ist ein normaler Ordner mit lesbaren Dateien.
 @MainActor
 public final class FileSyncService: ObservableObject {
-    // Diese Konstanten sind bewusst `nonisolated`: Sie werden auch aus
-    // nicht-isolierten Zusammenhängen gelesen (Standardwerte im Decoder von
-    // `FileSyncConfiguration` und der Speicher-Service). Ohne das wären sie
-    // im Swift-6-Sprachmodus von Swift Playgrounds nicht erreichbar.
-    nonisolated public static let defaultFileName = "PlanApp-Sync.txt"
+    nonisolated public static let defaultFolderName = "PlanApp-Sync"
     nonisolated public static let maximumSafetyBackups = 3
     /// Wartezeit nach der letzten lokalen Änderung, bevor geschrieben wird.
-    nonisolated public static let pushDebounceInterval: TimeInterval = 2.5
-    /// Wie oft die Datei auf fremde Änderungen geprüft wird.
-    nonisolated public static let pullInterval: TimeInterval = 15
+    nonisolated public static let pushDebounceInterval: TimeInterval = 1.2
+    /// Wie oft der Ordner auf fremde Änderungen geprüft wird. Kurz, weil das
+    /// Lesen nur die Metadaten der kleinen Dateien braucht.
+    nonisolated public static let pullInterval: TimeInterval = 6
     /// Grabsteine älter als 30 Tage werden entsorgt.
     nonisolated private static let tombstoneLifetime: TimeInterval = 30 * 24 * 3600
+    private static let notesSubdirectory = "notes"
 
     @Published public private(set) var configuration = FileSyncConfiguration()
     /// Kurze Erfolgs-/Statusmeldung für die Einstellungen.
@@ -207,6 +173,8 @@ public final class FileSyncService: ObservableObject {
     /// Ob gerade gelesen oder geschrieben wird.
     @Published public private(set) var isWorking = false
     @Published public private(set) var safetyBackups: [FileSyncSafetyBackup] = []
+    /// Anzahl der Notiz-Dateien im Ordner (für die Anzeige).
+    @Published public private(set) var remoteNoteCount: Int = 0
 
     /// Erzeugt die aktuelle lokale Sicherung (vom ViewModel gesetzt).
     public var makeLocalBackup: (() -> AppBackup?)?
@@ -215,8 +183,10 @@ public final class FileSyncService: ObservableObject {
 
     public var isEnabled: Bool { configuration.isEnabled }
 
+    /// Anzeigename des Sync-Ordners.
     public var syncFileDisplayName: String {
-        configuration.fileName.isEmpty ? Self.defaultFileName : configuration.fileName
+        let name = configuration.fileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? Self.defaultFolderName : name
     }
 
     public var lastSyncDescription: String? {
@@ -228,11 +198,28 @@ public final class FileSyncService: ObservableObject {
         return formatter.string(from: date)
     }
 
+    /// Zeitmarke des Einstellungs-Dokuments. Sie ändert sich nur, wenn sich
+    /// Stundenplan/Einstellungen ändern – nicht bei jedem Notizstrich.
+    private var settingsUpdatedAt: Date {
+        get {
+            if let stored = UserDefaults.standard.object(forKey: Self.settingsTimestampKey) as? Double {
+                return Date(timeIntervalSince1970: stored)
+            }
+            return .distantPast
+        }
+        set {
+            UserDefaults.standard.set(newValue.timeIntervalSince1970, forKey: Self.settingsTimestampKey)
+        }
+    }
+    private static let settingsTimestampKey = "planapp_folder_sync_settings_updated_at"
+
     private let storage = TimetableStorageService.shared
     private var pullTimer: AnyCancellable? = nil
     private var pushWorkItem: DispatchWorkItem? = nil
     private var hasUnpushedLocalChanges = false
     private var statusClearWorkItem: DispatchWorkItem? = nil
+    /// Verhindert, dass Push und Pull gleichzeitig laufen.
+    private var isSyncing = false
 
     public init() {
         self.configuration = storage.loadFileSyncConfiguration()
@@ -243,7 +230,7 @@ public final class FileSyncService: ObservableObject {
             storage.saveFileSyncConfiguration(configuration)
         }
         self.safetyBackups = storage.loadFileSyncSafetyBackups()
-        if configuration.isEnabled {
+        if configuration.isEnabled, !configuration.usesLegacyFile {
             startTimers()
         }
     }
@@ -269,24 +256,31 @@ public final class FileSyncService: ObservableObject {
     }
 
     private func saveConfiguration() {
-        pruneTombstones()
+        configuration.deletedNoteIDs = FolderSyncRules.prunedTombstones(
+            configuration.deletedNoteIDs,
+            lifetime: Self.tombstoneLifetime
+        )
         storage.saveFileSyncConfiguration(configuration)
-    }
-
-    private func pruneTombstones() {
-        let cutoff = Date().addingTimeInterval(-Self.tombstoneLifetime)
-        configuration.deletedNoteIDs = configuration.deletedNoteIDs.filter { $0.value > cutoff }
     }
 
     // MARK: - Lokale Änderungen melden
 
     /// Das ViewModel ruft das nach jeder lokalen Datenänderung auf. Der
     /// Schreibvorgang läuft entprellt, damit z. B. schnelles Notieren nicht
-    /// bei jedem Strich in die Datei schreibt.
+    /// bei jedem Strich in den Ordner schreibt.
     public func markLocalDirty() {
         guard configuration.isEnabled else { return }
         hasUnpushedLocalChanges = true
         schedulePush()
+    }
+
+    /// Meldet, dass sich Stundenplan/Einstellungen geändert haben. Nur dann
+    /// bekommt `settings.json` eine neue Zeitmarke – Notizänderungen lassen
+    /// das Einstellungs-Dokument unberührt.
+    public func markSettingsChanged() {
+        guard configuration.isEnabled else { return }
+        settingsUpdatedAt = Date()
+        markLocalDirty()
     }
 
     private func schedulePush() {
@@ -302,12 +296,12 @@ public final class FileSyncService: ObservableObject {
 
     // MARK: - Verknüpfen & Trennen
 
-    /// Legt eine neue Sync-Datei im gewählten Ordner an und aktiviert die
-    /// Synchronisation. Der Ordner muss in iCloud Drive liegen.
+    /// Legt den Sync-Ordner im gewählten Ordner an (bzw. benutzt ihn) und
+    /// aktiviert die Synchronisation. Der Ordner muss in iCloud Drive liegen.
     public func linkNewFile(in folderURL: URL) async -> FileSyncLinkOutcome {
         clearMessages()
         guard Self.isICloudDriveURL(folderURL) else {
-            return .failed(message: "Bitte wähle einen Ordner in iCloud Drive (z. B. unter „iCloud Drive“ in der Dateien-App), damit alle Geräte dieselbe Datei sehen.")
+            return .failed(message: "Bitte wähle einen Ordner in iCloud Drive (z. B. unter „iCloud Drive“ in der Dateien-App), damit alle Geräte dieselben Dateien sehen.")
         }
         guard let local = makeLocalBackup?() else {
             return .failed(message: "Die lokalen Daten konnten nicht gelesen werden.")
@@ -323,38 +317,80 @@ public final class FileSyncService: ObservableObject {
                 return .failed(message: "Auf diesen Ordner konnte kein dauerhafter Zugriff gespeichert werden. Bitte wähle ihn erneut.")
             }
 
-            let fileName = try await uniqueFileName(in: folderURL, base: Self.defaultFileName)
-            let fileURL = folderURL.appendingPathComponent(fileName)
-            let text = try AppBackupCodec.encode(local)
-            try await writeText(text, to: fileURL)
+            // Neuen Unterordner anlegen, damit ein bereits vorhandener
+            // Sync-Ordner nicht ungefragt überschrieben wird.
+            let manager = FileManager.default
+            let baseName = Self.defaultFolderName
+            var candidate = folderURL.appendingPathComponent(baseName, isDirectory: true)
+            var counter = 2
+            while manager.fileExists(atPath: candidate.path) {
+                candidate = folderURL.appendingPathComponent("\(baseName) \(counter)", isDirectory: true)
+                counter += 1
+                if counter > 50 { break }
+            }
+            try manager.createDirectory(at: candidate, withIntermediateDirectories: true)
+            try manager.createDirectory(
+                at: candidate.appendingPathComponent(Self.notesSubdirectory, isDirectory: true),
+                withIntermediateDirectories: true
+            )
 
-            configuration.isEnabled = true
-            configuration.locationBookmark = bookmark
-            configuration.locationIsDirectory = true
-            configuration.fileName = fileName
-            configuration.lastSyncedHash = FileSyncMerge.semanticHash(local)
+            activation(at: candidate, name: candidate.lastPathComponent)
+            await writeLocalDocuments(local)
             configuration.lastSyncDate = Date()
-            hasUnpushedLocalChanges = false
             saveConfiguration()
-            startTimers()
 
-            let message = "Sync-Datei „\(fileName)“ in iCloud Drive angelegt und aktiviert."
+            let message = "Sync-Ordner „\(candidate.lastPathComponent)“ in iCloud Drive angelegt und aktiviert."
             showStatus(message)
             return .linked(message: message)
         } catch {
-            return .failed(message: "Die Datei konnte nicht angelegt werden: \(error.localizedDescription)")
+            return .failed(message: "Der Ordner konnte nicht angelegt werden: \(error.localizedDescription)")
         }
     }
 
-    /// Verknüpft eine bestehende Sync-Datei und aktiviert die Synchronisation.
-    /// Leere Dateien werden mit dem lokalen Stand initialisiert; gültige
-    /// Sicherungen werden mit dem lokalen Stand **zusammengeführt**. Fremde
-    /// Inhalte werden nie angerührt.
-    public func linkExistingFile(at fileURL: URL) async -> FileSyncLinkOutcome {
+    /// Verknüpft einen bestehenden Sync-Ordner und führt ihn mit dem lokalen
+    /// Stand zusammen. Es wird nichts überschrieben; pro Notiz gewinnt der
+    /// neuere Stand, Sicherheitskopie inklusive.
+    public func linkExistingFolder(at folderURL: URL) async -> FileSyncLinkOutcome {
         clearMessages()
-        guard Self.isICloudDriveURL(fileURL) else {
-            return .failed(message: "Bitte wähle eine Textdatei in iCloud Drive (z. B. unter „iCloud Drive“ in der Dateien-App), damit alle Geräte dieselbe Datei sehen.")
+        guard Self.isICloudDriveURL(folderURL) else {
+            return .failed(message: "Bitte wähle den Sync-Ordner in iCloud Drive (z. B. unter „iCloud Drive“ in der Dateien-App), damit alle Geräte dieselben Dateien sehen.")
         }
+        guard makeLocalBackup?() != nil else {
+            return .failed(message: "Die lokalen Daten konnten nicht gelesen werden.")
+        }
+        isWorking = true
+        defer { isWorking = false }
+
+        let accessing = folderURL.startAccessingSecurityScopedResource()
+        defer { if accessing { folderURL.stopAccessingSecurityScopedResource() } }
+
+        do {
+            guard let bookmark = try? folderURL.bookmarkData() else {
+                return .failed(message: "Auf diesen Ordner konnte kein dauerhafter Zugriff gespeichert werden. Bitte wähle ihn erneut.")
+            }
+            let manager = FileManager.default
+            try manager.createDirectory(
+                at: folderURL.appendingPathComponent(Self.notesSubdirectory, isDirectory: true),
+                withIntermediateDirectories: true
+            )
+            activation(at: folderURL, name: folderURL.lastPathComponent)
+            let before = configuration.knownRemoteKeys.count
+            await synchronize(forcePull: true)
+            let message = before == 0
+                ? "Sync-Ordner „\(folderURL.lastPathComponent)“ verbunden und mit deinen Daten gefüllt."
+                : "Sync-Ordner „\(folderURL.lastPathComponent)“ verbunden und zusammengeführt. Es geht nichts verloren."
+            showStatus(message)
+            return .linked(message: message)
+        } catch {
+            return .failed(message: "Der Ordner konnte nicht gelesen werden: \(error.localizedDescription)")
+        }
+    }
+
+    /// Übernimmt einen Ordner aus dem **alten** Ein-Datei-Sync: Der Ordner
+    /// wird umgestellt und die alte Datei dabei einmalig eingelesen, damit
+    /// nichts verloren geht.
+    public func migrateLegacyFile(at fileURL: URL) async -> FileSyncLinkOutcome {
+        clearMessages()
         guard let local = makeLocalBackup?() else {
             return .failed(message: "Die lokalen Daten konnten nicht gelesen werden.")
         }
@@ -364,84 +400,66 @@ public final class FileSyncService: ObservableObject {
         let accessing = fileURL.startAccessingSecurityScopedResource()
         defer { if accessing { fileURL.stopAccessingSecurityScopedResource() } }
 
-        do {
-            guard let bookmark = try? fileURL.bookmarkData() else {
-                return .failed(message: "Auf diese Datei konnte kein dauerhafter Zugriff gespeichert werden. Bitte wähle sie erneut.")
+        let existingText = try? String(contentsOf: fileURL, encoding: .utf8)
+        if let text = existingText,
+               AppBackupCodec.looksLikeBackup(text),
+               let legacy = try? AppBackupCodec.decode(text) {
+            // Alten Stand einmalig übernehmen – pro Notiz der neuere.
+            var notes = Dictionary(uniqueKeysWithValues: local.notes.map { ($0.id, $0) })
+            for note in legacy.notes where note.hasVisibleContent {
+                if let existing = notes[note.id] {
+                    if note.updatedAt > existing.updatedAt {
+                        notes[note.id] = note
+                    }
+                } else {
+                    notes[note.id] = note
+                }
             }
-
-            let existingText = try await readText(from: fileURL)
-            let trimmed = (existingText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-
-            if trimmed.isEmpty {
-                // Leere Datei: mit dem lokalen Stand initialisieren.
-                let text = try AppBackupCodec.encode(local)
-                try await writeText(text, to: fileURL)
-                activateWithBookmark(
-                    bookmark,
-                    isDirectory: false,
-                    fileName: fileURL.lastPathComponent,
-                    syncedHash: FileSyncMerge.semanticHash(local)
-                )
-                let message = "Datei war leer und wurde mit deinen aktuellen Daten gefüllt. Synchronisation ist aktiv."
-                showStatus(message)
-                return .linked(message: message)
-            }
-
-            guard AppBackupCodec.looksLikeBackup(trimmed) else {
-                return .failed(message: "Diese Datei enthält keine PlanApp-Sicherung und wurde nicht verändert. Bitte wähle die Sync-Datei („\(Self.defaultFileName)“) oder lege eine neue an.")
-            }
-            guard let remote = try? AppBackupCodec.decode(trimmed) else {
-                return .failed(message: "Diese Datei konnte nicht gelesen werden (evtl. unvollständig synchronisiert). Bitte warte kurz, bis iCloud Drive sie vollständig geladen hat, und versuche es erneut.")
-            }
-
-            // Zusammenführen statt überschreiben – mit Sicherheitskopie.
-            let merged = FileSyncMerge.merge(
-                local: local,
-                remote: remote,
-                deletedNoteIDs: configuration.deletedNoteIDs
+            let merged = AppBackup(
+                createdAt: Date(),
+                credentials: legacy.createdAt > local.createdAt ? legacy.credentials : local.credentials,
+                subjectCustomizations: legacy.createdAt > local.createdAt ? legacy.subjectCustomizations : local.subjectCustomizations,
+                teacherNameCustomizations: legacy.createdAt > local.createdAt ? legacy.teacherNameCustomizations : local.teacherNameCustomizations,
+                displaySettings: legacy.createdAt > local.createdAt ? legacy.displaySettings : local.displaySettings,
+                drawingSettings: legacy.createdAt > local.createdAt ? legacy.drawingSettings : local.drawingSettings,
+                periods: legacy.createdAt > local.createdAt ? legacy.periods : local.periods,
+                lessons: legacy.createdAt > local.createdAt ? legacy.lessons : local.lessons,
+                notes: Array(notes.values).sorted { $0.id < $1.id },
+                viewMode: legacy.createdAt > local.createdAt ? legacy.viewMode : local.viewMode,
+                appearance: legacy.createdAt > local.createdAt ? legacy.appearance : local.appearance,
+                tagSettings: legacy.createdAt > local.createdAt ? legacy.tagSettings : local.tagSettings,
+                gradeSettings: legacy.createdAt > local.createdAt ? legacy.gradeSettings : local.gradeSettings,
+                gradeBook: legacy.createdAt > local.createdAt ? legacy.gradeBook : local.gradeBook
             )
             storeSafetyBackup(for: local)
-            let mergedText = try AppBackupCodec.encode(merged)
-            try await writeText(mergedText, to: fileURL)
             applyBackup?(merged)
-            pruneTombstonesAgainstMergedNotes(merged.notes)
-            activateWithBookmark(
-                bookmark,
-                isDirectory: false,
-                fileName: fileURL.lastPathComponent,
-                syncedHash: FileSyncMerge.semanticHash(merged)
-            )
-
-            let localNotes = local.notes.filter(\.hasVisibleContent).count
-            let remoteNotes = remote.notes.filter(\.hasVisibleContent).count
-            let mergedNotes = merged.notes.filter(\.hasVisibleContent).count
-            let message = "Verbunden und zusammengeführt: \(localNotes) eigene + \(remoteNotes) aus der Datei = \(mergedNotes) Notizen. Es geht nichts verloren."
-            showStatus(message)
-            return .linked(message: message)
-        } catch {
-            return .failed(message: "Die Datei konnte nicht gelesen werden: \(error.localizedDescription)")
         }
+
+        // Ordner neben der alten Datei anlegen und dort weitermachen.
+        let parent = fileURL.deletingLastPathComponent()
+        return await linkNewFile(in: parent)
     }
 
-    private func activateWithBookmark(
-        _ bookmark: Data,
-        isDirectory: Bool,
-        fileName: String,
-        syncedHash: String
-    ) {
+    private func activation(at folderURL: URL, name: String) {
         configuration.isEnabled = true
-        configuration.locationBookmark = bookmark
-        configuration.locationIsDirectory = isDirectory
-        configuration.fileName = fileName
-        configuration.lastSyncedHash = syncedHash
+        configuration.locationIsDirectory = true
+        configuration.fileName = name
+        configuration.usesLegacyFile = false
         configuration.lastSyncDate = Date()
+        settingsUpdatedAt = Date()
         hasUnpushedLocalChanges = false
         errorMessage = nil
+        persistBookmark(for: folderURL)
         saveConfiguration()
         startTimers()
     }
 
-    /// Trennt die Verknüpfung. Lokale Daten und die Datei bleiben erhalten –
+    private func persistBookmark(for folderURL: URL) {
+        guard let bookmark = try? folderURL.bookmarkData() else { return }
+        configuration.locationBookmark = bookmark
+    }
+
+    /// Trennt die Verknüpfung. Lokale Daten und der Ordner bleiben erhalten –
     /// es wird danach nur nicht mehr automatisch synchronisiert.
     public func unlink() {
         stopTimers()
@@ -449,135 +467,136 @@ public final class FileSyncService: ObservableObject {
         pushWorkItem = nil
         configuration.isEnabled = false
         configuration.locationBookmark = nil
-        configuration.lastSyncedHash = nil
         configuration.lastSyncDate = nil
+        configuration.knownRemoteKeys = []
+        configuration.usesLegacyFile = false
         hasUnpushedLocalChanges = false
         saveConfiguration()
-        showStatus("Synchronisation getrennt. Deine Daten und die Datei bleiben erhalten.")
+        showStatus("Synchronisation getrennt. Deine Daten und die Dateien im Ordner bleiben erhalten.")
     }
 
     // MARK: - Schreiben (Push)
 
-    /// Schreibt den lokalen Stand in die Datei – aber nur, wenn er sich
-    /// inhaltlich vom zuletzt synchronisierten Stand unterscheidet.
+    /// Schreibt den lokalen Stand in den Ordner – aber nur die Dateien, die
+    /// sich geändert haben.
     public func pushNow() async {
-        guard configuration.isEnabled, !isWorking else { return }
+        guard configuration.isEnabled, !isWorking, !isSyncing else { return }
         guard hasUnpushedLocalChanges else { return }
-        guard let local = makeLocalBackup?() else { return }
-
-        let hash = FileSyncMerge.semanticHash(local)
-        if hash == configuration.lastSyncedHash {
-            hasUnpushedLocalChanges = false
-            return
-        }
-
-        isWorking = true
-        defer { isWorking = false }
-        do {
-            let fileURL = try resolveSyncFileURL(allowingDirectory: true)
-            let accessing = fileURL.base.startAccessingSecurityScopedResource()
-            defer { if accessing { fileURL.base.stopAccessingSecurityScopedResource() } }
-            let text = try AppBackupCodec.encode(local)
-            try await writeText(text, to: fileURL.file)
-            configuration.lastSyncedHash = hash
-            configuration.lastSyncDate = Date()
-            hasUnpushedLocalChanges = false
-            errorMessage = nil
-            saveConfiguration()
-        } catch let error as FileSyncAccessError {
-            handleAccessError(error)
-        } catch {
-            errorMessage = "Schreiben fehlgeschlagen: \(error.localizedDescription)"
-        }
+        await synchronize(forcePull: false)
     }
 
     // MARK: - Lesen (Pull)
 
-    /// Holt den Stand aus der Datei und führt ihn mit dem lokalen Stand
-    /// zusammen. Wird regelmäßig automatisch sowie beim Öffnen der App
-    /// aufgerufen.
+    /// Liest den Ordner und führt ihn mit dem lokalen Stand zusammen.
     public func pullNow() async {
-        guard configuration.isEnabled, !isWorking else { return }
+        guard configuration.isEnabled, !isWorking, !isSyncing else { return }
+        await synchronize(forcePull: true)
+    }
+
+    // MARK: - Der eigentliche Abgleich
+
+    /// Ein vollständiger Durchlauf: Ordner lesen, zusammenführen, Änderungen
+    /// in beide Richtungen schreiben.
+    private func synchronize(forcePull: Bool) async {
+        guard configuration.isEnabled, !isSyncing else { return }
         guard let local = makeLocalBackup?() else { return }
 
+        isSyncing = true
         isWorking = true
-        defer { isWorking = false }
+        defer {
+            isSyncing = false
+            isWorking = false
+        }
+
         do {
-            let fileURL = try resolveSyncFileURL(allowingDirectory: true)
-            let accessing = fileURL.base.startAccessingSecurityScopedResource()
-            defer { if accessing { fileURL.base.stopAccessingSecurityScopedResource() } }
+            let folder = try resolveSyncFolder()
+            let accessing = folder.startAccessingSecurityScopedResource()
+            defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
 
-            resolveVersionConflictsIfNeeded(at: fileURL.file)
-
-            guard let text = try await readText(from: fileURL.file) else {
-                // Datei verschwunden (gelöscht/verschoben): aus dem lokalen
-                // Stand neu erstellen – nichts geht verloren.
-                let fresh = try AppBackupCodec.encode(local)
-                try await writeText(fresh, to: fileURL.file)
-                configuration.lastSyncedHash = FileSyncMerge.semanticHash(local)
-                configuration.lastSyncDate = Date()
-                hasUnpushedLocalChanges = false
-                errorMessage = nil
-                saveConfiguration()
-                return
-            }
-
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return }
-            guard AppBackupCodec.looksLikeBackup(trimmed),
-                  let remote = try? AppBackupCodec.decode(trimmed) else {
-                // Fremder/ungültiger Inhalt: Datei in Ruhe lassen, lokalen
-                // Stand behalten und nur melden.
-                errorMessage = "Die Sync-Datei enthält zurzeit keine gültige Sicherung und wurde nicht übernommen. Sie wird beim nächsten Schreiben repariert."
-                return
-            }
-
-            let remoteHash = FileSyncMerge.semanticHash(remote)
-            if remoteHash == configuration.lastSyncedHash {
-                // Kein fremder Stand – aber evtl. eigene, noch ungesendete
-                // Änderungen nachholen.
-                errorMessage = nil
-                if hasUnpushedLocalChanges {
-                    let localHash = FileSyncMerge.semanticHash(local)
-                    if localHash != configuration.lastSyncedHash {
-                        let fresh = try AppBackupCodec.encode(local)
-                        try await writeText(fresh, to: fileURL.file)
-                        configuration.lastSyncedHash = localHash
-                        configuration.lastSyncDate = Date()
-                        hasUnpushedLocalChanges = false
-                        saveConfiguration()
-                    } else {
-                        hasUnpushedLocalChanges = false
-                    }
-                }
-                return
-            }
-
-            // Fremder Stand vorhanden → zusammenführen, Sicherheitskopie
-            // anlegen, übernehmen und zurückschreiben (damit alle Geräte
-            // konvergieren).
-            let merged = FileSyncMerge.merge(
-                local: local,
-                remote: remote,
-                deletedNoteIDs: configuration.deletedNoteIDs
+            let remote = try readRemoteDocuments(from: folder)
+            let localDocuments = FolderSyncDocuments.documents(
+                from: local,
+                settingsUpdatedAt: settingsUpdatedAt
             )
-            let mergedHash = FileSyncMerge.semanticHash(merged)
-            let localHash = FileSyncMerge.semanticHash(local)
-            if mergedHash == localHash {
-                // Die Zusammenführung ändert lokal nichts (z. B. nur ältere
-                // Stände) – dann nur den Hash merken.
-                configuration.lastSyncedHash = mergedHash
-                configuration.lastSyncDate = Date()
-                saveConfiguration()
-                return
+            let localByKey = Dictionary(uniqueKeysWithValues: localDocuments.map { ($0.key, $0) })
+
+            // Notiz-Dateien, die im Ordner liegen (ohne Einstellungs-Dokument).
+            let remoteByKey = remote.filter { !$0.value.isSettings }
+
+            let plan = FolderSyncRules.merge(
+                local: localByKey,
+                remote: remoteByKey,
+                tombstones: configuration.deletedNoteIDs,
+                remoteKnownKeys: configuration.knownRemoteKeys,
+                lastSyncDate: configuration.lastSyncDate
+            )
+
+            // 1) Fremde Stände übernehmen (mit Sicherheitskopie).
+            if plan.changesLocalState {
+                var notes = local.notes
+                var changed = false
+
+                if !plan.incomingDocuments.isEmpty {
+                    var byID = Dictionary(uniqueKeysWithValues: notes.map { ($0.id, $0) })
+                    for document in plan.incomingDocuments where !document.isSettings {
+                        guard let incoming = FolderSyncDocuments.note(from: document) else { continue }
+                        if let existing = byID[incoming.id], existing.updatedAt >= incoming.updatedAt {
+                            continue
+                        }
+                        byID[incoming.id] = incoming
+                        changed = true
+                    }
+                    notes = Array(byID.values)
+                }
+
+                if !plan.documentsToDeleteLocally.isEmpty {
+                    let remove = Set(plan.documentsToDeleteLocally)
+                    notes.removeAll { remove.contains($0.id) }
+                    changed = true
+                }
+
+                // Einstellungs-Dokument getrennt behandeln: es ersetzt nur
+                // Stundenplan & Einstellungen, nie die Notizen.
+                var updatedBackup = local
+                if let settingsDocument = plan.incomingDocuments.first(where: { $0.isSettings }),
+                   let settingsBackup = FolderSyncDocuments.backup(
+                        settingsData: settingsDocument.data,
+                        notes: [],
+                        fallbackCreatedAt: local.createdAt
+                   ) {
+                    var merged = settingsBackup
+                    merged.notes = notes
+                    merged.createdAt = local.createdAt
+                    updatedBackup = merged
+                    changed = true
+                } else if changed {
+                    updatedBackup.notes = notes
+                }
+
+                if changed {
+                    storeSafetyBackup(for: local)
+                    applyBackup?(updatedBackup)
+                    resolveTombstones(with: plan)
+                }
+
+                if let settingsDocument = plan.incomingDocuments.first(where: { $0.isSettings }) {
+                    settingsUpdatedAt = settingsDocument.updatedAt
+                }
             }
 
-            storeSafetyBackup(for: local)
-            applyBackup?(merged)
-            pruneTombstonesAgainstMergedNotes(merged.notes)
-            let mergedText = try AppBackupCodec.encode(merged)
-            try await writeText(mergedText, to: fileURL.file)
-            configuration.lastSyncedHash = mergedHash
+            // 2) Eigene Änderungen schreiben.
+            if plan.changesRemoteState || forcePull {
+                try writeDocuments(
+                    plan.documentsToWrite,
+                    deleting: plan.documentsToDeleteRemotely,
+                    in: folder
+                )
+            }
+
+            // 3) Ordner-Inhalt merken (Grundlage für Löschungserkennung).
+            let after = try readRemoteKeys(from: folder)
+            configuration.knownRemoteKeys = after
+            remoteNoteCount = after.count
             configuration.lastSyncDate = Date()
             hasUnpushedLocalChanges = false
             errorMessage = nil
@@ -585,8 +604,153 @@ public final class FileSyncService: ObservableObject {
         } catch let error as FileSyncAccessError {
             handleAccessError(error)
         } catch {
-            errorMessage = "Lesen fehlgeschlagen: \(error.localizedDescription)"
+            errorMessage = "Synchronisation fehlgeschlagen: \(error.localizedDescription)"
         }
+    }
+
+    /// Räumt Grabsteine auf, deren Notiz durch eine neuere Bearbeitung wieder
+    /// existiert.
+    private func resolveTombstones(with plan: FolderSyncMergeResult) {
+        for document in plan.incomingDocuments where !document.isSettings {
+            if let deletedAt = configuration.deletedNoteIDs[document.key],
+               FolderSyncRules.tombstoneResolved(deletedAt, by: document) {
+                configuration.deletedNoteIDs.removeValue(forKey: document.key)
+            }
+        }
+        for key in plan.documentsToDeleteRemotely {
+            configuration.deletedNoteIDs.removeValue(forKey: key)
+        }
+    }
+
+    // MARK: - Ordner-Zugriff
+
+    private enum FileSyncAccessError: Error {
+        case noBookmark
+        case bookmarkInvalid
+    }
+
+    private func resolveSyncFolder() throws -> URL {
+        guard let bookmark = configuration.locationBookmark else {
+            throw FileSyncAccessError.noBookmark
+        }
+        var isStale = false
+        guard let url = try? URL(
+            resolvingBookmarkData: bookmark,
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ) else {
+            throw FileSyncAccessError.bookmarkInvalid
+        }
+        if isStale {
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            if let fresh = try? url.bookmarkData() {
+                configuration.locationBookmark = fresh
+                saveConfiguration()
+            }
+        }
+        return url
+    }
+
+    private func handleAccessError(_ error: FileSyncAccessError) {
+        switch error {
+        case .noBookmark, .bookmarkInvalid:
+            // Zugriff verloren (Ordner verschoben oder Berechtigung entzogen):
+            // Sync anhalten, lokale Daten bleiben unangetastet.
+            configuration.isEnabled = false
+            configuration.locationBookmark = nil
+            hasUnpushedLocalChanges = false
+            saveConfiguration()
+            stopTimers()
+            errorMessage = "Der Zugriff auf den Sync-Ordner ist verloren gegangen (verschoben oder gelöscht?). Die Synchronisation wurde angehalten – deine Daten sind unverändert. Verknüpfe den Ordner einfach erneut."
+        }
+    }
+
+    /// Liest alle Dokumente des Ordners (kleine JSON-Dateien).
+    private func readRemoteDocuments(from folder: URL) throws -> [String: FolderSyncDocument] {
+        let manager = FileManager.default
+        var result: [String: FolderSyncDocument] = [:]
+
+        let settingsURL = folder.appendingPathComponent("settings.json")
+        if let data = try? Data(contentsOf: settingsURL) {
+            let modified = (try? settingsURL.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? Date()
+            let stamp = FolderSyncDocuments.updatedAt(forData: data) ?? modified
+            result[FolderSyncDocument.settingsKey] = FolderSyncDocument(
+                key: FolderSyncDocument.settingsKey,
+                updatedAt: stamp,
+                data: data
+            )
+        }
+
+        let notesFolder = folder.appendingPathComponent(Self.notesSubdirectory, isDirectory: true)
+        guard let files = try? manager.contentsOfDirectory(
+            at: notesFolder,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return result
+        }
+
+        for fileURL in files where fileURL.pathExtension.lowercased() == "json" {
+            guard let data = try? Data(contentsOf: fileURL),
+                  let stamp = FolderSyncDocuments.updatedAt(forData: data) else { continue }
+            // Der Schlüssel steckt im Dokument; der Dateiname ist nur Ablage.
+            guard let noteKey = FolderSyncDocuments.noteKey(fromData: data) else { continue }
+            result[noteKey] = FolderSyncDocument(key: noteKey, updatedAt: stamp, data: data)
+        }
+        return result
+    }
+
+    /// Liest nur die Schlüssel der Notiz-Dateien.
+    private func readRemoteKeys(from folder: URL) throws -> Set<String> {
+        let documents = try readRemoteDocuments(from: folder)
+        return Set(documents.keys.filter { $0 != FolderSyncDocument.settingsKey })
+    }
+
+    /// Schreibt geänderte Dokumente und entfernt gelöschte Dateien.
+    private func writeDocuments(
+        _ documents: [FolderSyncDocument],
+        deleting: [String],
+        in folder: URL
+    ) throws {
+        let manager = FileManager.default
+        let notesFolder = folder.appendingPathComponent(Self.notesSubdirectory, isDirectory: true)
+        try manager.createDirectory(at: notesFolder, withIntermediateDirectories: true)
+
+        for document in documents {
+            let url: URL
+            if document.isSettings {
+                url = folder.appendingPathComponent("settings.json")
+            } else {
+                url = notesFolder.appendingPathComponent(
+                    "\(FolderSyncDocument.safeFileName(for: document.key)).json"
+                )
+            }
+            try document.data.write(to: url, options: .atomic)
+        }
+
+        for key in deleting {
+            let url = notesFolder.appendingPathComponent(
+                "\(FolderSyncDocument.safeFileName(for: key)).json"
+            )
+            try? manager.removeItem(at: url)
+        }
+    }
+
+    /// Schreibt den kompletten lokalen Stand in den Ordner (Ersteinrichtung).
+    private func writeLocalDocuments(_ backup: AppBackup) async {
+        guard let folder = try? resolveSyncFolder() else { return }
+        let accessing = folder.startAccessingSecurityScopedResource()
+        defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
+        let documents = FolderSyncDocuments.documents(
+            from: backup,
+            settingsUpdatedAt: Date()
+        )
+        settingsUpdatedAt = Date()
+        try? writeDocuments(documents, deleting: [], in: folder)
+        configuration.knownRemoteKeys = Set(documents.map(\.key).filter { $0 != FolderSyncDocument.settingsKey })
+        remoteNoteCount = configuration.knownRemoteKeys.count
     }
 
     // MARK: - Grabsteine (gelöschte Notizen)
@@ -616,16 +780,6 @@ public final class FileSyncService: ObservableObject {
         saveConfiguration()
     }
 
-    /// Grabsteine entsorgen, deren Notiz in der Zusammenführung mit neuerer
-    /// Änderung wieder da ist (Bearbeitung gewinnt über Löschung).
-    private func pruneTombstonesAgainstMergedNotes(_ notes: [LessonNote]) {
-        for note in notes {
-            if let deletedAt = configuration.deletedNoteIDs[note.id], note.updatedAt > deletedAt {
-                configuration.deletedNoteIDs.removeValue(forKey: note.id)
-            }
-        }
-    }
-
     // MARK: - Sicherheitskopien
 
     private func storeSafetyBackup(for local: AppBackup) {
@@ -640,7 +794,7 @@ public final class FileSyncService: ObservableObject {
         storage.saveFileSyncSafetyBackups(all)
     }
 
-    /// Stellt eine Sicherheitskopie wieder her und sendet sie an die Datei.
+    /// Stellt eine Sicherheitskopie wieder her und sendet sie in den Ordner.
     public func restoreSafetyBackup(_ backup: FileSyncSafetyBackup) -> String {
         guard let decoded = try? AppBackupCodec.decode(backup.text) else {
             return "Diese Sicherheitskopie ist beschädigt und konnte nicht wiederhergestellt werden."
@@ -651,7 +805,7 @@ public final class FileSyncService: ObservableObject {
             storeSafetyBackup(for: local)
         }
         applyBackup?(decoded)
-        configuration.lastSyncedHash = nil
+        settingsUpdatedAt = Date()
         hasUnpushedLocalChanges = true
         saveConfiguration()
         schedulePush()
@@ -661,189 +815,6 @@ public final class FileSyncService: ObservableObject {
     public func deleteSafetyBackup(id: UUID) {
         safetyBackups.removeAll { $0.id == id }
         storage.saveFileSyncSafetyBackups(safetyBackups)
-    }
-
-    // MARK: - Datei-Zugriff
-
-    private struct ResolvedSyncFile {
-        /// URL, auf die der Sicherheits-Zugriff gestartet wurde.
-        let base: URL
-        /// Eigentliche Sync-Datei.
-        let file: URL
-    }
-
-    private enum FileSyncAccessError: Error {
-        case noBookmark
-        case bookmarkInvalid
-    }
-
-    private func resolveSyncFileURL(allowingDirectory: Bool) throws -> ResolvedSyncFile {
-        guard let bookmark = configuration.locationBookmark else {
-            throw FileSyncAccessError.noBookmark
-        }
-        var isStale = false
-        // iOS liefert den Sicherheits-Zugriff bereits über das Bookmark selbst;
-        // die Option `.withSecurityScope` ist nur auf dem Mac verfügbar.
-        guard let url = try? URL(
-            resolvingBookmarkData: bookmark,
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale
-        ) else {
-            throw FileSyncAccessError.bookmarkInvalid
-        }
-        if isStale {
-            // Abgelaufenes Bookmark auffrischen, damit der Zugriff erhalten bleibt.
-            let accessing = url.startAccessingSecurityScopedResource()
-            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-            if let fresh = try? url.bookmarkData() {
-                configuration.locationBookmark = fresh
-                saveConfiguration()
-            }
-        }
-        if configuration.locationIsDirectory, allowingDirectory {
-            let file = url.appendingPathComponent(syncFileDisplayName)
-            return ResolvedSyncFile(base: url, file: file)
-        }
-        return ResolvedSyncFile(base: url, file: url)
-    }
-
-    private func handleAccessError(_ error: FileSyncAccessError) {
-        switch error {
-        case .noBookmark, .bookmarkInvalid:
-            // Zugriff verloren (Datei/Ordner verschoben oder Berechtigung
-            // entzogen): Sync anhalten, lokale Daten bleiben unangetastet.
-            configuration.isEnabled = false
-            configuration.locationBookmark = nil
-            configuration.lastSyncedHash = nil
-            hasUnpushedLocalChanges = false
-            saveConfiguration()
-            stopTimers()
-            errorMessage = "Der Zugriff auf die Sync-Datei ist verloren gegangen (verschoben oder gelöscht?). Die Synchronisation wurde angehalten – deine Daten sind unverändert. Verknüpfe die Datei einfach erneut."
-        }
-    }
-
-    private func uniqueFileName(in folder: URL, base: String) async throws -> String {
-        try await performIO {
-            let manager = FileManager.default
-            let stem = (base as NSString).deletingPathExtension
-            let ext = (base as NSString).pathExtension
-            var candidate = base
-            var counter = 2
-            while manager.fileExists(atPath: folder.appendingPathComponent(candidate).path) {
-                candidate = "\(stem) \(counter).\(ext)"
-                counter += 1
-                if counter > 100 { break }
-            }
-            return candidate
-        }
-    }
-
-    private func readText(from url: URL) async throws -> String? {
-        try await performIO {
-            let coordinator = NSFileCoordinator()
-            var coordinationError: NSError?
-            var result: String?
-            var readError: Error?
-            var didRead = false
-            coordinator.coordinate(readingItemAt: url, options: .withoutChanges, error: &coordinationError) { readURL in
-                do {
-                    let data = try Data(contentsOf: readURL)
-                    result = String(data: data, encoding: .utf8)
-                    didRead = true
-                } catch {
-                    let code = (error as NSError).code
-                    if code == NSFileReadNoSuchFileError {
-                        result = nil
-                        didRead = true
-                    } else {
-                        readError = error
-                    }
-                }
-            }
-            if let coordinationError {
-                // Datei existiert schlicht nicht → als „verschwunden“ melden.
-                if (coordinationError as NSError).code == NSFileReadNoSuchFileError, !didRead {
-                    return nil
-                }
-                throw coordinationError
-            }
-            if let readError { throw readError }
-            return result
-        }
-    }
-
-    private func writeText(_ text: String, to url: URL) async throws {
-        guard let data = text.data(using: .utf8) else {
-            throw CocoaError(.fileWriteInapplicableStringEncoding)
-        }
-        try await performIO {
-            let coordinator = NSFileCoordinator()
-            var coordinationError: NSError?
-            var writeError: Error?
-            let exists = FileManager.default.fileExists(atPath: url.path)
-            coordinator.coordinate(
-                writingItemAt: url,
-                options: exists ? .forReplacing : [],
-                error: &coordinationError
-            ) { writeURL in
-                do {
-                    try data.write(to: writeURL, options: .atomic)
-                } catch {
-                    writeError = error
-                }
-            }
-            if let coordinationError { throw coordinationError }
-            if let writeError { throw writeError }
-        }
-    }
-
-    /// iCloud Drive hat bei gleichzeitigem Schreiben zwei Fassungen angelegt:
-    /// alle Fassungen einsammeln und zu einer zusammenführen. Schlägt das
-    /// fehl, läuft die normale Zusammenführung weiter – es geht nie etwas still verloren.
-    private func resolveVersionConflictsIfNeeded(at url: URL) {
-        guard let conflicts = NSFileVersion.unresolvedConflictVersionsOfItem(at: url),
-              !conflicts.isEmpty,
-              let local = makeLocalBackup?() else {
-            return
-        }
-        var merged = local
-        var mergedAnything = false
-        for version in conflicts {
-            guard let data = try? Data(contentsOf: version.url),
-                  let text = String(data: data, encoding: .utf8),
-                  let backup = try? AppBackupCodec.decode(text.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-                continue
-            }
-            merged = FileSyncMerge.merge(local: merged, remote: backup, deletedNoteIDs: configuration.deletedNoteIDs)
-            mergedAnything = true
-        }
-        guard mergedAnything else { return }
-        storeSafetyBackup(for: local)
-        applyBackup?(merged)
-        pruneTombstonesAgainstMergedNotes(merged.notes)
-        if let text = try? AppBackupCodec.encode(merged) {
-            try? text.data(using: .utf8)?.write(to: url, options: .atomic)
-        }
-        for version in conflicts {
-            version.isResolved = true
-        }
-        do {
-            try NSFileVersion.removeOtherVersionsOfItem(at: url)
-        } catch {
-            // Harmlos: Die Konfliktfassung bleibt dann als Datei bestehen.
-        }
-        configuration.lastSyncedHash = FileSyncMerge.semanticHash(merged)
-        configuration.lastSyncDate = Date()
-        saveConfiguration()
-    }
-
-    /// Führt Datei-Arbeit nebenläufig aus. Die Abschluss-Bedingungen
-    /// (`Sendable`) sind nötig, weil `Task.detached` eine `@Sendable`-Closure
-    /// verlangt – ohne sie würde der Swift-6-Sprachmodus den Aufruf ablehnen.
-    private func performIO<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
-        try await Task.detached(priority: .userInitiated) {
-            try work()
-        }.value
     }
 
     // MARK: - iCloud-Prüfung

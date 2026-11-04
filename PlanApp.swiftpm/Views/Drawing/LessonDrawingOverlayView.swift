@@ -226,6 +226,9 @@ public struct LessonDrawingOverlayView: View {
 
     // Textfelder (Text-Werkzeug)
     @State private var textBoxes: [NoteTextBox] = []
+    /// `true`, wenn diese Notiz gerade vom Handy-Format in den Zeichenbereich
+    /// umgewandelt wurde (dann muss das Kennzeichen beim Speichern fallen).
+    @State private var pendingPhoneConversion = false
     @State private var selectedTextBoxID: UUID? = nil
     /// Feld, das gerade wirklich bearbeitet wird (Tastatur offen). Im Gegensatz
     /// zur reinen Auswahl (Verschiebe-Modus) sind hier Lösch-Kreuz und
@@ -311,6 +314,9 @@ public struct LessonDrawingOverlayView: View {
     @State private var panelFrameHolder = ViewFrameHolder()
     /// Aktuell von der Systemtastatur verdeckte Höhe am unteren Rand.
     @State private var systemKeyboardCoveredHeight: CGFloat = 0
+    /// Zähler, der laufende Nachjustierungen der Tastatur verwirft, sobald
+    /// die Tastatur wieder verschwindet oder eine neue Animation beginnt.
+    @State private var keyboardRevealGeneration: UInt = 0
 
     private let paperWidth: CGFloat = 640
     private let headerHeight: CGFloat = 64
@@ -590,17 +596,36 @@ public struct LessonDrawingOverlayView: View {
             // so weit nach oben geschoben, dass das Feld sichtbar ist – ohne
             // Skalierung.
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+                // WICHTIG: Erst wenn die Tastatur ihre Endhöhe erreicht hat,
+                // darf die Notiz ausweichen. Vorher (bei `willChangeFrame`)
+                // steckt im Frame noch die **alte** Höhe – der Versatz fiel
+                // dadurch zu klein aus bzw. wurde nur teilweise angewandt.
+                //
+                // Genau das war der gemeldete Fehler: Die Notiz rutschte nach
+                // oben, Text- und Bildobjekte aber nicht mit, weil deren
+                // Verschiebung (und das Nachklemmmen) in einem einzigen,
+                // zu frühen Durchlauf berechnet wurde. Jetzt wird die
+                // Ausweich-Berechnung mehrfach und **nach** der Animation
+                // angestoßen: Die Ebene (und damit alle Objekte) folgt der
+                // Tastatur zuverlässig.
                 systemKeyboardCoveredHeight = Self.keyboardCoveredHeight(from: notification)
-                guard systemKeyboardCoveredHeight > 0, didInitialize else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    revealEditingTextBox(in: viewport)
-                }
+                guard didInitialize else { return }
+                scheduleKeyboardReveal(in: viewport)
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
                 systemKeyboardCoveredHeight = 0
+                // Beim Ausblenden bleibt die Notiz, wo sie ist – so wie vorher.
+                keyboardRevealGeneration &+= 1
             }
             .onChange(of: editingTextBoxID) { _, _ in
-                revealEditingTextBox(in: viewport)
+                scheduleKeyboardReveal(in: viewport)
+            }
+            .onChange(of: selectedTextBoxID) { _, _ in
+                // Auch ein reiner Auswahlwechsel (ohne Tastatur) soll ein tief
+                // stehendes Feld sichtbar machen.
+                if systemKeyboardCoveredHeight > 0 {
+                    scheduleKeyboardReveal(in: viewport)
+                }
             }
             .onChange(of: toolSelection) { _, newTool in
                 // Die Farbquelle ist nicht mehr lokal in einer Toolbar
@@ -1425,7 +1450,8 @@ public struct LessonDrawingOverlayView: View {
                 onPasteNote: { pasteCopiedNote() },
                 onAddImage: { source in
                     activeImagePicker = NoteImagePickerKind(source)
-                }
+                },
+                onDone: { saveAndDismiss() }
             )
             Spacer(minLength: 0)
         }
@@ -1643,12 +1669,17 @@ public struct LessonDrawingOverlayView: View {
         systemKeyboardCoveredHeight
     }
 
-    /// Schiebt die Notiz so weit nach oben, dass das bearbeitete Textfeld
-    /// oberhalb der schwebenden Tastatur liegt – ohne Zoom, ohne Skalierung.
+    /// Schiebt die Notiz samt **aller** Objekte so weit nach oben, dass das
+    /// bearbeitete Textfeld oberhalb der schwebenden Tastatur liegt – ohne
+    /// Zoom, ohne Skalierung.
     ///
-    /// Die Notiz behält damit ihre Größe und ihre Position; nur wenn das
-    /// beschriebene Feld sonst hinter der Tastatur läge, rückt sie gerade so
-    /// weit hoch, bis das Feld sichtbar ist.
+    /// Wichtig: Der Versatz gilt für die **ganze** Notizkarte. Zeichnung,
+    /// Textfelder und Bilder liegen im selben, gemeinsam verschobenen Block –
+    /// sie rutschen deshalb immer mit nach oben. (`clampedOffset` begrenzt den
+    /// Versatz zwar auf den sichtbaren Bereich, zieht aber bei jeder
+    /// Nachjustierung nur den noch fehlenden Rest ab – deshalb kann die
+    /// Ausweich-Bewegung nicht „stecken bleiben“, während die Objekte
+    /// unverändert zurückbleiben.)
     private func revealEditingTextBox(in viewport: DrawingViewport) {
         guard showsEditor else { return }
         guard let id = editingTextBoxID ?? selectedTextBoxID,
@@ -1657,17 +1688,47 @@ public struct LessonDrawingOverlayView: View {
         let covered = keyboardCoveredHeight(in: viewport)
         guard covered > 0 else { return }
 
+        // Bereich, der auf dem Bildschirm noch frei ist (über der Tastatur),
+        // in Overlay-Koordinaten.
         let keyboardTop = viewport.size.height - covered
-        let panelTop = renderCenter(in: viewport).y - (panelHeight / 2)
-        let canvasTop = panelTop + headerHeight
-        let boxBottom = canvasTop + (CGFloat(box.y) + estimatedTextBoxHeight(box, fontStyle: viewModel.drawingSettings.textFontStyle)) * canvasScale
-
         let limit = keyboardTop - 16
+
+        // Lage des Feldes **jetzt** (nach dem aktuellen Versatz) bestimmen –
+        // nicht aus einem gespeicherten Startwert. Nur so funktioniert die
+        // Nachjustierung mehrere Durchläufe hintereinander.
+        let center = renderCenter(in: viewport)
+        let canvasTop = center.y - (panelHeight / 2) + headerHeight
+        let fontStyle = viewModel.drawingSettings.textFontStyle
+        let boxBottom = canvasTop
+            + (CGFloat(box.y) + estimatedTextBoxHeight(box, fontStyle: fontStyle)) * canvasScale
+
         guard boxBottom > limit else { return }
 
         var candidate = offset
-        candidate.height = offset.height - (boxBottom - limit)
-        offset = clampedOffset(candidate, in: viewport)
+        candidate.height -= (boxBottom - limit)
+        let newOffset = clampedOffset(candidate, in: viewport)
+        guard abs(newOffset.height - offset.height) > 0.5 else { return }
+        offset = newOffset
+    }
+
+    /// Stößt die Ausweich-Berechnung nach der Tastatur-Animation mehrfach an.
+    ///
+    /// `keyboardWillChangeFrame` liefert das **Ziel**-Frame der Tastatur, aber
+    /// die Karte selbst (inklusive `renderCenter`, Skalierung und Klemmen) wird
+    /// erst in den folgenden Layout-Durchläufen fertig. Ein einzelner Aufruf
+    /// direkt im Notification-Callback rechnete deshalb mit halbfertigen Werten
+    /// – die Notiz rutschte, die Objekte aber nicht. Die drei Läufe decken
+    /// Anfang, Mitte und Ende der UIKit-Tastatur-Animation ab; jeder Lauf ist
+    /// idempotent (er verschiebt nur den noch fehlenden Rest).
+    private func scheduleKeyboardReveal(in viewport: DrawingViewport) {
+        keyboardRevealGeneration &+= 1
+        let generation = keyboardRevealGeneration
+        for delay in [0.0, 0.09, 0.22, 0.42] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard keyboardRevealGeneration == generation else { return }
+                revealEditingTextBox(in: viewport)
+            }
+        }
     }
 
     /// Kleinste Höhe der Zeichenfläche (inkl. Kopfzeile), bei der jedes Bild
@@ -2296,6 +2357,9 @@ public struct LessonDrawingOverlayView: View {
 
     private func loadExistingNote() {
         guard let note = viewModel.noteFor(lesson: lesson) else {
+            // Neue Notiz: Der in den Einstellungen gewählte Standard-Tag wird
+            // sofort gesetzt (auf dem iPad und auf dem iPhone gleich).
+            noteTagID = viewModel.defaultTagID
             restoreOrBootstrapHistory()
             return
         }
@@ -2313,6 +2377,30 @@ public struct LessonDrawingOverlayView: View {
             width: paperWidth,
             height: max(180, canvasHeight - headerHeight)
         )
+
+        // Handy-Notiz auf dem iPad: Sie hat keinen Zeichenbereich, sondern nur
+        // Fließtext. Beim ersten Öffnen hier wird sie **einmalig** in ein
+        // normales Textfeld des Zeichenbereichs umgewandelt – ab dann ist sie
+        // auf dem iPhone gesperrt und zeigt dort nur noch die Optionen.
+        if MobileNotePolicy.requiresIPadConversion(note) {
+            let converted = MobileNotePolicy.convertedTextBox(
+                for: note,
+                areaSize: canvasSize,
+                fallbackFontSize: viewModel.drawingSettings.defaultTextFontSize
+            )
+            if let converted {
+                textBoxes = [converted]
+            } else {
+                textBoxes = []
+            }
+            imageBoxes = []
+            drawing = PKDrawing()
+            selectedTextBoxID = textBoxes.first?.id
+            editingTextBoxID = textBoxes.first?.id
+            pendingPhoneConversion = true
+            restoreOrBootstrapHistory()
+            return
+        }
         // Alte oder hand-edited Speicherstände können doppelte IDs
         // enthalten. SwiftUI würde solche Elemente in einer ForEach als
         // dasselbe View-Element behandeln und beim ersten Text-Tap instabil
@@ -2471,6 +2559,11 @@ public struct LessonDrawingOverlayView: View {
             // kein bisheriges Vorschaubild.
             let placeholderPreview = model.lessonNotes[lesson.noteKey]?.croppedImageData
             DrawingDiagnostics.dismiss.info("saveAndDismiss: speichere Notiz (Zeichnungsdaten)")
+            // Wurde die Notiz vom Handy-Format umgewandelt, ist sie jetzt eine
+            // ganz normale Zeichen-Notiz: `usesPhoneTextLayout` fällt weg und
+            // der Umwandlungszeitpunkt wird gesetzt. Danach ist sie auf dem
+            // iPhone gesperrt (dort nur noch Optionen).
+            let wasPhoneNote = pendingPhoneConversion || model.lessonNotes[lesson.noteKey]?.usesPhoneTextLayout == true
             let persistedUpdatedAt = model.persistNote(
                 for: lesson,
                 drawingData: drawingData,
@@ -2481,7 +2574,11 @@ public struct LessonDrawingOverlayView: View {
                 backgroundStyle: backgroundStyle,
                 backgroundScale: backgroundScale,
                 tagID: tagID,
-                hasInkContent: !croppedDrawing.strokes.isEmpty
+                hasInkContent: !croppedDrawing.strokes.isEmpty,
+                usesPhoneTextLayout: false,
+                phoneText: "",
+                phoneFontSize: nil,
+                phoneLayoutConversionDate: wasPhoneNote ? Date() : nil
             )
 
             // Phase 2 (Hintergrund, teuer): Das Vorschau-Bild rendern und

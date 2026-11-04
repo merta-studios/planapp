@@ -1,5 +1,15 @@
 import Foundation
-import CoreGraphics
+
+/// Maße einer Fläche in Punkten (ohne CoreGraphics).
+public struct TextAreaSize: Equatable {
+    public let width: Double
+    public let height: Double
+
+    public init(width: Double, height: Double) {
+        self.width = width
+        self.height = height
+    }
+}
 
 /// Ein frei bewegliches Textfeld auf der Zeichenfläche einer Stunden-Notiz.
 /// Koordinaten sind in Punkt-Koordinaten der Zeichenfläche (unskaliert).
@@ -11,6 +21,17 @@ public struct NoteTextBox: Identifiable, Codable, Equatable {
     public static let defaultFontSize: Double = 17
     public static let minimumFontSize: Double = 10
     public static let maximumFontSize: Double = 48
+    /// Grenzen der Schriftgröße einer **Handy-Notiz** (schlichter Fließtext
+    /// auf dem iPhone). Dort gibt es nur einen einzigen Text – seine Größe
+    /// lässt sich in der Leiste bzw. in den Einstellungen ändern.
+    public static let minimumPhoneFontSize: Double = 10
+    public static let maximumPhoneFontSize: Double = 40
+
+    /// Klemmt eine Handy-Schriftgröße in den erlaubten Bereich.
+    public static func clampedPhoneFontSize(_ value: Double) -> Double {
+        guard value.isFinite else { return defaultFontSize }
+        return min(maximumPhoneFontSize, max(minimumPhoneFontSize, value))
+    }
 
     public var id: UUID
     public var text: String
@@ -21,6 +42,14 @@ public struct NoteTextBox: Identifiable, Codable, Equatable {
     /// Textfarbe als Hex-String. Wird über die Farb-Slots der Werkzeugleiste
     /// gesetzt, solange ein Textfeld ausgewählt ist.
     public var colorHex: String
+    /// Ob die Breite des Feldes **automatisch** mit dem Tippen wächst.
+    ///
+    /// Neue Textfelder starten mit `true`: Der Text läuft beim Tippen nach
+    /// rechts, bis er den Rand der Zeichenfläche erreicht – erst dann bricht
+    /// er um. Sobald man die Breite selbst mit den Seiten-Griffen ändert,
+    /// wird daraus `false` und das Feld bleibt genau so breit, wie man es
+    /// eingestellt hat.
+    public var autoGrowWidth: Bool
 
     public init(
         id: UUID = UUID(),
@@ -29,7 +58,8 @@ public struct NoteTextBox: Identifiable, Codable, Equatable {
         y: Double,
         width: Double = 240,
         fontSize: Double = NoteTextBox.defaultFontSize,
-        colorHex: String = NoteTextBox.defaultColorHex
+        colorHex: String = NoteTextBox.defaultColorHex,
+        autoGrowWidth: Bool = true
     ) {
         self.id = id
         self.text = text
@@ -38,10 +68,11 @@ public struct NoteTextBox: Identifiable, Codable, Equatable {
         self.width = width
         self.fontSize = fontSize
         self.colorHex = colorHex
+        self.autoGrowWidth = autoGrowWidth
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, text, x, y, width, fontSize, colorHex
+        case id, text, x, y, width, fontSize, colorHex, autoGrowWidth
     }
 
     /// Bereits gespeicherte Notizen kennen `colorHex` noch nicht. Ohne diesen
@@ -57,13 +88,16 @@ public struct NoteTextBox: Identifiable, Codable, Equatable {
         fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? NoteTextBox.defaultFontSize
         colorHex = try container.decodeIfPresent(String.self, forKey: .colorHex)
             ?? NoteTextBox.defaultColorHex
+        // Ältere Textfelder kannten das automatische Mitwachsen nicht – sie
+        // bleiben bewusst bei ihrer festen Breite.
+        autoGrowWidth = try container.decodeIfPresent(Bool.self, forKey: .autoGrowWidth) ?? false
     }
 
     /// Defensive Normalisierung für geladene oder per OCR erzeugte Textfelder.
     /// Ungültige Zahlen (NaN/∞) führen in SwiftUI bei `frame`/`offset` zu
     /// Laufzeit-Abbrüchen; deshalb werden sie konsequent auf sichere Werte
     /// geklemmt.
-    public func sanitized(in areaSize: CGSize? = nil) -> NoteTextBox? {
+    public func sanitized(in areaSize: TextAreaSize? = nil) -> NoteTextBox? {
         let fallbackWidth: Double = 240
         let fallbackFontSize = NoteTextBox.defaultFontSize
         let margin: Double = 6
@@ -88,9 +122,9 @@ public struct NoteTextBox: Identifiable, Codable, Equatable {
            areaSize.height.isFinite,
            areaSize.width > 0,
            areaSize.height > 0 {
-            sanitized.width = min(sanitized.width, max(90, Double(areaSize.width) - margin * 2))
-            let maxX = max(margin, Double(areaSize.width) - sanitized.width - margin)
-            let maxY = max(margin, Double(areaSize.height) - 42 - margin)
+            sanitized.width = min(sanitized.width, max(90, areaSize.width - margin * 2))
+            let maxX = max(margin, areaSize.width - sanitized.width - margin)
+            let maxY = max(margin, areaSize.height - 42 - margin)
             sanitized.x = min(max(margin, sanitized.x), maxX)
             sanitized.y = min(max(margin, sanitized.y), maxY)
         } else {
@@ -105,5 +139,75 @@ public struct NoteTextBox: Identifiable, Codable, Equatable {
             return nil
         }
         return sanitized
+    }
+
+    // MARK: - Textmaß (Text-Werkzeug)
+
+    /// Innenabstand eines Textfelds links und rechts (identisch zum Editor).
+    public static let textHorizontalInset: Double = 16
+
+    /// Mittlere Zeichenbreite, gemessen an der Systemschrift.
+    ///
+    /// Für „wächst der Text über den Rand?“ ist keine exakte Typografie nötig –
+    /// eine gute Schätzung reicht und bleibt (anders als `UIFont`) frei von
+    /// UIKit, damit dieselben Regeln in den Regressions-Tests laufen.
+    public static let averageCharacterWidthRatio: Double = 0.52
+
+    /// Breite eines Textes in einer Zeile – ohne Umbruch.
+    public static func singleLineTextWidth(
+        _ text: String,
+        fontSize: Double
+    ) -> Double {
+        let line = text.components(separatedBy: .newlines).max { lhs, rhs in
+            lhs.count < rhs.count
+        } ?? text
+        let size = fontSize.isFinite ? max(1, fontSize) : defaultFontSize
+        let width = Double(line.count) * size * averageCharacterWidthRatio
+        guard width.isFinite, width > 0 else { return 0 }
+        return ceil(width) + textHorizontalInset
+    }
+
+    /// Breite, die ein Feld mindestens braucht, sobald der Text nicht mehr in
+    /// die aktuelle Breite passt (er würde sonst umbrechen und eine Zeile
+    /// verlieren). Ist der Text schmaler als das Feld, bleibt `nil`.
+    public static func minimumSingleLineWidth(
+        _ text: String,
+        fontSize: Double
+    ) -> Double? {
+        guard !text.isEmpty else { return nil }
+        return max(90, singleLineTextWidth(text, fontSize: fontSize))
+    }
+
+    /// Neue Breite eines automatisch mitwachsenden Feldes.
+    ///
+    /// Neue Textfelder wachsen mit dem Tippen nach rechts, bis sie den Rand der
+    /// Zeichenfläche erreichen; erst dann bricht der Text um. Wer die Breite
+    /// selbst mit den Seiten-Griffen ändert, schaltet das ab.
+    ///
+    /// - Returns: `nil`, wenn sich nichts ändern muss. Sonst die neue Breite –
+    ///   sie wächst höchstens bis `maxWidth`.
+    public static func autoGrownWidth(
+        text: String,
+        currentWidth: Double,
+        maxWidth: Double,
+        fontSize: Double,
+        keepAtLeast: Double = 90
+    ) -> Double? {
+        guard currentWidth.isFinite, maxWidth.isFinite, maxWidth > keepAtLeast else { return nil }
+        guard !text.isEmpty else { return nil }
+        let needed = max(keepAtLeast, singleLineTextWidth(text, fontSize: fontSize))
+        let target = min(maxWidth, needed)
+        guard target > currentWidth + 0.5 else { return nil }
+        return target
+    }
+
+    /// Ob der Text an der aktuellen Feldbreite umbrechen würde.
+    public static func wraps(
+        _ text: String,
+        width: Double,
+        fontSize: Double
+    ) -> Bool {
+        guard !text.isEmpty, width.isFinite, width > 0 else { return false }
+        return singleLineTextWidth(text, fontSize: fontSize) > width
     }
 }

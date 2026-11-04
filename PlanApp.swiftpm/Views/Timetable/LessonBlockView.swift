@@ -239,6 +239,25 @@ public struct LessonBlockView: View {
             if settings.showNotesPreview,
                hasVisibleNote,
                let note,
+               note.usesPhoneTextLayout,
+               !note.phoneText.isEmpty {
+                // Handy-Notiz: kurzer Text statt eines Vorschaubilds.
+                Text(note.phoneText)
+                    .font(.system(size: isCompact ? 9 : 11, weight: .regular, design: .default))
+                    .foregroundColor(Color.black.opacity(0.78))
+                    .lineLimit(isCompact ? 3 : 4)
+                    .multilineTextAlignment(.leading)
+                    .padding(4)
+                    .frame(maxWidth: max(24, measuredWidth - 16), alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(Color.white.opacity(0.92))
+                    )
+                    .padding(4)
+                    .allowsHitTesting(false)
+            } else if settings.showNotesPreview,
+               hasVisibleNote,
+               let note,
                let imgData = note.croppedImageData {
                 // Verfügbare Breite: komplette Blockbreite abzüglich der
                 // Paddings (Vorschau-Kasten + Blockrand).
@@ -312,9 +331,19 @@ public struct LessonBlockView: View {
         // Vorschau-Refresh) bauen es nicht ab und neu auf – die Optionen
         // bleiben stabil stehen. VoiceOver bekommt die Inhalte automatisch
         // als Aktionsmenü vom `.contextMenu`.
-        .contextMenu {
+        .contextMenu(menuItems: {
+            // Menü-Inhalt wird **beim Öffnen** ausgewertet: Der Eintrag heißt
+            // sofort richtig („Notiz bearbeiten“ / „Optionen“), abhängig vom
+            // aktuellen Zustand – nicht erst nach einem späten Render-Durchlauf.
             lessonContextMenuContent
-        }
+        }, preview: {
+            menuPreview(
+                displayName: displayName,
+                color: subjectColor,
+                hasGradient: hasGradient,
+                gradientEnd: display.gradientEndColor
+            )
+        })
         .confirmationDialog(
             "Notiz löschen?",
             isPresented: $showDeleteNoteConfirmation,
@@ -349,6 +378,39 @@ public struct LessonBlockView: View {
         }
     }
 
+    /// Vorschau des Kontextmenüs: Die Fachkarte in ihrer echten Farbe – so
+    /// weiß man beim gedrückt Halten sofort, welche Stunde gemeint ist.
+    /// (Rein darstellend, ohne Zustand – die Optionen selbst stehen im Menü.)
+    private func menuPreview(
+        displayName: String,
+        color: Color,
+        hasGradient: Bool,
+        gradientEnd: Color?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(displayName)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.black)
+            if !lesson.roomRaw.isEmpty {
+                Text(lesson.roomRaw)
+                    .font(.system(size: 12))
+                    .foregroundColor(.black.opacity(0.7))
+            }
+        }
+        .padding(12)
+        .frame(width: 220, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [color, gradientEnd ?? color],
+                        startPoint: hasGradient ? .top : .topLeading,
+                        endPoint: hasGradient ? .bottom : .bottomTrailing
+                    )
+                )
+        )
+    }
+
     /// Inhalt des block-gewidmeten Kontextmenüs (langer Druck). Die
     /// „Tag“-Auswahl ist jetzt Untermenü – es gibt kein separates
     /// „Tag“-confirmationDialog mehr.
@@ -360,18 +422,23 @@ public struct LessonBlockView: View {
             openCurrentNote()
         } label: {
             Label(
-                hasVisibleNote ? "Notiz bearbeiten" : "Notiz erstellen",
+                contextMenuOpenTitle(hasVisibleNote: hasVisibleNote),
                 systemImage: "square.and.pencil"
             )
         }
 
-        Button {
-            Haptics.tap()
-            Task {
-                await viewModel.openNoteForNextOccurrence(after: lesson)
+        // Auf dem iPhone gibt es keinen Zeichenbereich und damit auch kein
+        // „nächste Stunde“-Erstellen in diesem Menü – dort öffnet ein Tipp
+        // ohnehin die Optionen.
+        if !DeviceLayout.isPhone {
+            Button {
+                Haptics.tap()
+                Task {
+                    await viewModel.openNoteForNextOccurrence(after: lesson)
+                }
+            } label: {
+                Label("Notiz für die nächste Stunde erstellen", systemImage: "calendar.badge.plus")
             }
-        } label: {
-            Label("Notiz für die nächste Stunde erstellen", systemImage: "calendar.badge.plus")
         }
 
         if hasVisibleNote {
@@ -443,19 +510,21 @@ public struct LessonBlockView: View {
         var elements: [UIMenuElement] = []
 
         elements.append(UIAction(
-            title: hasVisibleNote ? "Notiz bearbeiten" : "Notiz erstellen",
+            title: contextMenuOpenTitle(hasVisibleNote: hasVisibleNote),
             image: UIImage(systemName: "square.and.pencil")
         ) { _ in
             openCurrentNote()
         })
-        elements.append(UIAction(
-            title: "Notiz für die nächste Stunde erstellen",
-            image: UIImage(systemName: "calendar.badge.plus")
-        ) { _ in
-            Haptics.tap()
-            let target = lesson
-            Task { await viewModel.openNoteForNextOccurrence(after: target) }
-        })
+        if !DeviceLayout.isPhone {
+            elements.append(UIAction(
+                title: "Notiz für die nächste Stunde erstellen",
+                image: UIImage(systemName: "calendar.badge.plus")
+            ) { _ in
+                Haptics.tap()
+                let target = lesson
+                Task { await viewModel.openNoteForNextOccurrence(after: target) }
+            })
+        }
         if hasVisibleNote {
             elements.append(UIAction(title: "Kopieren", image: UIImage(systemName: "doc.on.doc")) { _ in
                 Haptics.tap()
@@ -532,6 +601,15 @@ public struct LessonBlockView: View {
     /// zusätzlichen Tipp mehr zu filtern.
     private func handleBlockTap() {
         openCurrentNote()
+    }
+
+    /// Beschriftung des Kontextmenü-Eintrags. Auf dem iPhone lassen sich nur
+    /// Handy-Notizen öffnen – Zeichen-Notizen zeigen dort die Optionen.
+    private func contextMenuOpenTitle(hasVisibleNote: Bool) -> String {
+        if DeviceLayout.isPhone {
+            return hasVisibleNote ? "Optionen" : "Notiz erstellen"
+        }
+        return hasVisibleNote ? "Notiz bearbeiten" : "Notiz erstellen"
     }
 
     private func openCurrentNote() {

@@ -805,4 +805,364 @@ if let lessonDate = germanCalendar.date(
     )
 }
 
+
+// MARK: - Noten & Punkte (reine Rechenregeln)
+
+// Normale Noten: 1 ist die beste, 6 die schlechteste Note.
+expect(GradeMath.fraction(for: 1, unit: .grades, maximumPoints: 15, higherPointsAreBetter: true) == 1,
+       "Note 1 ist der beste Wert")
+expect(GradeMath.fraction(for: 6, unit: .grades, maximumPoints: 15, higherPointsAreBetter: true) == 0,
+       "Note 6 ist der schlechteste Wert")
+expect(abs(GradeMath.grade(forFraction: 1) - 1) < 0.0001, "Perfektes Verhältnis ergibt Note 1")
+expect(abs(GradeMath.grade(forFraction: 0) - 6) < 0.0001, "Null-Verhältnis ergibt Note 6")
+expect(GradeMath.gradeText(2.0) == "2", "Ganze Noten ohne Nachkommastelle")
+expect(GradeMath.gradeText(2.3) == "2,3", "Noten mit deutschem Dezimalkomma")
+
+// Punkte: Richtung und Umrechnung.
+expect(abs(GradeMath.fraction(for: 15, unit: .points, maximumPoints: 15, higherPointsAreBetter: true) - 1) < 0.0001,
+       "Volle Punktzahl ist bei „mehr ist besser“ der beste Wert")
+expect(abs(GradeMath.fraction(for: 0, unit: .points, maximumPoints: 15, higherPointsAreBetter: false) - 1) < 0.0001,
+       "0 Punkte ist bei „weniger ist besser“ der beste Wert")
+expect(GradeMath.valueText(12, unit: .points, maximumPoints: 15) == "12",
+       "Punkte ohne Nachkommastellen")
+expect(GradeMath.valueText(85, unit: .percent, maximumPoints: 15) == "85 %",
+       "Prozent mit Prozentzeichen")
+
+// Werte werden immer in die zulässigen Grenzen gebracht.
+expect(GradeMath.sanitizedValue(99, unit: .grades, maximumPoints: 15) == 6,
+       "Noten werden auf 1…6 begrenzt")
+expect(GradeMath.sanitizedValue(-5, unit: .percent, maximumPoints: 15) == 0,
+       "Prozent werden auf 0…100 begrenzt")
+expect(GradeMath.sanitizedValue(500, unit: .points, maximumPoints: 15) == 15,
+       "Punkte werden auf die Höchstpunktzahl begrenzt")
+
+// Regler: Note 1 links, 6 rechts – Startwert aus der Einstellung.
+let gradeSliderValue = GradeMath.value(forSliderFraction: 0.5, unit: .grades, maximumPoints: 15)
+expect(gradeSliderValue == 3.5, "Regler-Mitte ergibt bei Noten 3,5")
+let pointsSliderValue = GradeMath.value(forSliderFraction: 0.5, unit: .points, maximumPoints: 15)
+expect(pointsSliderValue == 8, "Regler-Mitte ergibt bei 15 Punkten 8")
+let percentSliderValue = GradeMath.value(forSliderFraction: 0.5, unit: .percent, maximumPoints: 15)
+expect(percentSliderValue == 50, "Regler-Mitte ergibt 50 %")
+
+// Durchschnitt von Einträgen.
+let gradeEntries = [
+    GradeEntry(value: 1, unit: .grades, maximumPoints: 15, note: "Test 1"),
+    GradeEntry(value: 2, unit: .grades, maximumPoints: 15, note: "Test 2")
+]
+expect(abs(GradeMath.grade(forFraction: GradeMath.averageFraction(for: gradeEntries) ?? 0) - 1.5) < 0.0001,
+       "Durchschnitt aus 1 und 2 ist 1,5")
+expect(GradeMath.averageText(for: []) == "–", "Ohne Einträge gibt es keinen Durchschnitt")
+// Punkte und Noten bleiben vergleichbar: 15 Punkte (beste) und Note 1 mitteln sich zu 1,0.
+let mixedEntries = [
+    GradeEntry(value: 15, unit: .points, maximumPoints: 15, higherPointsAreBetter: true),
+    GradeEntry(value: 1, unit: .grades, maximumPoints: 15)
+]
+expect(abs(GradeMath.grade(forFraction: GradeMath.averageFraction(for: mixedEntries) ?? 0) - 1) < 0.0001,
+       "Punkte und Noten werden über dasselbe Verhältnis gemittelt")
+
+// Farbskala: gute Einträge pastellig-grün, schlechte kräftig-rot.
+let goodColor = GradeMath.colorHex(forFraction: 1)
+let badColor = GradeMath.colorHex(forFraction: 0)
+expect(goodColor.hasPrefix("#"), "Farbe ist ein Hex-Wert")
+expect(goodColor != badColor, "Gute und schlechte Einträge haben verschiedene Farben")
+// Grün: der Grünanteil ist bei einer 1 größer als der Rotanteil.
+func hexChannel(_ hex: String, _ index: Int) -> Int {
+    let cleaned = hex.replacingOccurrences(of: "#", with: "")
+    let start = cleaned.index(cleaned.startIndex, offsetBy: index * 2)
+    let end = cleaned.index(start, offsetBy: 2)
+    return Int(cleaned[start..<end], radix: 16) ?? 0
+}
+expect(hexChannel(goodColor, 1) > hexChannel(goodColor, 0),
+       "Sehr gute Noten sind grün eingefärbt")
+expect(hexChannel(badColor, 0) > hexChannel(badColor, 1),
+       "Sehr schlechte Noten sind rot eingefärbt")
+
+// Sortierung der Fächer nach Durchschnitt und Einträgen.
+let subjectEntries: [String: [GradeEntry]] = [
+    "M": [GradeEntry(value: 1, unit: .grades), GradeEntry(value: 1, unit: .grades)],
+    "D": [GradeEntry(value: 5, unit: .grades)],
+    "E": []
+]
+let sortedByBest = GradeMath.sortedSubjectKeys(
+    ["M", "D", "E"],
+    displayName: { $0 },
+    entries: { subjectEntries[$0] ?? [] },
+    sort: .bestAverage
+)
+expect(sortedByBest.first == "M", "Bester Durchschnitt steht oben")
+expect(sortedByBest.last == "E", "Fächer ohne Einträge stehen unten")
+let sortedByCount = GradeMath.sortedSubjectKeys(
+    ["M", "D", "E"],
+    displayName: { $0 },
+    entries: { subjectEntries[$0] ?? [] },
+    sort: .mostEntries
+)
+expect(sortedByCount.first == "M", "Am meisten Einträge steht oben")
+
+// Sortierung der Einträge innerhalb eines Fachs.
+let sortableEntries = [
+    GradeEntry(value: 3, unit: .grades, date: Date(timeIntervalSince1970: 300)),
+    GradeEntry(value: 1, unit: .grades, date: Date(timeIntervalSince1970: 100)),
+    GradeEntry(value: 2, unit: .grades, date: Date(timeIntervalSince1970: 200))
+]
+expect(GradeMath.sortedEntries(sortableEntries, sort: .best).first?.value == 1,
+       "„Beste“ sortiert die 1 nach oben")
+expect(GradeMath.sortedEntries(sortableEntries, sort: .worst).first?.value == 3,
+       "„Schlechteste“ sortiert die 3 nach oben")
+expect(GradeMath.sortedEntries(sortableEntries, sort: .newest).first?.value == 3,
+       "„Zuletzt hinzugefügt“ sortiert nach Datum absteigend")
+expect(GradeMath.sortedEntries(sortableEntries, sort: .oldest).first?.value == 1,
+       "„Älteste“ sortiert nach Datum aufsteigend")
+
+// Einstellungen begrenzen ihre Werte selbst.
+expect(GradeSettings(isEnabled: true, maximumPoints: 500).maximumPoints == 200,
+       "Höchstpunktzahl endet bei 200")
+expect(GradeSettings(isEnabled: true, maximumPoints: 0).maximumPoints == 1,
+       "Höchstpunktzahl beginnt bei 1")
+expect(GradeSettings(isEnabled: true, defaultSliderFraction: 4).defaultSliderFraction == 1,
+       "Der Regler-Startwert bleibt zwischen 0 und 1")
+expect(GradeSettings().isEnabled == false, "Das Modul ist standardmäßig aus")
+expect(GradeSettings(isEnabled: true, system: .points, convertsToGrade: false).showsGradesForEntries == false,
+       "Punkte ohne Umrechnung zeigen keine Note")
+expect(GradeSettings(isEnabled: true, system: .points, convertsToGrade: true).showsGradesForEntries == true,
+       "Punkte mit Umrechnung zeigen die Note")
+
+// Ein Fach behält höchstens 500 Einträge; Löschen räumt leere Fächer auf.
+var gradeBook = GradeBook()
+let noteEntry = GradeEntry(value: 2, unit: .grades)
+expect(gradeBook.upsert(noteEntry, subjectKey: "deutsch"), "Eintrag wird gespeichert")
+expect(gradeBook.entries(forSubjectKey: "deutsch").count == 1, "Eintrag liegt beim Fach")
+gradeBook.remove(entryID: noteEntry.id, subjectKey: "deutsch")
+expect(gradeBook.entries(forSubjectKey: "deutsch").isEmpty, "Löschen entfernt den Eintrag")
+expect(gradeBook.entriesBySubject["deutsch"] == nil, "Leere Fächer werden nicht behalten")
+var renamedBook = GradeBook()
+renamedBook.upsert(noteEntry, subjectKey: "m")
+renamedBook.renameSubject(from: "m", to: "mathe")
+expect(renamedBook.entries(forSubjectKey: "mathe").count == 1,
+       "Beim Umbenennen wandern die Einträge mit")
+
+// MARK: - Handy-Notizen (Layout-Regeln ohne UIKit)
+
+expect(MobileNotePolicy.resolvedPhoneFontSize(stored: 200, fallback: 17) == 40,
+       "Zu große Schrift wird auf das Maximum begrenzt")
+expect(MobileNotePolicy.resolvedPhoneFontSize(stored: 2, fallback: 17) == 10,
+       "Zu kleine Schrift wird auf das Minimum begrenzt")
+expect(MobileNotePolicy.resolvedPhoneFontSize(stored: nil, fallback: 17) == 17,
+       "Ohne gespeicherten Wert gilt der Standard")
+expect(MobileNotePolicy.shrunk(fontSize: 10) == 10, "Kleiner als das Minimum geht nicht")
+expect(MobileNotePolicy.grown(fontSize: 40) == 40, "Größer als das Maximum geht nicht")
+
+// Text bricht um, statt über den Rand zu laufen: Zeichen pro Zeile begrenzt.
+func referenceCharacter(_ size: Double) -> MobileNotePolicy.TextSize {
+    MobileNotePolicy.TextSize(width: size * 0.55, height: size * 1.25)
+}
+let shortLayout = MobileNotePolicy.layout(
+    text: "Hallo",
+    fontSize: 17,
+    availableWidth: 300,
+    availableHeight: 400,
+    characterSize: referenceCharacter
+)
+expect(shortLayout.fits, "Kurzer Text passt ohne Verkleinern")
+expect(!shortLayout.isBlocked, "Kurzer Text blockiert keine Eingabe")
+
+// Sehr langer Text in niedrigem Bereich: die Schrift wird kleiner.
+let longText = String(repeating: "Wort ", count: 400)
+let shrunkLayout = MobileNotePolicy.layout(
+    text: longText,
+    fontSize: 30,
+    availableWidth: 300,
+    availableHeight: 200,
+    characterSize: referenceCharacter
+)
+expect(!shrunkLayout.fits, "Langer Text passt nicht in der Ausgangsgröße")
+expect(shrunkLayout.requiredFontSize < 30, "Die Schrift wird dafür verkleinert")
+expect(shrunkLayout.requiredFontSize >= MobileNotePolicy.minimumPhoneFontSize,
+       "Die Schrift wird nie unter das Minimum verkleinert")
+
+// Wenn selbst das Minimum nicht reicht, wird die Eingabe blockiert.
+let blockedLayout = MobileNotePolicy.layout(
+    text: longText,
+    fontSize: 30,
+    availableWidth: 120,
+    availableHeight: 40,
+    characterSize: referenceCharacter
+)
+expect(blockedLayout.isBlocked, "Passt der Text auch klein nicht, wird die Eingabe blockiert")
+expect(blockedLayout.requiredFontSize == MobileNotePolicy.minimumPhoneFontSize,
+       "Blockiert wird bei der kleinsten Schriftgröße")
+
+// Zeilenumbruch: harte Umbrüche und lange Wörter werden korrekt gezählt.
+expect(MobileNotePolicy.wrappedLineCount(text: "a\nb", charactersPerLine: 10) == 2,
+       "Harte Zeilenumbrüche zählen als eigene Zeile")
+expect(MobileNotePolicy.wrappedLineCount(text: "ein zwei drei", charactersPerLine: 10) == 2,
+       "Volle Zeile bricht vor dem nächsten Wort um")
+expect(MobileNotePolicy.wrappedLineCount(text: "aaaaaaaaaaaa", charactersPerLine: 4) == 3,
+       "Überlange Wörter werden hart umbrochen")
+
+// MARK: - iPad-Textfeld: mitwachsen, aber nur bis zum Rand
+
+expect(NoteTextBox(text: "Hallo", x: 10, y: 10, width: 120).autoGrowWidth,
+       "Neue Textfelder wachsen automatisch mit")
+if let grown = NoteTextBox.autoGrownWidth(text: "Ein längerer Text", currentWidth: 120, maxWidth: 600, fontSize: 17) {
+    expect(grown > 120, "Längerer Text macht das Feld breiter")
+} else {
+    expect(false, "Längerer Text muss das Feld verbreitern")
+}
+expect(NoteTextBox.autoGrownWidth(text: "Hallo", currentWidth: 600, maxWidth: 300, fontSize: 17) == nil,
+       "Über dem Rand wächst nichts mehr (der Text bricht um)")
+expect(NoteTextBox.autoGrownWidth(text: "Hi", currentWidth: 400, maxWidth: 600, fontSize: 17) == nil,
+       "Kurzer Text verkleinert das Feld nicht")
+expect(NoteTextBox.autoGrownWidth(text: "Text", currentWidth: 300, maxWidth: 200, fontSize: 17) == nil,
+       "Ein ungültiger Bereich ändert nichts")
+expect(NoteTextBox.wraps("Ein sehr langer Text über mehrere Wörter", width: 60, fontSize: 17),
+       "Zu breiter Text würde umbrechen")
+expect(!NoteTextBox.wraps("Hi", width: 400, fontSize: 17),
+       "Schmaler Text bricht nicht um")
+
+// MARK: - Ordner-Sync (Zusammenführen ohne Dateisystem)
+
+let syncBaseDate = Date(timeIntervalSince1970: 1_800_000_000)
+
+func syncDocument(_ key: String, _ offset: TimeInterval = 0, _ payload: String = "x") -> FolderSyncDocument {
+    FolderSyncDocument(
+        key: key,
+        updatedAt: syncBaseDate.addingTimeInterval(offset),
+        data: Data(payload.utf8)
+    )
+}
+
+// 1) Nur lokal vorhanden → in den Ordner schreiben.
+let localOnlyPlan = FolderSyncRules.merge(
+    local: ["a": syncDocument("a")],
+    remote: [:],
+    tombstones: [:],
+    remoteKnownKeys: [],
+    lastSyncDate: nil
+)
+expect(localOnlyPlan.documentsToWrite.map(\.key) == ["a"], "Neue lokale Notiz wird hochgeladen")
+expect(localOnlyPlan.incomingDocuments.isEmpty, "Es kommt nichts Fremdes zurück")
+
+// 2) Nur im Ordner vorhanden → lokal übernehmen.
+let remoteOnlyPlan = FolderSyncRules.merge(
+    local: [:],
+    remote: ["b": syncDocument("b")],
+    tombstones: [:],
+    remoteKnownKeys: [],
+    lastSyncDate: nil
+)
+expect(remoteOnlyPlan.incomingDocuments.map(\.key) == ["b"], "Fremde Notiz wird übernommen")
+
+// 3) Beidseitig: der neuere Stand gewinnt – beide Richtungen.
+let newerLocalPlan = FolderSyncRules.merge(
+    local: ["c": syncDocument("c", 100)],
+    remote: ["c": syncDocument("c", 0)],
+    tombstones: [:],
+    remoteKnownKeys: ["c"],
+    lastSyncDate: syncBaseDate
+)
+expect(newerLocalPlan.documentsToWrite.map(\.key) == ["c"], "Die neuere lokale Fassung wird geschrieben")
+expect(newerLocalPlan.incomingDocuments.isEmpty, "Die ältere Fassung wird nicht übernommen")
+
+let newerRemotePlan = FolderSyncRules.merge(
+    local: ["c": syncDocument("c", 0)],
+    remote: ["c": syncDocument("c", 100)],
+    tombstones: [:],
+    remoteKnownKeys: ["c"],
+    lastSyncDate: syncBaseDate
+)
+expect(newerRemotePlan.incomingDocuments.map(\.key) == ["c"], "Die neuere Fassung aus dem Ordner gewinnt")
+
+// Zeitstempel-Toleranz: gleiche Sekunde gilt als gleich (kein Hin- und Herschreiben).
+let equalStampPlan = FolderSyncRules.merge(
+    local: ["d": syncDocument("d", 0)],
+    remote: ["d": syncDocument("d", 0.4)],
+    tombstones: [:],
+    remoteKnownKeys: ["d"],
+    lastSyncDate: syncBaseDate
+)
+expect(equalStampPlan.isEmpty, "Fast gleiche Zeitstempel lösen keinen Schreibvorgang aus")
+
+// 4) Lokal gelöscht (Grabstein) → Datei im Ordner wird entfernt.
+let tombstonePlan = FolderSyncRules.merge(
+    local: [:],
+    remote: ["e": syncDocument("e", 0)],
+    tombstones: ["e": syncBaseDate.addingTimeInterval(10)],
+    remoteKnownKeys: ["e"],
+    lastSyncDate: syncBaseDate
+)
+expect(tombstonePlan.documentsToDeleteRemotely == ["e"], "Eine lokale Löschung entfernt die Datei im Ordner")
+expect(tombstonePlan.incomingDocuments.isEmpty, "Eine gelöschte Notiz kommt nicht zurück")
+
+// 5) Anderswo gelöscht, hier unverändert → lokal löschen.
+let remoteDeletePlan = FolderSyncRules.merge(
+    local: ["f": syncDocument("f", -100)],
+    remote: [:],
+    tombstones: [:],
+    remoteKnownKeys: ["f"],
+    lastSyncDate: syncBaseDate
+)
+expect(remoteDeletePlan.documentsToDeleteLocally == ["f"], "Die Löschung des anderen Geräts wird übernommen")
+
+// 6) Anderswo gelöscht, hier aber seither bearbeitet → Bearbeitung gewinnt.
+let localEditWinsPlan = FolderSyncRules.merge(
+    local: ["g": syncDocument("g", 100)],
+    remote: [:],
+    tombstones: [:],
+    remoteKnownKeys: ["g"],
+    lastSyncDate: syncBaseDate
+)
+expect(localEditWinsPlan.documentsToWrite.map(\.key) == ["g"],
+       "Eine neuere lokale Bearbeitung wird nicht durch eine fremde Löschung verworfen")
+
+// 7) Gelöscht UND anderswo neuer bearbeitet → die Bearbeitung kommt zurück.
+let revivedPlan = FolderSyncRules.merge(
+    local: [:],
+    remote: ["h": syncDocument("h", 100)],
+    tombstones: ["h": syncBaseDate],
+    remoteKnownKeys: ["h"],
+    lastSyncDate: syncBaseDate
+)
+expect(revivedPlan.incomingDocuments.map(\.key) == ["h"],
+       "Eine nach der Löschung bearbeitete Notiz kommt zurück")
+
+// Das Einstellungs-Dokument wird nie gelöscht und immer nach Zeitstempel gewählt.
+let settingsPlan = FolderSyncRules.merge(
+    local: [FolderSyncDocument.settingsKey: syncDocument(FolderSyncDocument.settingsKey, 100)],
+    remote: [FolderSyncDocument.settingsKey: syncDocument(FolderSyncDocument.settingsKey, 0)],
+    tombstones: [:],
+    remoteKnownKeys: [],
+    lastSyncDate: nil
+)
+expect(settingsPlan.documentsToWrite.map(\.key) == [FolderSyncDocument.settingsKey],
+       "Das neuere Einstellungs-Dokument wird geschrieben")
+expect(settingsPlan.documentsToDeleteRemotely.isEmpty,
+       "Das Einstellungs-Dokument wird nie als Löschung behandelt")
+
+// Dateinamen sind gefahrlos – auch bei Schlüsseln mit Sonderzeichen.
+let unsafeKey = "2026-09-30_1/Deutsch:Test"
+let safeName = FolderSyncDocument.safeFileName(for: unsafeKey)
+expect(!safeName.contains("/") && !safeName.contains(":"), "Dateinamen enthalten keine Sonderzeichen")
+expect(safeName == FolderSyncDocument.safeFileName(for: unsafeKey),
+       "Derselbe Schlüssel ergibt immer denselben Dateinamen")
+expect(FolderSyncDocument.safeFileName(for: "kurz") == "kurz", "Unproblematische Schlüssel bleiben erhalten")
+
+// Grabsteine verfallen nach 30 Tagen.
+let pruned = FolderSyncRules.prunedTombstones(
+    [
+        "alt": syncBaseDate.addingTimeInterval(-40 * 24 * 3600),
+        "neu": syncBaseDate.addingTimeInterval(-1 * 24 * 3600)
+    ],
+    now: syncBaseDate
+)
+expect(pruned["alt"] == nil, "Alte Grabsteine werden entsorgt")
+expect(pruned["neu"] != nil, "Frische Grabsteine bleiben erhalten")
+
+// Der Inhalts-Hash ist stabil und erkennt Änderungen.
+let hashA = FolderSyncRules.contentHash(of: ["a": syncDocument("a")])
+let hashB = FolderSyncRules.contentHash(of: ["a": syncDocument("a")])
+expect(hashA == hashB, "Gleicher Inhalt ergibt denselben Hash")
+let hashC = FolderSyncRules.contentHash(of: ["a": syncDocument("a", 5)])
+expect(hashA != hashC, "Ein neuerer Zeitstempel ändert den Hash")
+
 print("\(checks) Interaktions-/Sync-/Layout-Checks erfolgreich.")

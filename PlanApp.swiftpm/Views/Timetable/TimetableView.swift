@@ -13,6 +13,8 @@ public struct TimetableView: View {
     @State private var jumpDirection: Int = 0
     @State private var toastMessage: String? = nil
     @State private var toastIsError: Bool = false
+    /// Notiz, deren Löschung auf dem iPhone gerade bestätigt werden soll.
+    @State private var phoneDeleteTarget: Lesson? = nil
     @Namespace private var noteNamespace
 
     public init() {}
@@ -37,7 +39,7 @@ public struct TimetableView: View {
     /// sichtbare Woche; in „Nur Notizen“ für die App insgesamt (ohne Stunden
     /// gibt es dort auch keine Notizen).
     private var showsUntisSetupGuide: Bool {
-        if viewModel.viewMode == .notesOnly {
+        if viewModel.viewMode == .notesOnly || viewModel.viewMode == .gradesAndPoints {
             return viewModel.shouldShowUntisSetupGuideWithoutData
         }
         return viewModel.shouldShowUntisSetupGuide(for: viewModel.selectedWeekStart)
@@ -185,6 +187,10 @@ public struct TimetableView: View {
                         // besonders bei vielen handschriftlichen Notizen zu
                         // deutlichen Rucklern beim Umschalten.
                         NotesOverviewListView(noteNamespace: noteNamespace)
+                    } else if viewModel.viewMode == .gradesAndPoints {
+                        // Alle eigenen Fächer mit ihrem Durchschnitt; die
+                        // Sortierung steckt im Modus-Menü der Kopfzeile.
+                        GradesOverviewView()
                     } else {
                         weekCarousel(
                             availableWidth: availableWidth,
@@ -231,10 +237,21 @@ public struct TimetableView: View {
                     }
                 }
 
-                // 4. ZEICHNEN- & NOTIZ-OVERLAY (PENCILKIT)
-                if viewModel.isDrawingOverlayPresented, let activeLesson = viewModel.activeNoteLesson {
+                // 4. ZEICHNEN- & NOTIZ-OVERLAY (PENCILKIT) – nur auf dem iPad.
+                // Auf dem iPhone gibt es keinen Zeichenbereich mehr: Dort
+                // öffnet ein Tipp entweder den schlichten Text-Editor
+                // (Handy-Notiz) oder nur die Optionen (Zeichen-Notiz).
+                if !DeviceLayout.isPhone,
+                   viewModel.isDrawingOverlayPresented,
+                   let activeLesson = viewModel.activeNoteLesson {
                     LessonDrawingOverlayView(lesson: activeLesson, noteNamespace: noteNamespace)
                         .transition(.identity)
+                        .zIndex(100)
+                }
+
+                if DeviceLayout.isPhone, let phoneLesson = viewModel.phoneEditorLesson {
+                    PhoneNoteEditorView(lesson: phoneLesson)
+                        .transition(.opacity)
                         .zIndex(100)
                 }
             }
@@ -252,6 +269,47 @@ public struct TimetableView: View {
         // (In den Einstellungen und Sheets gilt weiterhin die eingebettete
         // Tastatur mit eigenem Abstand – sie liegen in einer eigenen Hierarchie.)
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        // iPhone: Ein Tipp auf eine Zeichen-Notiz zeigt genau die Optionen,
+        // die sonst beim gedrückt Halten erscheinen (Kopieren, Einfügen, Tag,
+        // Löschen, nächste Stunde …). Öffnen lässt sich die Notiz dort nicht.
+        .confirmationDialog(
+            "Optionen",
+            isPresented: Binding(
+                get: { viewModel.phoneOptionsLesson != nil },
+                set: { if !$0 { viewModel.phoneOptionsLesson = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: viewModel.phoneOptionsLesson
+        ) { lesson in
+            PhoneNoteOptionsMenu(lesson: lesson) { target in
+                viewModel.phoneOptionsLesson = nil
+                DispatchQueue.main.async {
+                    phoneDeleteTarget = target
+                }
+            }
+            Button("Abbrechen", role: .cancel) {}
+        } message: { _ in
+            Text("Diese Notiz wurde auf dem iPad erstellt und lässt sich hier nur verwalten – nicht öffnen.")
+        }
+        // Löschen einer Notiz auf dem iPhone – erst nach Bestätigung.
+        .confirmationDialog(
+            "Notiz löschen?",
+            isPresented: Binding(
+                get: { phoneDeleteTarget != nil },
+                set: { if !$0 { phoneDeleteTarget = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: phoneDeleteTarget
+        ) { target in
+            Button("Notiz löschen", role: .destructive) {
+                Haptics.warning()
+                viewModel.deleteNote(for: target)
+                phoneDeleteTarget = nil
+            }
+            Button("Abbrechen", role: .cancel) { phoneDeleteTarget = nil }
+        } message: { _ in
+            Text("Diese Notiz wird dauerhaft entfernt.")
+        }
         // Einstellungs-Sheet
         .sheet(isPresented: $isFilterEditorPresented) {
             TagFilterSheet()

@@ -92,6 +92,43 @@ public final class TimetableViewModel: ObservableObject {
     /// Ausgewählte Tag-Filter der „Nur Notizen“-Übersicht. Leer = alle Notizen.
     @Published public var activeTagFilter: Set<UUID> = []
 
+    /// Einstellungen des Moduls „Noten & Punkte“ (Einstellungen → Noten & Punkte).
+    @Published public var gradeSettings: GradeSettings = GradeSettings() {
+        didSet { gradeRevision &+= 1 }
+    }
+
+    /// Alle eingetragenen Noten/Punkte je Fach.
+    @Published public var gradeBook: GradeBook = GradeBook() {
+        didSet { gradeRevision &+= 1 }
+    }
+
+    /// Sortierung der Fächer im Modus „Noten & Punkte“ (beim Wechsel auf den
+    /// Standard aus den Einstellungen zurückgesetzt).
+    @Published public var gradeSubjectSort: GradeSubjectSort = .alphabet {
+        didSet { gradeRevision &+= 1 }
+    }
+
+    /// Sortierung der Einträge innerhalb eines Fachs.
+    @Published public var gradeEntrySort: GradeEntrySort = .newest
+
+    /// Zufalls-Seed der Sortierung „Zufällig“. Bleibt während einer Sitzung
+    /// stabil, damit die Liste beim Neurendern nicht springt. Ein neuer Seed
+    /// entsteht nur, wenn man „Zufällig“ erneut wählt (siehe Kopfzeile) –
+    /// deshalb ist er öffentlich setzbar.
+    @Published public var gradeRandomSeed: UInt64 = UInt64.random(in: 1...UInt64.max)
+
+    /// Zähler, der sich bei jeder Änderung an Noten/Punkten ändert.
+    public private(set) var gradeRevision: UInt = 0
+
+    /// Stunde, deren Optionen auf dem iPhone gerade gezeigt werden. Ein Tipp
+    /// auf eine Zeichen-Notiz öffnet dort **nur** diese Optionen (wie beim
+    /// gedrückt Halten) – die Notiz selbst lässt sich nicht bearbeiten.
+    @Published public var phoneOptionsLesson: Lesson? = nil
+
+    /// Stunde, deren Handy-Notiz (schlichter Fließtext) gerade im
+    /// iPhone-Editor offen ist.
+    @Published private(set) var phoneEditorLesson: Lesson? = nil
+
     /// Interne „Zwischenablage“ für Notizen (Kontextmenü → Kopieren/Einfügen).
     /// Enthält die komplette Notiz inkl. Zeichnung, Textfeldern, Bildern,
     /// Hintergrund und Tag. Bleibt für die Dauer der Sitzung erhalten.
@@ -246,8 +283,13 @@ public final class TimetableViewModel: ObservableObject {
             self?.applyFileSyncBackup(backup)
         }
 
-        let dirtySinks: [AnyPublisher<Void, Never>] = [
-            $lessonNotes.map { _ in () }.eraseToAnyPublisher(),
+        // Notizen und Einstellungen getrennt melden: Notiz-Änderungen
+        // schreiben nur die betroffene Notiz-Datei, Einstellungen zusätzlich
+        // das kleine `settings.json`.
+        let noteSinks: [AnyPublisher<Void, Never>] = [
+            $lessonNotes.map { _ in () }.eraseToAnyPublisher()
+        ]
+        let settingsSinks: [AnyPublisher<Void, Never>] = [
             $lessons.map { _ in () }.eraseToAnyPublisher(),
             $periods.map { _ in () }.eraseToAnyPublisher(),
             $subjectCustomizations.map { _ in () }.eraseToAnyPublisher(),
@@ -257,14 +299,25 @@ public final class TimetableViewModel: ObservableObject {
             $untisCredentials.map { _ in () }.eraseToAnyPublisher(),
             $viewMode.map { _ in () }.eraseToAnyPublisher(),
             $appearance.map { _ in () }.eraseToAnyPublisher(),
-            $tagSettings.map { _ in () }.eraseToAnyPublisher()
+            $tagSettings.map { _ in () }.eraseToAnyPublisher(),
+            $gradeSettings.map { _ in () }.eraseToAnyPublisher(),
+            $gradeBook.map { _ in () }.eraseToAnyPublisher()
         ]
-        for publisher in dirtySinks {
+        for publisher in noteSinks + settingsSinks {
             publisher
                 .dropFirst()
                 .sink { [weak self] in
                     guard let self, !self.isApplyingFileSyncRemote else { return }
                     self.fileSyncService.markLocalDirty()
+                }
+                .store(in: &fileSyncSubscriptions)
+        }
+        for publisher in settingsSinks {
+            publisher
+                .dropFirst()
+                .sink { [weak self] in
+                    guard let self, !self.isApplyingFileSyncRemote else { return }
+                    self.fileSyncService.markSettingsChanged()
                 }
                 .store(in: &fileSyncSubscriptions)
         }
@@ -290,7 +343,9 @@ public final class TimetableViewModel: ObservableObject {
             notes: Array(lessonNotes.values).sorted { $0.id < $1.id },
             viewMode: viewMode.rawValue,
             appearance: appearance.rawValue,
-            tagSettings: tagSettings
+            tagSettings: tagSettings,
+            gradeSettings: gradeSettings,
+            gradeBook: gradeBook
         )
     }
 
@@ -325,6 +380,10 @@ public final class TimetableViewModel: ObservableObject {
         self.viewMode = storage.loadViewMode()
         self.appearance = storage.loadAppearance()
         self.tagSettings = storage.loadTagSettings()
+        self.gradeSettings = storage.loadGradeSettings()
+        self.gradeBook = storage.loadGradeBook()
+        self.gradeSubjectSort = gradeSettings.defaultSubjectSort
+        self.gradeEntrySort = gradeSettings.defaultEntrySort
         self.lastSyncDate = untisCredentials.lastSyncDate
         self.noteUndoSessions = storage.loadNoteUndoSessions()
         restoreApplePencilStatus()
@@ -849,12 +908,20 @@ public final class TimetableViewModel: ObservableObject {
     /// nächsten App-Start wieder aktiv ist.
     public func setViewMode(_ mode: TimetableViewMode) {
         guard viewMode != mode else { return }
+        // „Noten & Punkte“ gibt es nur mit aktivem Modul.
+        if mode == .gradesAndPoints, !gradeSettings.isEnabled { return }
 
         if InteractionPolicies.shouldResetFiltersWhenEnteringNotesOnly(
             previousMode: viewMode.rawValue,
             newMode: mode.rawValue
         ) {
             activeTagFilter.removeAll()
+        }
+
+        // Beim Wechsel in „Noten & Punkte“ gilt immer die in den Einstellungen
+        // hinterlegte Standardsortierung – nicht die zuletzt benutzte.
+        if mode == .gradesAndPoints, viewMode != .gradesAndPoints {
+            resetGradeSortsToDefaults()
         }
 
         // Der Wechsel zu „Nur Notizen“ kann viele heruntergerechnete
@@ -873,7 +940,12 @@ public final class TimetableViewModel: ObservableObject {
 
     /// Prüft, ob eine Stunde eine Notiz mit sichtbarem Inhalt hat.
     public func hasVisibleNote(for lesson: Lesson) -> Bool {
-        visibleNoteKeys.contains(lesson.noteKey)
+        // Handy-Notizen (schlichter Fließtext) sind immer sichtbar – sie
+        // werden nie als „leer“ aufgeräumt und erscheinen auch dann, wenn der
+        // Hintergrund-Ladevorgang noch läuft.
+        if notesMetadata[lesson.noteKey]?.usesPhoneTextLayout == true { return true }
+        if lessonNotes[lesson.noteKey]?.usesPhoneTextLayout == true { return true }
+        return visibleNoteKeys.contains(lesson.noteKey)
     }
 
     // MARK: - Drawing & Notes Handling
@@ -882,9 +954,32 @@ public final class TimetableViewModel: ObservableObject {
     /// Bildschirm-Rahmen der angetippten Fach-Karte (globale Koordinaten) und
     /// wird als Startpunkt der Zoom-Animation verwendet.
     public func openNote(for lesson: Lesson, sourceFrame: CGRect = .zero) {
+        // iPhone: keinen Zeichenbereich mehr. Handy-Notizen öffnen den
+        // schlichten Text-Editor, Zeichen-Notizen (Handschrift vom iPad)
+        // zeigen ausschließlich die Optionen.
+        if DeviceLayout.isPhone {
+            if phoneCanEditNote(for: lesson) {
+                closeNoteOverlay()
+                phoneEditorLesson = lesson
+            } else {
+                Haptics.select()
+                phoneOptionsLesson = lesson
+            }
+            return
+        }
         let presentation = ActiveNotePresentation(lesson: lesson, sourceFrame: sourceFrame)
         withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
             activeNotePresentation = presentation
+        }
+    }
+
+    /// Schließt den iPhone-Editor (speichert vorher die Handy-Notiz).
+    public func closePhoneNote() {
+        guard phoneEditorLesson != nil else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            phoneEditorLesson = nil
         }
     }
 
@@ -911,11 +1006,16 @@ public final class TimetableViewModel: ObservableObject {
         backgroundStyle: NoteBackgroundStyle = .blank,
         backgroundScale: Double = NoteBackgroundMetrics.defaultScale,
         tagID: UUID? = nil,
-        hasInkContent: Bool? = nil
+        hasInkContent: Bool? = nil,
+        usesPhoneTextLayout: Bool = false,
+        phoneText: String = "",
+        phoneFontSize: Double? = nil,
+        phoneLayoutConversionDate: Date? = nil
     ) -> Date {
         let key = lesson.noteKey
         // Ein Tag zählt nur, solange er im Tag-System noch existiert.
         let resolvedTagID = tagSettings.tag(withID: tagID)?.id
+        let now = Date()
         let note = LessonNote(
             id: key,
             drawingData: drawingData,
@@ -926,7 +1026,14 @@ public final class TimetableViewModel: ObservableObject {
             backgroundStyle: backgroundStyle,
             backgroundScale: backgroundScale,
             tagID: resolvedTagID,
-            updatedAt: Date()
+            usesPhoneTextLayout: usesPhoneTextLayout,
+            phoneText: usesPhoneTextLayout ? phoneText : "",
+            phoneFontSize: usesPhoneTextLayout ? phoneFontSize : nil,
+            // Wird eine Handy-Notiz auf dem iPad in den Zeichenbereich
+            // umgewandelt, hält dieser Zeitpunkt fest, ab wann sie dort
+            // bearbeitet wurde – auf dem iPhone ist sie danach gesperrt.
+            phoneLayoutConversionDate: usesPhoneTextLayout ? now : phoneLayoutConversionDate,
+            updatedAt: now
         )
 
         // Dieselbe Regel wie `LessonNote.hasVisibleContent`, nur ohne das
@@ -1137,6 +1244,76 @@ public final class TimetableViewModel: ObservableObject {
         successMessage = "Notiz gelöscht."
     }
 
+    // MARK: - Handy-Notizen (iPhone)
+
+    /// Ob die Notiz einer Stunde auf dem **iPhone** geöffnet (bearbeitet)
+    /// werden darf.
+    ///
+    /// Nur Handy-Notizen (schlichter Fließtext) dürfen das. Zeichen-Notizen –
+    /// also alles, was Handschrift, Textfelder oder Bilder enthält und auf dem
+    /// iPad entstanden ist – zeigen dort ausschließlich die Optionen, wie sie
+    /// sonst beim gedrückt Halten erscheinen.
+    public func phoneCanEditNote(for lesson: Lesson) -> Bool {
+        if let note = lessonNotes[lesson.noteKey] ?? noteCache.loadNote(for: lesson.noteKey) {
+            return MobileNotePolicy.phoneAllowsEditing(note)
+        }
+        // Noch keine Notiz: Beim Öffnen entsteht eine neue Handy-Notiz.
+        return true
+    }
+
+    /// Vorhandener Text und Schriftgröße einer Handy-Notiz (zum Bearbeiten).
+    public func phoneNoteContent(for lesson: Lesson) -> (text: String, fontSize: Double)? {
+        guard let note = lessonNotes[lesson.noteKey] ?? noteCache.loadNote(for: lesson.noteKey),
+              note.usesPhoneTextLayout else { return nil }
+        return (
+            note.phoneText,
+            MobileNotePolicy.resolvedPhoneFontSize(
+                stored: note.phoneFontSize,
+                fallback: drawingSettings.defaultPhoneFontSize
+            )
+        )
+    }
+
+    /// Speichert eine Handy-Notiz (schlichter Fließtext auf dem iPhone).
+    ///
+    /// Leerer Text entfernt die Notiz wieder – so bleibt ein versehentlich
+    /// geöffnetes Feld ohne Spuren. Der Tag wird nur übernommen, solange er im
+    /// Tag-System existiert.
+    @discardableResult
+    public func persistPhoneNote(
+        for lesson: Lesson,
+        text: String,
+        fontSize: Double,
+        tagID: UUID?
+    ) -> Date {
+        let key = lesson.noteKey
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmed.isEmpty {
+            if lessonNotes[key] != nil || notesMetadata[key] != nil {
+                lessonNotes.removeValue(forKey: key)
+                notesMetadata.removeValue(forKey: key)
+                visibleNoteKeys.remove(key)
+                noteCache.deleteNote(for: key)
+                discardUndoSession(for: key)
+                fileSyncService.recordDeletedNote(id: key)
+            }
+            return Date()
+        }
+
+        let note = MobileNotePolicy.makePhoneNote(
+            id: key,
+            text: text,
+            fontSize: fontSize,
+            tagID: tagSettings.tag(withID: tagID)?.id
+        )
+        lessonNotes[key] = note
+        visibleNoteKeys.insert(key)
+        unavailableNoteKeys.remove(key)
+        noteCache.saveNote(note, hasVisibleContent: true)
+        return note.updatedAt
+    }
+
     // MARK: - Notizen kopieren & einfügen
 
     /// Ob eine gültige kopierte Notiz zum Einfügen bereitliegt.
@@ -1173,9 +1350,15 @@ public final class TimetableViewModel: ObservableObject {
             croppedImageData: copiedNote.croppedImageData,
             lineCount: copiedNote.lineCount,
             textBoxes: copiedNote.textBoxes,
+            imageBoxes: copiedNote.imageBoxes,
             backgroundStyle: copiedNote.backgroundStyle,
             backgroundScale: copiedNote.backgroundScale,
             tagID: tagSettings.tag(withID: copiedNote.tagID)?.id,
+            usesPhoneTextLayout: copiedNote.usesPhoneTextLayout,
+            phoneText: copiedNote.phoneText,
+            phoneFontSize: copiedNote.phoneFontSize,
+            // Eine eingefügte Handy-Notiz ist eine neue Handy-Notiz.
+            phoneLayoutConversionDate: copiedNote.usesPhoneTextLayout ? Date() : nil,
             updatedAt: Date()
         )
         lessonNotes[key] = pasted
@@ -1188,7 +1371,37 @@ public final class TimetableViewModel: ObservableObject {
     // MARK: - Tag-System
 
     public func saveTagSettings() {
+        tagSettings.pruneDeletedTags()
         storage.saveTagSettings(tagSettings)
+    }
+
+    /// Setzt den Standard-Tag, der beim Erstellen einer neuen Notiz automatisch
+    /// angewendet wird (`nil` = kein Tag).
+    public func setDefaultTagID(_ tagID: UUID?) {
+        guard tagSettings.isEnabled else { return }
+        tagSettings.defaultTagID = tagSettings.tag(withID: tagID)?.id
+        saveTagSettings()
+    }
+
+    /// Standard-Tag für neue Notizen (nur wenn das Tag-System aktiv ist).
+    public var defaultTagID: UUID? {
+        tagSettings.effectiveDefaultTag?.id
+    }
+
+    /// Schaltet einen Tag für das automatische Löschen alter Notizen um.
+    public func toggleAutoDeleteTag(_ tagID: UUID) {
+        if tagSettings.autoDeleteTagIDs.contains(tagID) {
+            tagSettings.autoDeleteTagIDs.remove(tagID)
+        } else {
+            tagSettings.autoDeleteTagIDs.insert(tagID)
+        }
+        saveTagSettings()
+    }
+
+    /// `true`, wenn alle Notizen (unabhängig vom Tag) automatisch gelöscht
+    /// werden – das ist der Fall, solange kein Tag ausgewählt ist.
+    public var autoDeleteAppliesToAllTags: Bool {
+        tagSettings.autoDeleteTagIDs.isEmpty
     }
 
     /// Tag einer Stunde (nur wenn das Tag-System aktiv ist und der Tag noch existiert).
@@ -1264,6 +1477,8 @@ public final class TimetableViewModel: ObservableObject {
     public func deleteTag(id: UUID) {
         tagSettings.tags.removeAll(where: { $0.id == id })
         activeTagFilter.remove(id)
+        tagSettings.autoDeleteTagIDs.remove(id)
+        if tagSettings.defaultTagID == id { tagSettings.defaultTagID = nil }
         saveTagSettings()
 
         let affectedKeys = lessonNotes.compactMap { entry -> String? in
@@ -1413,27 +1628,164 @@ public final class TimetableViewModel: ObservableObject {
         // PERFORMANCE: Verwende Metadaten statt alle Notizen zu laden
         visibleNoteKeys = Set(notesMetadata.compactMap { entry -> String? in
             let (key, metadata) = entry
+            if metadata.usesPhoneTextLayout { return key }
             return metadata.hasContent ? key : nil
         })
     }
 
     /// Entfernt Notizen zu Stunden, die bereits in der Vergangenheit liegen –
     /// sofern die entsprechende Einstellung aktiviert ist.
+    ///
+    /// Sind im Tag-System bestimmte Tags fürs automatische Löschen ausgewählt,
+    /// werden **nur** Notizen mit diesen Tags entfernt. Ohne Auswahl gilt
+    /// weiterhin: alle abgelaufenen Notizen.
     public func cleanupPastNotesIfEnabled() {
         guard drawingSettings.autoDeletePastNotes else { return }
 
         let todayStart = Calendar.germanCalendar.startOfDay(for: Date())
-        
-        // PERFORMANCE: Verwende Metadaten statt alle Notizen zu laden
-        let keys = Array(notesMetadata.keys)
-        for key in keys {
+        let schedulesByTag = tagSettings.isEnabled && !tagSettings.autoDeleteTagIDs.isEmpty
+        let removedKeys = deletedPastNoteKeys(
+            todayStart: todayStart,
+            schedulesByTag: schedulesByTag
+        )
+        guard !removedKeys.isEmpty else { return }
+
+        for key in removedKeys {
+            lessonNotes.removeValue(forKey: key)
+            notesMetadata.removeValue(forKey: key)
+            visibleNoteKeys.remove(key)
+            noteCache.deleteNote(for: key)
+            noteUndoSessions.removeSession(for: key)
+        }
+        storage.saveNoteUndoSessions(noteUndoSessions)
+        fileSyncService.recordDeletedNotes(ids: removedKeys)
+    }
+
+    /// Welche Notizen das automatische Aufräumen löschen würde – reine
+    /// Auswahl-Logik, damit sie sich testen lässt.
+    public func deletedPastNoteKeys(todayStart: Date, schedulesByTag: Bool) -> [String] {
+        notesMetadata.compactMap { entry -> String? in
+            let (key, metadata) = entry
             let datePrefix = String(key.prefix(10))
-            if let date = Date.fromYyyyMMdd(datePrefix), date < todayStart {
-                lessonNotes.removeValue(forKey: key)
-                notesMetadata.removeValue(forKey: key)
-                visibleNoteKeys.remove(key)
-                noteCache.deleteNote(for: key)
+            guard let date = Date.fromYyyyMMdd(datePrefix), date < todayStart else { return nil }
+            if schedulesByTag, !tagSettings.isScheduledForAutoDelete(tagID: metadata.tagID) {
+                return nil
             }
+            return key
+        }
+    }
+
+    /// Anzahl der Notizen, die das automatische Aufräumen aktuell löschen
+    /// würde (für die Erklärung in den Einstellungen).
+    public func autoDeleteCandidateCount(relativeTo now: Date = Date()) -> Int {
+        guard drawingSettings.autoDeletePastNotes else { return 0 }
+        let todayStart = Calendar.germanCalendar.startOfDay(for: now)
+        let schedulesByTag = tagSettings.isEnabled && !tagSettings.autoDeleteTagIDs.isEmpty
+        return deletedPastNoteKeys(todayStart: todayStart, schedulesByTag: schedulesByTag).count
+    }
+
+    // MARK: - Noten & Punkte
+
+    /// Ob der Modus „Noten & Punkte“ in der Modus-Auswahl erscheint.
+    public var isGradesModuleEnabled: Bool { gradeSettings.isEnabled }
+
+    public func saveGradeSettings() {
+        storage.saveGradeSettings(gradeSettings)
+        if !gradeSettings.isEnabled, viewMode == .gradesAndPoints {
+            // Modul ausgeschaltet: Der Modus verschwindet – zurück in den
+            // Standard, statt in einem nicht mehr erreichbaren Modus zu hängen.
+            setViewMode(.standard)
+        }
+    }
+
+    public func saveGradeBook() {
+        storage.saveGradeBook(gradeBook)
+    }
+
+    /// Alle Fächer aus „Fächer & Farben“, in der aktuell gewählten Reihenfolge.
+    /// Die Reihenfolge berücksichtigt ausschließlich **eigene** Fächer – die
+    /// automatisch aus dem Stundenplan erkannten Fächer erscheinen hier nicht.
+    public var gradeSubjects: [SubjectCustomization] {
+        let sort = gradeSubjectSort
+        let keys = subjectCustomizations.map { GradeBook.subjectKey(for: $0) }
+        let byKey = Dictionary(
+            subjectCustomizations.map { (GradeBook.subjectKey(for: $0), $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let sortedKeys = GradeMath.sortedSubjectKeys(
+            keys,
+            displayName: { key in
+                guard let subject = byKey[key] else { return key }
+                return subject.customName.isEmpty ? subject.originalSubject : subject.customName
+            },
+            entries: { self.gradeBook.entries(forSubjectKey: $0) },
+            sort: sort,
+            randomSeed: gradeRandomSeed
+        )
+        return sortedKeys.compactMap { byKey[$0] }
+    }
+
+    public func gradeEntries(for subject: SubjectCustomization) -> [GradeEntry] {
+        gradeBook.entries(for: subject)
+    }
+
+    public func gradeEntriesSorted(for subject: SubjectCustomization) -> [GradeEntry] {
+        GradeMath.sortedEntries(gradeEntries(for: subject), sort: gradeEntrySort)
+    }
+
+    /// Durchschnitt eines Fachs als Note (1 … 6), `nil` ohne Einträge.
+    public func gradeAverage(for subject: SubjectCustomization) -> Double? {
+        GradeMath.averageGrade(for: gradeEntries(for: subject))
+    }
+
+    /// Durchschnitt als fertiger Text („2,3“ oder „–“).
+    public func gradeAverageText(for subject: SubjectCustomization) -> String {
+        GradeMath.averageText(for: gradeEntries(for: subject))
+    }
+
+    /// Startwert eines neuen Eintrags im aktuell eingestellten System.
+    public var defaultGradeEntryValue: Double {
+        GradeMath.value(
+            forSliderFraction: gradeSettings.defaultSliderFraction,
+            unit: gradeSettings.system,
+            maximumPoints: gradeSettings.maximumPoints
+        )
+    }
+
+    /// Legt einen Eintrag an bzw. aktualisiert ihn.
+    @discardableResult
+    public func saveGradeEntry(_ entry: GradeEntry, for subject: SubjectCustomization) -> Bool {
+        let key = GradeBook.subjectKey(for: subject)
+        guard gradeBook.upsert(entry, subjectKey: key) else {
+            errorMessage = "Mehr als \(GradeBook.maximumEntriesPerSubject) Einträge pro Fach sind nicht möglich."
+            return false
+        }
+        saveGradeBook()
+        return true
+    }
+
+    public func deleteGradeEntry(id: UUID, for subject: SubjectCustomization) {
+        gradeBook.remove(entryID: id, subjectKey: GradeBook.subjectKey(for: subject))
+        saveGradeBook()
+    }
+
+    /// Setzt die Fächer-Sortierung auf den in den Einstellungen hinterlegten
+    /// Standard zurück (passiert beim Wechsel in den Modus).
+    public func resetGradeSortsToDefaults() {
+        gradeSubjectSort = gradeSettings.defaultSubjectSort
+        gradeEntrySort = gradeSettings.defaultEntrySort
+        gradeRandomSeed = UInt64.random(in: 1...UInt64.max)
+    }
+
+    public func setGradesModuleEnabled(_ enabled: Bool) {
+        guard gradeSettings.isEnabled != enabled else { return }
+        gradeSettings.isEnabled = enabled
+        saveGradeSettings()
+        if enabled {
+            gradeSubjectSort = gradeSettings.defaultSubjectSort
+            gradeEntrySort = gradeSettings.defaultEntrySort
+        } else if viewMode == .gradesAndPoints {
+            setViewMode(.standard)
         }
     }
 
@@ -1635,6 +1987,10 @@ public final class TimetableViewModel: ObservableObject {
         periods = backup.periods.isEmpty ? Period.defaultPeriods : backup.periods
         lessons = backup.lessons
         tagSettings = backup.tagSettings
+        gradeSettings = backup.gradeSettings
+        gradeBook = backup.gradeBook
+        gradeSubjectSort = gradeSettings.defaultSubjectSort
+        gradeEntrySort = gradeSettings.defaultEntrySort
         activeTagFilter.removeAll()
         if let mode = TimetableViewMode(rawValue: backup.viewMode) {
             viewMode = mode
@@ -1664,6 +2020,8 @@ public final class TimetableViewModel: ObservableObject {
         storage.saveViewMode(viewMode)
         storage.saveAppearance(appearance)
         storage.saveTagSettings(tagSettings)
+        storage.saveGradeSettings(gradeSettings)
+        storage.saveGradeBook(gradeBook)
         storage.replaceAllLessonNotes(with: Array(restoredNotes.values))
 
         if resetFileSyncTombstones {

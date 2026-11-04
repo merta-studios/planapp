@@ -43,14 +43,27 @@ public struct NoteTagSettings: Codable, Equatable {
     public var isEnabled: Bool
     /// Reihenfolge = Anzeigereihenfolge (Auswahl in der Notiz, Filterleiste).
     public var tags: [NoteTag]
+    /// Standard-Tag, der beim Erstellen einer **neuen** Notiz automatisch
+    /// gesetzt wird. `nil` = kein Tag. Ein Tipp auf „Keiner“ setzt ihn zurück.
+    public var defaultTagID: UUID?
+    /// Nur Notizen mit diesen Tags werden beim automatischen Löschen alter
+    /// Notizen entfernt. Leer = **alle** Notizen (bisheriges Verhalten).
+    public var autoDeleteTagIDs: Set<UUID>
 
-    public init(isEnabled: Bool = false, tags: [NoteTag] = []) {
+    public init(
+        isEnabled: Bool = false,
+        tags: [NoteTag] = [],
+        defaultTagID: UUID? = nil,
+        autoDeleteTagIDs: Set<UUID> = []
+    ) {
         self.isEnabled = isEnabled
         self.tags = Array(tags.prefix(NoteTagSettings.maximumTagCount))
+        self.defaultTagID = defaultTagID
+        self.autoDeleteTagIDs = autoDeleteTagIDs
     }
 
     private enum CodingKeys: String, CodingKey {
-        case isEnabled, tags
+        case isEnabled, tags, defaultTagID, autoDeleteTagIDs
     }
 
     public init(from decoder: Decoder) throws {
@@ -58,12 +71,41 @@ public struct NoteTagSettings: Codable, Equatable {
         self.isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false
         let decodedTags = try container.decodeIfPresent([NoteTag].self, forKey: .tags) ?? []
         self.tags = Array(decodedTags.prefix(NoteTagSettings.maximumTagCount))
+        // Ältere Speicherstände kennen weder Standard-Tag noch Lösch-Auswahl.
+        self.defaultTagID = try container.decodeIfPresent(UUID.self, forKey: .defaultTagID)
+        self.autoDeleteTagIDs = try container.decodeIfPresent(Set<UUID>.self, forKey: .autoDeleteTagIDs) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(isEnabled, forKey: .isEnabled)
         try container.encode(tags, forKey: .tags)
+        try container.encodeIfPresent(defaultTagID, forKey: .defaultTagID)
+        try container.encode(autoDeleteTagIDs, forKey: .autoDeleteTagIDs)
+    }
+
+    /// Der wirksame Standard-Tag (nur wenn das Tag-System aktiv ist und der
+    /// Tag noch existiert).
+    public var effectiveDefaultTag: NoteTag? {
+        guard isEnabled else { return nil }
+        return tag(withID: defaultTagID)
+    }
+
+    /// Ob eine Notiz mit diesem Tag beim automatischen Aufräumen gelöscht
+    /// werden soll. Ohne Auswahl zählt jede Notiz.
+    public func isScheduledForAutoDelete(tagID: UUID?) -> Bool {
+        guard !autoDeleteTagIDs.isEmpty else { return true }
+        guard let tagID else { return false }
+        return autoDeleteTagIDs.contains(tagID)
+    }
+
+    /// Entfernt Verweise auf gelöschte Tags.
+    public mutating func pruneDeletedTags() {
+        let valid = Set(tags.map(\.id))
+        if let defaultTagID, !valid.contains(defaultTagID) {
+            self.defaultTagID = nil
+        }
+        autoDeleteTagIDs = autoDeleteTagIDs.intersection(valid)
     }
 
     public var canAddTag: Bool {
