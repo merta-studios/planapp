@@ -147,7 +147,7 @@ struct GradeSettingsSection: View {
                     .font(.system(size: 14, weight: .regular, design: .default))
                 Spacer()
                 Text("0 – \(draft.maximumPoints)")
-                    .font(.system(size: 13, weight: .monospaced))
+                    .font(.system(size: 13).monospaced())
                     .foregroundColor(.secondary)
             }
 
@@ -161,7 +161,7 @@ struct GradeSettingsSection: View {
                     set: { newValue in update { $0.maximumPoints = newValue } }
                 ), in: GradeSettings.minimumPointsLimit...GradeSettings.maximumPointsLimit) {
                     Text("\(draft.maximumPoints)")
-                        .font(.system(size: 15, weight: .medium, design: .monospaced))
+                        .font(.system(size: 15, weight: .medium).monospaced())
                         .frame(minWidth: 44, alignment: .trailing)
                 }
                 .labelsHidden()
@@ -171,7 +171,9 @@ struct GradeSettingsSection: View {
             Slider(
                 value: Binding(
                     get: { Double(draft.maximumPoints) },
-                    set: { update { $0.maximumPoints = Int($0.maximumPoints.rounded()) } }
+                    set: { newValue in
+                        update { $0.maximumPoints = Int(newValue.rounded()) }
+                    }
                 ),
                 in: Double(GradeSettings.minimumPointsLimit)...Double(GradeSettings.maximumPointsLimit),
                 step: 1
@@ -269,7 +271,7 @@ struct GradeSettingsSection: View {
                             .font(.system(size: 14, weight: .regular, design: .default))
                         Spacer()
                         Text(gradeSliderPreview)
-                            .font(.system(size: 13, weight: .monospaced))
+                            .font(.system(size: 13).monospaced())
                             .foregroundColor(.secondary)
                     }
                     Slider(
