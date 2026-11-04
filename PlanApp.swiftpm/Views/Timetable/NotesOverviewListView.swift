@@ -421,9 +421,17 @@ public struct NotesOverviewListView: View {
                 let endMinutes = periodsByNumber[endPeriodNumber]?.endMinutes
                     ?? (startMinutes + 45)
 
-                let texts = note.textBoxes
-                    .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
+                // Handy-Notizen bestehen nur aus Fließtext – der erscheint in
+                // der Übersicht genauso wie die Textfelder einer iPad-Notiz.
+                let texts: [String]
+                if note.usesPhoneTextLayout {
+                    let trimmed = note.phoneText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    texts = trimmed.isEmpty ? [] : [trimmed]
+                } else {
+                    texts = note.textBoxes
+                        .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                }
 
                 entries.append(
                     NotedLesson(
@@ -633,16 +641,21 @@ private struct NoteOverviewActions: View {
             Haptics.tap()
             viewModel.openNote(for: lesson, sourceFrame: sourceFrame())
         } label: {
-            Label("Notiz bearbeiten", systemImage: "square.and.pencil")
+            Label(
+                DeviceLayout.isPhone ? "Optionen" : "Notiz bearbeiten",
+                systemImage: "square.and.pencil"
+            )
         }
 
-        Button {
-            Haptics.tap()
-            Task {
-                await viewModel.openNoteForNextOccurrence(after: lesson)
+        if !DeviceLayout.isPhone {
+            Button {
+                Haptics.tap()
+                Task {
+                    await viewModel.openNoteForNextOccurrence(after: lesson)
+                }
+            } label: {
+                Label("Notiz für die nächste Stunde erstellen", systemImage: "calendar.badge.plus")
             }
-        } label: {
-            Label("Notiz für die nächste Stunde erstellen", systemImage: "calendar.badge.plus")
         }
 
         Button {

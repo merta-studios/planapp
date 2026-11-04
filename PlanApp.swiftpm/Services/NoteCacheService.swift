@@ -38,6 +38,11 @@ public final class NoteCacheService {
         public let hasPreviewImage: Bool
         public let textBoxCount: Int
         public let imageBoxCount: Int
+        /// Handy-Notiz (schlichter Fließtext) – wird im Stundenplan als Text
+        /// angezeigt, auf dem iPhone nur mit Optionen geöffnet.
+        public let usesPhoneTextLayout: Bool
+        /// Fließtext einer Handy-Notiz (leer bei Zeichen-Notizen).
+        public let phoneText: String
 
         public init(
             id: String,
@@ -49,7 +54,9 @@ public final class NoteCacheService {
             hasContent: Bool,
             hasPreviewImage: Bool,
             textBoxCount: Int,
-            imageBoxCount: Int
+            imageBoxCount: Int,
+            usesPhoneTextLayout: Bool = false,
+            phoneText: String = ""
         ) {
             self.id = id
             self.lineCount = lineCount
@@ -61,6 +68,8 @@ public final class NoteCacheService {
             self.hasPreviewImage = hasPreviewImage
             self.textBoxCount = textBoxCount
             self.imageBoxCount = imageBoxCount
+            self.usesPhoneTextLayout = usesPhoneTextLayout
+            self.phoneText = phoneText
         }
     }
     
@@ -81,7 +90,9 @@ public final class NoteCacheService {
                 hasContent: dict["hasContent"] as? Bool ?? true,
                 hasPreviewImage: dict["hasPreviewImage"] as? Bool ?? false,
                 textBoxCount: dict["textBoxCount"] as? Int ?? 0,
-                imageBoxCount: dict["imageBoxCount"] as? Int ?? 0
+                imageBoxCount: dict["imageBoxCount"] as? Int ?? 0,
+                usesPhoneTextLayout: dict["usesPhoneTextLayout"] as? Bool ?? false,
+                phoneText: dict["phoneText"] as? String ?? ""
             )
             result[key] = noteMetadata
                 
@@ -148,7 +159,9 @@ public final class NoteCacheService {
             hasContent: hasVisibleContent ?? note.hasVisibleContent,
             hasPreviewImage: note.croppedImageData != nil,
             textBoxCount: note.textBoxes.count,
-            imageBoxCount: note.imageBoxes.count
+            imageBoxCount: note.imageBoxes.count,
+            usesPhoneTextLayout: note.usesPhoneTextLayout,
+            phoneText: note.phoneText
         )
         metadataCache.setObject(metadata, forKey: note.id)
     }

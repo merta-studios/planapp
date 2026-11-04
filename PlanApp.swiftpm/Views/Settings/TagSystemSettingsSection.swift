@@ -115,6 +115,14 @@ struct TagSystemSettingsSection: View {
                 .padding(DeviceLayout.settingsInnerPadding)
                 .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
                 .transition(.opacity.combined(with: .move(edge: .top)))
+
+                // 3. STANDARD-TAG
+                defaultTagCard
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+
+                // 4. AUTOMATISCHES LÖSCHEN NACH TAG
+                autoDeleteTagCard
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(DeviceLayout.settingsOuterPadding)
@@ -145,6 +153,139 @@ struct TagSystemSettingsSection: View {
         } message: { tag in
             Text("„\(tag.displayName)“ wird aus allen Notizen entfernt. Die Notizen selbst bleiben erhalten.")
         }
+    }
+
+    // MARK: - Standard-Tag
+
+    /// Tag, der bei jeder neuen Notiz automatisch gesetzt wird.
+    private var defaultTagCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "tag.circle")
+                    .font(.system(size: 14, weight: .regular, design: .default))
+                    .foregroundColor(.indigo)
+                Text("Standard-Tag für neue Notizen")
+                    .font(.system(size: 14, weight: .regular, design: .default))
+            }
+
+            Picker("Standard-Tag", selection: Binding(
+                get: { viewModel.defaultTagID },
+                set: { newValue in
+                    Haptics.select()
+                    viewModel.setDefaultTagID(newValue)
+                }
+            )) {
+                Text("Kein Tag").tag(UUID?.none)
+                ForEach(viewModel.tagSettings.tags) { tag in
+                    Text(tag.displayName).tag(UUID?.some(tag.id))
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Jede neu erstellte Notiz bekommt diesen Tag sofort – auf iPad und iPhone. Du kannst ihn in der Notiz jederzeit ändern oder entfernen.")
+                .font(.system(size: 12, weight: .regular, design: .default))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(DeviceLayout.settingsInnerPadding)
+        .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
+    }
+
+    // MARK: - Automatisches Löschen nach Tag
+
+    /// Auswahl, welche Tags vom automatischen Aufräumen betroffen sind.
+    ///
+    /// Bisher löschte die Einstellung „Alte Notizen automatisch löschen“ jede
+    /// vergangene Notiz. Jetzt lässt sich das auf bestimmte Tags eingrenzen –
+    /// ohne Auswahl gilt die Regel weiterhin für alle Notizen.
+    private var autoDeleteTagCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 14, weight: .regular, design: .default))
+                    .foregroundColor(.orange)
+                Text("Automatisch löschen nach Tag")
+                    .font(.system(size: 14, weight: .regular, design: .default))
+            }
+
+            Text(viewModel.autoDeleteAppliesToAllTags
+                 ? "Aktuell werden alle abgelaufenen Notizen gelöscht. Wähle Tags aus, um das Aufräumen darauf zu beschränken."
+                 : "Nur abgelaufene Notizen mit den gewählten Tags werden gelöscht.")
+                .font(.system(size: 12, weight: .regular, design: .default))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 0) {
+                ForEach(viewModel.tagSettings.tags) { tag in
+                    Button {
+                        Haptics.select()
+                        viewModel.toggleAutoDeleteTag(tag.id)
+                    } label: {
+                        HStack(spacing: 10) {
+                            NoteTagPill(tag: tag, size: .regular)
+                            Text(tag.displayName)
+                                .font(.system(size: 14, weight: .regular, design: .default))
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                            Image(systemName: viewModel.tagSettings.autoDeleteTagIDs.contains(tag.id)
+                                  ? "checkmark.circle.fill"
+                                  : "circle")
+                                .font(.system(size: 17))
+                                .foregroundColor(viewModel.tagSettings.autoDeleteTagIDs.contains(tag.id) ? .indigo : .secondary)
+                        }
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    if tag.id != viewModel.tagSettings.tags.last?.id {
+                        Divider()
+                    }
+                }
+            }
+
+            if !viewModel.autoDeleteAppliesToAllTags {
+                Button {
+                    Haptics.tap()
+                    for tagID in viewModel.tagSettings.autoDeleteTagIDs {
+                        viewModel.toggleAutoDeleteTag(tagID)
+                    }
+                } label: {
+                    Text("Auswahl zurücksetzen (alle Tags)")
+                        .font(.system(size: 13, weight: .regular, design: .default))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                }
+                .lightButton(cornerRadius: 11, tint: .orange)
+                .foregroundColor(.orange)
+            }
+
+            if viewModel.drawingSettings.autoDeletePastNotes {
+                Text(autoDeleteCandidateText)
+                    .font(.system(size: 12, weight: .regular, design: .default))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Zum Anwenden in „\(DeviceLayout.isPhone ? "Notizen & Zeichenfläche" : "Zeichnen & Apple Pencil")“ die Option „Alte Notizen automatisch löschen“ aktivieren.")
+                    .font(.system(size: 12, weight: .regular, design: .default))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(DeviceLayout.settingsInnerPadding)
+        .lightCard(cornerRadius: 14, strokeOpacity: 0.18)
+    }
+
+    private var autoDeleteCandidateText: String {
+        let count = viewModel.autoDeleteCandidateCount()
+        if count == 0 {
+            return "Aktuell gibt es keine abgelaufenen Notizen, die gelöscht würden."
+        }
+        return count == 1
+            ? "1 abgelaufene Notiz würde jetzt gelöscht."
+            : "\(count) abgelaufene Notizen würden jetzt gelöscht."
     }
 
     // MARK: - Zeile

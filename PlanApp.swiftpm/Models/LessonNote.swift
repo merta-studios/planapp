@@ -16,6 +16,24 @@ public struct LessonNote: Identifiable, Codable, Equatable {
     public var backgroundScale: Double
     /// Zugewiesener Tag (siehe `NoteTag`); `nil` = kein Tag.
     public var tagID: UUID?
+    /// Wie die Notiz entstanden ist: `false` = normaler Zeichenbereich
+    /// (iPad), `true` = schlichte Textnotiz vom iPhone.
+    ///
+    /// Solche „Handy-Notizen“ haben keinen Zeichenbereich, keine Bilder und
+    /// keine freien Textfelder – nur einen Fließtext. Sie lassen sich auf dem
+    /// iPhone nicht mehr öffnen (dort gibt es nur noch die Optionen), sondern
+    /// werden beim ersten Bearbeiten auf dem iPad in den normalen
+    /// Zeichenbereich umgewandelt (siehe Editor).
+    public var usesPhoneTextLayout: Bool
+    /// Fließtext einer Handy-Notiz (nur gültig bei `usesPhoneTextLayout`).
+    public var phoneText: String
+    /// Schriftgröße des Fließtexts einer Handy-Notiz.
+    public var phoneFontSize: Double?
+    /// Zeitpunkt, zu dem die Notiz zuletzt als Handy-Notiz gespeichert wurde.
+    /// Ist `updatedAt` **neuer**, wurde sie seither auf dem iPad im
+    /// Zeichenbereich bearbeitet – auf dem iPhone ist sie dann wieder gesperrt
+    /// (nur noch Optionen, kein Öffnen).
+    public var phoneLayoutConversionDate: Date?
     public var updatedAt: Date
 
     public init(
@@ -28,6 +46,10 @@ public struct LessonNote: Identifiable, Codable, Equatable {
         backgroundStyle: NoteBackgroundStyle = .blank,
         backgroundScale: Double = 1,
         tagID: UUID? = nil,
+        usesPhoneTextLayout: Bool = false,
+        phoneText: String = "",
+        phoneFontSize: Double? = nil,
+        phoneLayoutConversionDate: Date? = nil,
         updatedAt: Date = Date()
     ) {
         self.id = id
@@ -39,12 +61,18 @@ public struct LessonNote: Identifiable, Codable, Equatable {
         self.backgroundStyle = backgroundStyle
         self.backgroundScale = NoteBackgroundMetrics.clampedScale(backgroundScale)
         self.tagID = tagID
+        self.usesPhoneTextLayout = usesPhoneTextLayout
+        self.phoneText = phoneText
+        self.phoneFontSize = phoneFontSize.map(NoteTextBox.clampedPhoneFontSize)
+        self.phoneLayoutConversionDate = phoneLayoutConversionDate
         self.updatedAt = updatedAt
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, drawingData, croppedImageData, lineCount, textBoxes, imageBoxes
-        case backgroundStyle, backgroundScale, tagID, updatedAt
+        case backgroundStyle, backgroundScale, tagID
+        case usesPhoneTextLayout, phoneText, phoneFontSize, phoneLayoutConversionDate
+        case updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -62,6 +90,14 @@ public struct LessonNote: Identifiable, Codable, Equatable {
         let decodedScale = try container.decodeIfPresent(Double.self, forKey: .backgroundScale) ?? 1
         self.backgroundScale = NoteBackgroundMetrics.clampedScale(decodedScale)
         self.tagID = try container.decodeIfPresent(UUID.self, forKey: .tagID)
+        // Ältere Speicherstände sind immer klassische Zeichen-Notizen.
+        self.usesPhoneTextLayout = try container.decodeIfPresent(Bool.self, forKey: .usesPhoneTextLayout) ?? false
+        self.phoneText = try container.decodeIfPresent(String.self, forKey: .phoneText) ?? ""
+        self.phoneFontSize = try container
+            .decodeIfPresent(Double.self, forKey: .phoneFontSize)
+            .map(NoteTextBox.clampedPhoneFontSize)
+        self.phoneLayoutConversionDate = try container
+            .decodeIfPresent(Date.self, forKey: .phoneLayoutConversionDate)
         self.updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }
 
@@ -76,12 +112,21 @@ public struct LessonNote: Identifiable, Codable, Equatable {
         try container.encode(backgroundStyle, forKey: .backgroundStyle)
         try container.encode(backgroundScale, forKey: .backgroundScale)
         try container.encodeIfPresent(tagID, forKey: .tagID)
+        try container.encode(usesPhoneTextLayout, forKey: .usesPhoneTextLayout)
+        try container.encode(phoneText, forKey: .phoneText)
+        try container.encodeIfPresent(phoneFontSize, forKey: .phoneFontSize)
+        try container.encodeIfPresent(phoneLayoutConversionDate, forKey: .phoneLayoutConversionDate)
         try container.encode(updatedAt, forKey: .updatedAt)
     }
 
-    /// Prüft, ob mindestens ein Textfeld wirklich Text enthält.
+    /// Prüft, ob mindestens ein Textfeld (oder der Fließtext einer
+    /// Handy-Notiz) wirklich Text enthält.
     public var hasTextContent: Bool {
-        textBoxes.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if usesPhoneTextLayout,
+           !phoneText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        return textBoxes.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
     /// Prüft die eigentliche PencilKit-Zeichnung auf sichtbare Striche.
@@ -102,7 +147,8 @@ public struct LessonNote: Identifiable, Codable, Equatable {
 
     /// Prüft, ob mindestens ein Bild mit lesbaren Bilddaten vorhanden ist.
     public var hasImageContent: Bool {
-        imageBoxes.contains { $0.uiImage != nil }
+        if usesPhoneTextLayout { return false }
+        return imageBoxes.contains { $0.uiImage != nil }
     }
 
     /// Hilfsmethode: Prüft, ob eine Zeichnung oder nicht-leere Textfelder vorhanden sind

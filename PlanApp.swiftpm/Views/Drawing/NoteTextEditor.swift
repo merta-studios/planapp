@@ -31,6 +31,10 @@ struct NoteTextEditor: UIViewRepresentable {
     var fontStyle: NoteTextFontStyle = .system
     /// Farbe des Textes (über die Farb-Slots der Werkzeugleiste änderbar).
     let textColor: UIColor
+    /// Höhe des Feldes. Die `UITextView` bekommt **genau** diese Höhe, damit
+    /// sie mitsamt allen Zeilen im Feld liegt. (Vorher wuchs sie über den
+    /// Rahmen hinaus; das Feld zeigte beim Bearbeiten nur die erste Zeile.)
+    var height: CGFloat? = nil
     /// Ob das Feld gerade bearbeitet wird (Fokus halten/aufheben).
     let isEditing: Bool
     /// Wird bei jeder Texteingabe aufgerufen.
@@ -54,6 +58,10 @@ struct NoteTextEditor: UIViewRepresentable {
         // Text liegt auf dem festen weißen Papier und darf nicht mit dem
         // globalen Dark-Mode-Farbschema weiß werden.
         textView.textColor = textColor
+        // Der Innenabstand muss exakt dem des Anzeige-Modus entsprechen
+        // (8 pt + 8 pt Rahmenbreite = 16 pt), sonst bricht die Bearbeitung
+        // anders um als die Anzeige – und man sieht beim Bearbeiten nur noch
+        // einen Teil der Zeilen.
         textView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
         textView.textContainer.lineFragmentPadding = 0
         textView.textContainer.widthTracksTextView = true
@@ -67,6 +75,10 @@ struct NoteTextEditor: UIViewRepresentable {
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.setContentHuggingPriority(.required, for: .vertical)
         textView.text = text
+
+        if let height, height.isFinite, height > 0 {
+            textView.frame.size.height = height
+        }
 
         if isEditing {
             // Wird automatisch nachgeholt, sobald die View im Fenster hängt.
@@ -86,6 +98,13 @@ struct NoteTextEditor: UIViewRepresentable {
         }
         if uiView.textColor != textColor {
             uiView.textColor = textColor
+        }
+
+        // Texthöhe: Die View folgt dem Feld-Rahmen (siehe `height`). Ein
+        // veralteter Rahmen würde beim Bearbeiten Zeilen abschneiden.
+        let targetHeight = height ?? 0
+        if targetHeight.isFinite, targetHeight > 0, abs(uiView.frame.size.height - targetHeight) > 0.5 {
+            uiView.frame.size.height = targetHeight
         }
 
         // Externe Änderungen (Undo/Redo) auch während der Bearbeitung anzeigen,

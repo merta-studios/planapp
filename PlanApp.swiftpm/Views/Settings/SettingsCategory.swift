@@ -12,6 +12,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
     case untis
     case appearance
     case tags
+    case grades
     case data
 
     var id: String { rawValue }
@@ -25,6 +26,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
         case .untis: return "WebUntis & Sync"
         case .appearance: return "Darstellung"
         case .tags: return "Tag-System"
+        case .grades: return "Noten & Punkte"
         case .data: return "Daten & Zurücksetzen"
         }
     }
@@ -38,6 +40,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
         case .untis: return "Zugangsdaten und Synchronisation"
         case .appearance: return "Erscheinungsbild (hell, dunkel, automatisch)"
         case .tags: return "Notizen mit farbigen Tags markieren und filtern"
+        case .grades: return "Noten, Punkte und Durchschnitte je Fach"
         case .data: return "Export, Import, Stundenplan und gespeicherte Daten"
         }
     }
@@ -51,6 +54,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
         case .untis: return "network"
         case .appearance: return "circle.lefthalf.filled"
         case .tags: return "tag"
+        case .grades: return "chart.bar.doc.horizontal"
         case .data: return "trash"
         }
     }
@@ -64,6 +68,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
         case .untis: return .green
         case .appearance: return .cyan
         case .tags: return .indigo
+        case .grades: return .mint
         case .data: return .red
         }
     }
@@ -103,6 +108,9 @@ struct SettingsCategoryDetailView: View {
 
                 case .tags:
                     TagSystemSettingsSection()
+
+                case .grades:
+                    GradeSettingsSection()
 
                 case .data:
                     DataTransferSection()

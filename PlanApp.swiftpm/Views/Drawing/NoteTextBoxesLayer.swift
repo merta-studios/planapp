@@ -104,7 +104,7 @@ struct NoteTextBoxesLayer: View {
                     onEndEditing: { endEditing(box.id) },
                     onDelete: { deleteBox(id: box.id) },
                     onChangeText: { newText in
-                        updateBox(id: box.id) { $0.text = newText }
+                        applyTextChange(id: box.id, newText: newText)
                     },
                     onGestureStart: {
                         if gestureSnapshot == nil {
@@ -121,6 +121,9 @@ struct NoteTextBoxesLayer: View {
                         updateBox(id: box.id) {
                             $0.x = Double(newX)
                             $0.width = Double(newWidth)
+                            // Wer die Breite selbst zieht, will sie behalten:
+                            // ab jetzt kein automatisches Mitwachsen mehr.
+                            $0.autoGrowWidth = false
                         }
                     },
                     onGestureEnd: { finishGesture() },
@@ -220,7 +223,8 @@ struct NoteTextBoxesLayer: View {
             y: Double(y),
             width: Double(width),
             fontSize: fontSize,
-            colorHex: colorHex.isEmpty ? NoteTextBox.defaultColorHex : colorHex
+            colorHex: colorHex.isEmpty ? NoteTextBox.defaultColorHex : colorHex,
+            autoGrowWidth: true
         )
         return rawBox.sanitized(in: size)
     }
@@ -251,6 +255,33 @@ struct NoteTextBoxesLayer: View {
         guard let sanitized = updated.sanitized(in: safeAreaSize) else { return }
         guard sanitized != textBoxes[index] else { return }
         textBoxes[index] = sanitized
+    }
+
+    /// Textänderung eines Feldes – inkl. automatischem Mitwachsen.
+    ///
+    /// Neue Textfelder (`autoGrowWidth`) laufen beim Tippen nach rechts, bis
+    /// sie den Rand der Zeichenfläche erreichen; erst dann bricht der Text um.
+    /// Nur wer die Breite selbst mit den Seiten-Griffen ändert, schaltet das
+    /// Mitwachsen aus (siehe `onResize` im Feld).
+    private func applyTextChange(id: UUID, newText: String) {
+        updateBox(id: id) { box in
+            box.text = newText
+            guard box.autoGrowWidth else { return }
+            let maxWidth = Double(safeAreaSize.width) - margin * 2
+            if let grownWidth = NoteTextBox.autoGrownWidth(
+                text: newText,
+                currentWidth: box.width,
+                maxWidth: maxWidth,
+                fontSize: box.fontSize
+            ) {
+                box.width = grownWidth
+                // Nie über den rechten Rand hinausrutschen.
+                let maxX = Double(safeAreaSize.width) - grownWidth - margin
+                if box.x > maxX {
+                    box.x = max(margin, maxX)
+                }
+            }
+        }
     }
 
     private func changeFontSize(id: UUID, by delta: Double) {
@@ -484,6 +515,7 @@ private struct NoteTextBoxView: View {
             fontSize: boxFontSize,
             fontStyle: fontStyle,
             textColor: boxTextUIColor,
+            height: estimatedTextBoxHeight(box, fontStyle: fontStyle),
             isEditing: isEditing,
             onChangeText: onChangeText,
             onEndEditing: onEndEditing

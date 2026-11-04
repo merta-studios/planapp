@@ -251,7 +251,7 @@ private struct FileSyncCard: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("iCloud-Synchronisierung")
                             .font(.system(size: 14, weight: .regular, design: .default))
-                        Text("Hält alle Geräte über eine Datei in iCloud Drive automatisch auf demselben Stand.")
+                        Text("Hält alle Geräte über einen Ordner mit kleinen Dateien in iCloud Drive automatisch auf demselben Stand – ohne eine riesige Datei, die sich Geräte gegenseitig überschreiben.")
                             .font(.system(size: 12, weight: .regular, design: .default))
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -264,12 +264,18 @@ private struct FileSyncCard: View {
                 Divider()
 
                 HStack(spacing: 8) {
-                    Image(systemName: "doc.text")
+                    Image(systemName: "folder")
                         .font(.system(size: 13))
                         .foregroundColor(.secondary)
                     Text(service.syncFileDisplayName)
                         .font(.system(size: 13, weight: .medium, design: .default))
                         .lineLimit(1)
+                        .layoutPriority(1)
+                    if service.remoteNoteCount > 0 {
+                        Text("· \(service.remoteNoteCount) Notizen")
+                            .font(.system(size: 12, weight: .regular, design: .default))
+                            .foregroundColor(.secondary)
+                    }
                     Spacer(minLength: 8)
                     if service.isWorking {
                         ProgressView()
@@ -307,7 +313,7 @@ private struct FileSyncCard: View {
                 .foregroundColor(.blue)
                 .disabled(service.isWorking)
             } else {
-                Text("Beim Einschalten wirst du gefragt, ob du bereits auf einem anderen Gerät synchronisierst – dann wählst du die bestehende Datei, sonst legst du eine neue an. Es muss eine Datei in iCloud Drive sein.")
+                Text("Beim Einschalten wirst du gefragt, ob du bereits auf einem anderen Gerät synchronisierst – dann wählst du den bestehenden Sync-Ordner, sonst legst du einen neuen an. Es muss ein Ordner in iCloud Drive sein.")
                     .font(.system(size: 12, weight: .regular, design: .default))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -396,7 +402,7 @@ private struct FileSyncCard: View {
             }
             Button("Abbrechen", role: .cancel) {}
         } message: {
-            Text("Deine Daten und die Sync-Datei bleiben erhalten – es wird nur nicht mehr automatisch synchronisiert.")
+            Text("Deine Daten und die Dateien im Sync-Ordner bleiben erhalten – es wird nur nicht mehr automatisch synchronisiert.")
         }
         .alert(
             "Sicherheitskopie zurückholen?",
@@ -443,7 +449,7 @@ private struct FileSyncSetupSheet: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("iCloud-Synchronisierung")
                             .font(.system(size: 17, weight: .semibold, design: .default))
-                        Text("Alle Geräte teilen sich eine Datei in iCloud Drive.")
+                        Text("Alle Geräte teilen sich einen Ordner mit kleinen Dateien in iCloud Drive.")
                             .font(.system(size: 13, weight: .regular, design: .default))
                             .foregroundColor(.secondary)
                     }
@@ -462,9 +468,9 @@ private struct FileSyncSetupSheet: View {
                             Image(systemName: "doc.text.magnifyingglass")
                                 .font(.system(size: 16))
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Ja (bestehende Datei auswählen)")
+                                Text("Ja (bestehenden Ordner auswählen)")
                                     .font(.system(size: 15, weight: .semibold, design: .default))
-                                Text("Wähle die Sync-Datei in iCloud Drive. Deine Daten werden mit ihr zusammengeführt – es geht nichts verloren.")
+                                Text("Wähle den Sync-Ordner in iCloud Drive. Deine Daten werden mit ihm zusammengeführt – es geht nichts verloren.")
                                     .font(.system(size: 12, weight: .regular, design: .default))
                                     .opacity(0.85)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -486,9 +492,9 @@ private struct FileSyncSetupSheet: View {
                             Image(systemName: "folder.badge.plus")
                                 .font(.system(size: 16))
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Nein (neue Datei anlegen)")
+                                Text("Nein (neuen Ordner anlegen)")
                                     .font(.system(size: 15, weight: .semibold, design: .default))
-                                Text("Wähle einen Ordner in iCloud Drive – darin wird die Sync-Datei angelegt und mit deinen Daten gefüllt.")
+                                Text("Wähle einen Ordner in iCloud Drive – darin legt die App „PlanApp-Sync“ an und füllt ihn mit deinen Daten.")
                                     .font(.system(size: 12, weight: .regular, design: .default))
                                     .opacity(0.85)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -536,10 +542,10 @@ private struct FileSyncSetupSheet: View {
                 )
             }
             .sheet(isPresented: $showFilePicker) {
-                SyncTextFilePicker(
+                SyncFolderPicker(
                     onPick: { url in
                         showFilePicker = false
-                        linkExistingFile(at: url)
+                        linkExistingFolder(at: url)
                     },
                     onCancel: { showFilePicker = false }
                 )
@@ -575,11 +581,11 @@ private struct FileSyncSetupSheet: View {
         }
     }
 
-    private func linkExistingFile(at fileURL: URL) {
+    private func linkExistingFolder(at folderURL: URL) {
         guard !isLinking else { return }
         isLinking = true
         Task {
-            let outcome = await service.linkExistingFile(at: fileURL)
+            let outcome = await service.linkExistingFolder(at: folderURL)
             isLinking = false
             switch outcome {
             case .linked:

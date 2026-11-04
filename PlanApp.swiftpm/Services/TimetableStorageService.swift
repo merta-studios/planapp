@@ -73,6 +73,8 @@ public final class TimetableStorageService {
         static let noteUndoSessions = "planapp_note_undo_sessions"
         static let fileSyncConfiguration = "planapp_file_sync_configuration"
         static let fileSyncSafetyBackups = "planapp_file_sync_safety_backups"
+        static let gradeSettings = "planapp_grade_settings"
+        static let gradeBook = "planapp_grade_book"
     }
 
     private var documentsDirectory: URL {
@@ -290,10 +292,16 @@ public final class TimetableStorageService {
             "textBoxCount": note.textBoxes.count,
             "imageBoxCount": note.imageBoxes.count,
             "backgroundStyle": note.backgroundStyle.rawValue,
-            "backgroundScale": note.backgroundScale
+            "backgroundScale": note.backgroundScale,
+            // Handy-Notiz (schlichter Fließtext): Die Übersicht und der
+            // Stundenplan zeigen in diesem Fall den Text statt einer Zeichnung.
+            "usesPhoneTextLayout": note.usesPhoneTextLayout
         ]
         if let tagID = note.tagID {
             entry["tagID"] = tagID.uuidString
+        }
+        if !note.phoneText.isEmpty {
+            entry["phoneText"] = note.phoneText
         }
         metadata[note.id] = entry
         storeNotesMetadata(metadata)
@@ -342,6 +350,11 @@ public final class TimetableStorageService {
         let backgroundStyle = backgroundRaw.flatMap(NoteBackgroundStyle.init(rawValue:)) ?? .blank
         let backgroundScale = metadata?["backgroundScale"] as? Double ?? NoteBackgroundMetrics.defaultScale
         let tagID = (metadata?["tagID"] as? String).flatMap(UUID.init(uuidString:))
+        let usesPhoneTextLayout = metadata?["usesPhoneTextLayout"] as? Bool ?? false
+        let phoneText = (metadata?["phoneText"] as? String) ?? ""
+        let phoneFontSize = metadata?["phoneFontSize"] as? Double
+        let conversionInterval = metadata?["phoneLayoutConversionDate"] as? Double
+        let phoneLayoutConversionDate = conversionInterval.map { Date(timeIntervalSince1970: $0) }
 
         return LessonNote(
             id: noteKey,
@@ -353,6 +366,10 @@ public final class TimetableStorageService {
             backgroundStyle: backgroundStyle,
             backgroundScale: backgroundScale,
             tagID: tagID,
+            usesPhoneTextLayout: usesPhoneTextLayout,
+            phoneText: phoneText,
+            phoneFontSize: phoneFontSize,
+            phoneLayoutConversionDate: phoneLayoutConversionDate,
             updatedAt: date
         )
     }
@@ -431,6 +448,24 @@ public final class TimetableStorageService {
         writeQueue.async { [weak self] in
             self?.defaults.set(metadata, forKey: Keys.notesMetadata)
         }
+    }
+
+    // MARK: - Noten & Punkte
+
+    public func saveGradeSettings(_ settings: GradeSettings) {
+        persist(settings, key: Keys.gradeSettings)
+    }
+
+    public func loadGradeSettings() -> GradeSettings {
+        restore(GradeSettings.self, key: Keys.gradeSettings) ?? GradeSettings()
+    }
+
+    public func saveGradeBook(_ book: GradeBook) {
+        persist(book, key: Keys.gradeBook)
+    }
+
+    public func loadGradeBook() -> GradeBook {
+        restore(GradeBook.self, key: Keys.gradeBook) ?? GradeBook()
     }
 
     /// Lädt nur das Preview-Bild einer Notiz (ohne vollständige Notiz zu laden)

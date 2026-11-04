@@ -4,7 +4,7 @@ import Foundation
 /// Zugangsdaten, Fächer, Lehrkräfte, Block-Darstellung, Zeichen-Einstellungen,
 /// Stundenraster, Stundenplan, **alle Notizen** (inkl. Zeichnung, Vorschaubild,
 /// Textfeldern, Hintergrund und Tag), Ansichts-Modus, Erscheinungsbild und
-/// das Tag-System.
+/// das Tag-System sowie die Einstellungen und Einträge von „Noten & Punkte“.
 public struct AppBackup: Codable {
     public static let currentFormatVersion = 1
     public static let identifier = "planapp.backup"
@@ -23,6 +23,10 @@ public struct AppBackup: Codable {
     public var viewMode: String
     public var appearance: String
     public var tagSettings: NoteTagSettings
+    /// Einstellungen des Moduls „Noten & Punkte“ (fehlt in älteren Sicherungen).
+    public var gradeSettings: GradeSettings
+    /// Alle eingetragenen Noten/Punkte je Fach (fehlt in älteren Sicherungen).
+    public var gradeBook: GradeBook
 
     public init(
         createdAt: Date,
@@ -36,7 +40,9 @@ public struct AppBackup: Codable {
         notes: [LessonNote],
         viewMode: String,
         appearance: String,
-        tagSettings: NoteTagSettings
+        tagSettings: NoteTagSettings,
+        gradeSettings: GradeSettings = GradeSettings(),
+        gradeBook: GradeBook = GradeBook()
     ) {
         self.identifier = AppBackup.identifier
         self.formatVersion = AppBackup.currentFormatVersion
@@ -52,6 +58,8 @@ public struct AppBackup: Codable {
         self.viewMode = viewMode
         self.appearance = appearance
         self.tagSettings = tagSettings
+        self.gradeSettings = gradeSettings
+        self.gradeBook = gradeBook
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -59,6 +67,7 @@ public struct AppBackup: Codable {
         case subjectCustomizations, teacherNameCustomizations
         case displaySettings, drawingSettings, periods, lessons, notes
         case viewMode, appearance, tagSettings
+        case gradeSettings, gradeBook
     }
 
     public init(from decoder: Decoder) throws {
@@ -77,6 +86,9 @@ public struct AppBackup: Codable {
         self.viewMode = try container.decodeIfPresent(String.self, forKey: .viewMode) ?? ""
         self.appearance = try container.decodeIfPresent(String.self, forKey: .appearance) ?? ""
         self.tagSettings = try container.decodeIfPresent(NoteTagSettings.self, forKey: .tagSettings) ?? NoteTagSettings()
+        // Ältere Sicherungen kennen das Modul „Noten & Punkte“ noch nicht.
+        self.gradeSettings = try container.decodeIfPresent(GradeSettings.self, forKey: .gradeSettings) ?? GradeSettings()
+        self.gradeBook = try container.decodeIfPresent(GradeBook.self, forKey: .gradeBook) ?? GradeBook()
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -95,6 +107,8 @@ public struct AppBackup: Codable {
         try container.encode(viewMode, forKey: .viewMode)
         try container.encode(appearance, forKey: .appearance)
         try container.encode(tagSettings, forKey: .tagSettings)
+        try container.encode(gradeSettings, forKey: .gradeSettings)
+        try container.encode(gradeBook, forKey: .gradeBook)
     }
 
     /// Kurze Zusammenfassung für den Bestätigungs-Dialog vor dem Import.
@@ -106,7 +120,8 @@ public struct AppBackup: Codable {
         let visibleNotes = notes.filter { $0.hasVisibleContent }.count
         return "Sicherung vom \(formatter.string(from: createdAt))\n"
             + "\(visibleNotes) Notizen · \(lessons.count) Stunden · \(subjectCustomizations.count) Fächer · "
-            + "\(teacherNameCustomizations.count) Lehrkräfte · \(tagSettings.tags.count) Tags"
+            + "\(teacherNameCustomizations.count) Lehrkräfte · \(tagSettings.tags.count) Tags · "
+            + "\(gradeBook.entriesBySubject.values.reduce(0) { $0 + $1.count }) Noten"
     }
 }
 

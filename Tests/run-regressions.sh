@@ -21,6 +21,11 @@ sources=(
     PlanApp.swiftpm/Models/Period.swift
     PlanApp.swiftpm/Utils/CurrentPeriodPolicy.swift
     PlanApp.swiftpm/Utils/DateExtensions.swift
+    PlanApp.swiftpm/Models/GradeSettings.swift
+    PlanApp.swiftpm/Models/GradeEntry.swift
+    PlanApp.swiftpm/Utils/MobileNotePolicy.swift
+    PlanApp.swiftpm/Models/NoteTextBox.swift
+    PlanApp.swiftpm/Services/FolderSyncCore.swift
     Tests/InteractionRegressions/main.swift
 )
 

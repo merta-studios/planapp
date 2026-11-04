@@ -139,6 +139,72 @@ Solange das Overlay hängt, nimmt diese Vollbild-Ebene jede Berührung an – di
 
 ---
 
+## 7. Tastatur schiebt die ganze Notiz ✅
+
+**Problem:** Beim Tippen in einem Textfeld rutsche die Notiz nach oben, Text- und Bildobjekte blieben aber stehen.
+
+**Ursache:** `revealEditingTextBox` lief in einem einzigen Durchlauf direkt im `keyboardWillChangeFrame`-Callback. Zu diesem Zeitpunkt war die Karten-Geometrie (`renderCenter`, Skalierung, `clampedOffset`) noch nicht fertig – der berechnete Versatz galt also nur teilweise. Da Zeichnung, Textfelder und Bilder denselben Block teilen, blieben sie zurück, sobald der Versatz zu klein ausfiel.
+
+**Lösung:** `scheduleKeyboardReveal` stößt die (idempotente) Berechnung viermal über die UIKit-Tastatur-Animation verteilt an (0 / 0,09 / 0,22 / 0,42 s). Ein Generationszähler verwirft die Läufe beim Ausblenden. Jeder Lauf bestimmt die Lage des Feldes **jetzt** und verschiebt nur den noch fehlenden Rest. Zusätzlich löst auch ein reiner Auswahlwechsel bei offener Tastatur das Ausweichen aus.
+
+**Geänderte Datei:** `Views/Drawing/LessonDrawingOverlayView.swift`
+
+---
+
+## 8. Text-Werkzeug: mitwachsen und alle Zeilen sichtbar ✅
+
+**Problem 1:** Nach dem Tippen wuchs das Textfeld nicht nach rechts.
+**Problem 2:** Beim Bearbeiten war nur die erste Zeile zu sehen.
+
+**Lösung:** Neues Feld `NoteTextBox.autoGrowWidth` (Standard `true` für neue Felder). `NoteTextBoxesLayer.applyTextChange` verbreitert das Feld bei jeder Textänderung bis knapp vor den Rand der Zeichenfläche (`NoteTextBox.autoGrownWidth`, reine Foundation-Rechnung). Wer die Breite mit den Seiten-Griffen zieht, setzt `autoGrowWidth = false` – ab dann bleibt die eingestellte Breite. Für Problem 2 bekommt `NoteTextEditor` die Feldhöhe übergeben und setzt sie auf der `UITextView`; ein veralteter Rahmen schnitt sonst die Zeilen ab.
+
+**Geänderte Dateien:** `Models/NoteTextBox.swift`, `Views/Drawing/NoteTextBoxesLayer.swift`, `Views/Drawing/NoteTextEditor.swift`
+
+---
+
+## 9. Grüner „Fertig“-Knopf auf dem iPad ✅
+
+Die Zeichenwerkzeug-Leiste hat jetzt ganz rechts einen beschrifteten grünen „Fertig“-Knopf (`onDone`), der die Notiz speichert und schließt – derselbe Abschluss wie in der Handy-Notiz.
+
+**Geänderte Dateien:** `Views/Drawing/DrawingToolbarView.swift`, `Views/Drawing/LessonDrawingOverlayView.swift`
+
+---
+
+## 10. iPhone als eigene, schlichte App ✅
+
+Kein Zeichenbereich mehr auf dem iPhone: Eine Handy-Notiz ist ein normaler Fließtext (`PhoneNoteEditorView`) mit automatischem Umbruch, −/+-Schriftgröße in der Leiste und **nur** dem grünen „Fertig“-Knopf (kein „…“). Passt der Text nicht mehr, verkleinert `MobileNotePolicy.layout` die Schrift in 0,1-pt-Schritten; bei der kleinsten Größe wird die Eingabe blockiert. Handschriftliche (auf dem iPad erstellte) Notizen lassen sich dort **nicht** öffnen – ein Tipp zeigt die Optionen (`PhoneNoteOptionsMenu`). Beim ersten Öffnen einer Handy-Notiz auf dem iPad wird sie einmalig in ein normales, verschiebbares Textfeld des Zeichenbereichs umgewandelt; danach ist sie auf dem iPhone wieder gesperrt. In den Einstellungen gibt es auf dem iPhone nur noch die Standardschriftgröße.
+
+**Neue Dateien:** `Views/Drawing/PhoneNoteEditorView.swift`, `Utils/MobileNotePolicy.swift`, `Utils/MobileNoteConversion.swift`, `Views/Timetable/PhoneNoteOptionsMenu.swift`
+
+---
+
+## 11. Standard-Tag und Löschen nach Tag ✅
+
+Neue Einstellungen im Tag-System: ein **Standard-Tag**, das jede neue Notiz automatisch bekommt (iPad und iPhone), sowie eine Mehrfachauswahl, auf welche Tags sich „Alte Notizen automatisch löschen“ beschränkt. Ohne Auswahl gilt die Regel weiterhin für alle Notizen; ein Zähler zeigt, wie viele abgelaufene Notizen gerade betroffen wären.
+
+**Geänderte Dateien:** `Models/NoteTag.swift`, `ViewModels/TimetableViewModel.swift`, `Views/Settings/TagSystemSettingsSection.swift`
+
+---
+
+## 12. Neues Modul „Noten & Punkte“ ✅
+
+Neue Einstellungs-Kategorie mit Hauptschalter (Standard: aus). Ist es an, erscheint im Ansichts-Modus-Menü „Noten & Punkte“ zwischen „Nur Notizen“ und dem Filter; anstelle der Tag-Filterung gibt es dort „Sortieren nach“ (Alphabet, umgekehrt, Zufällig, bester/schlechtester Durchschnitt, meiste/wenigste Einträge, letzte Änderung ±). Die Fächer-Karten tragen die Farbe aus „Fächer & Farben“ und zeigen den Durchschnitt im Kreis. Die Fach-Ansicht ist ein Kachel-Raster: gestrichelte graue Kachel mit Plus zum Anlegen, farbige Kacheln (pastellgrün → gelb → orange → rot nach Leistung) mit Datum oben, großem Wert in der Mitte und Anmerkung unten. Eingabe: sechs Noten-Knöpfe oder Regler für Punkte/Prozent (Startwert einstellbar), optionale Notiz, wahlweise Umrechnung in eine Zensur. Tippen ändert, langes Drücken bietet nur „Löschen“.
+
+**Neue Dateien:** `Models/GradeSettings.swift`, `Models/GradeEntry.swift`, `Views/Settings/GradeSettingsSection.swift`, `Views/Grades/GradesOverviewView.swift`, `Views/Grades/GradeSubjectDetailView.swift`, `Views/Grades/GradeEntryEditorSheet.swift`
+
+---
+
+## 13. iCloud-Sync: Ordner statt einer Riesendatei ✅
+
+**Problem:** Große Textdateien brachten Geräte zum Absturz, ließen sich nicht kopieren, und zwei Geräte überschrieben sich beim ersten Abgleich gegenseitig; Aktualisierungen kamen viel zu selten.
+
+**Lösung:** Der Sync ist jetzt ein **Ordner** mit einer Datei pro Notiz (`notes/<schlüssel>.json`) plus einem kleinen `settings.json`. Geschrieben wird nur, was sich geändert hat; jede Datei trägt ihren eigenen Zeitstempel, sodass beim Zusammenführen pro Notiz der neuere Stand gewinnt (`FolderSyncRules.merge`). Löschungen werden über Grabsteine und die Liste der zuletzt im Ordner gesehenen Dateien erkannt – nichts steht wieder auf, nichts geht verloren. Geprüft wird alle 6 s, geschrieben 1,2 s nach der letzten Änderung. Vor jeder Übernahme entsteht eine Sicherheitskopie; eine alte Ein-Datei-Verknüpfung wird einmalig übernommen (`migrateLegacyFile`) und danach auf den Ordner umgestellt. Der Ordner ist ein normaler Ordner mit lesbaren Dateien und lässt sich weiterhin von Hand kopieren.
+
+**Neue Dateien:** `Services/FolderSyncCore.swift`, `Services/FolderSyncDocuments.swift`
+**Geänderte Dateien:** `Services/FileSyncService.swift`, `Views/Settings/DataTransferSection.swift`, `Views/Settings/FileSyncPickers.swift`, `ViewModels/TimetableViewModel.swift`
+
+---
+
 ## Zusammenfassung
 
 Alle gemeldeten Probleme wurden behoben:
@@ -149,5 +215,12 @@ Alle gemeldeten Probleme wurden behoben:
 4. ✅ **Mobile Design** ist deutlich kompakter und besser für kleine Bildschirme optimiert
 5. ✅ **Wochenwechsel** läuft flüssig (Formatter-Cache, memoisierte Stunden, kein synchrones Notiz-Laden im Render-Pfad, Schreiben im Hintergrund)
 6. ✅ **Gehaltener Rückgängig-Knopf** lässt die Squeeze-Bar verschwinden statt wieder auftauchen
+7. ✅ **Tastatur** verschiebt die ganze Notiz samt Text- und Bildobjekten
+8. ✅ **Text-Werkzeug** wächst nach rechts mit und zeigt beim Bearbeiten alle Zeilen
+9. ✅ **Grüner „Fertig“-Knopf** auch in der iPad-Werkzeugleiste
+10. ✅ **iPhone** ist eine eigene, schlichte App (Fließtext statt Zeichenfläche)
+11. ✅ **Standard-Tag** und **Löschen nach Tag**
+12. ✅ **Noten & Punkte** als neues Modul mit Kachel-Ansicht
+13. ✅ **iCloud-Sync** über einen Ordner mit kleinen Dateien statt einer Riesendatei
 
 Die Änderungen sind minimal-invasiv und bewahren die bestehende Funktionalität auf iPad/Mac, während sie das iPhone-Erlebnis deutlich verbessern. Logik-Regeln (Resize-Grenzen, Squeeze-Bar, Undo-Budget) sind in `Tests/InteractionRegressions/main.swift` abgesichert.
