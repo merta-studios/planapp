@@ -25,8 +25,14 @@ on:
 permissions:
   contents: read
 
+# Achtung, Endlosschleife: Bei `workflow_dispatch` bekommt jeder Lauf eine
+# EIGENE Gruppe. Sonst gilt: Auto-Merge sieht einen abgebrochenen Lauf, startet
+# die Prüfung neu (`gh workflow run`), der neue Lauf landet in derselben Gruppe
+# und bricht den laufenden ab – der Auto-Merge sieht wieder einen Abbruch und
+# startet erneut. Der Abbruch ist dann die einzige Ursache des nächsten
+# Abbruchs. Push/PR-Läufe sollen sich weiterhin gegenseitig ersetzen.
 concurrency:
-  group: swift-check-${{ github.event.pull_request.head.ref || github.ref_name }}
+  group: swift-check-${{ (github.event_name == 'workflow_dispatch' && github.run_id) || github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 env:
