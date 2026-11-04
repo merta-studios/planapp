@@ -164,20 +164,12 @@ public struct GradeBook: Codable, Equatable {
         try container.encode(entriesBySubject, forKey: .entriesBySubject)
     }
 
-    public static func subjectKey(for subject: SubjectCustomization) -> String {
-        GradeBook.normalizedKey(subject.originalSubject)
-    }
-
     public static func normalizedKey(_ raw: String) -> String {
         raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     public func entries(forSubjectKey key: String) -> [GradeEntry] {
         entriesBySubject[key] ?? []
-    }
-
-    public func entries(for subject: SubjectCustomization) -> [GradeEntry] {
-        entries(forSubjectKey: GradeBook.subjectKey(for: subject))
     }
 
     /// Fügt einen Eintrag hinzu (oder ersetzt ihn, gleiche ID).
