@@ -1,5 +1,4 @@
 import Foundation
-import CoreGraphics
 
 /// Wie eine Notiz auf den **zwei Geräteklassen** behandelt wird.
 ///
@@ -69,6 +68,18 @@ public enum MobileNotePolicy {
 
     // MARK: - Zeilenumbruch & automatisches Verkleinern
 
+    /// Einfache Größe in Punkten – bewusst ohne CoreGraphics, damit diese
+    /// Regeln auf Linux (Regressions-Tests) übersetzen.
+    public struct TextSize: Equatable {
+        public let width: Double
+        public let height: Double
+
+        public init(width: Double, height: Double) {
+            self.width = width
+            self.height = height
+        }
+    }
+
     /// Ergebnis einer Layout-Prüfung des Handy-Textes.
     public struct Layout: Equatable {
         /// Ob der Text mit dieser Schriftgröße vollständig in den Bereich passt.
@@ -98,7 +109,7 @@ public enum MobileNotePolicy {
         fontSize: Double,
         availableWidth: Double,
         availableHeight: Double,
-        characterSize: (Double) -> CGSize
+        characterSize: (Double) -> TextSize
     ) -> Layout {
         let size = measuredSize(
             text: text,
@@ -139,8 +150,8 @@ public enum MobileNotePolicy {
         text: String,
         fontSize: Double,
         availableWidth: Double,
-        characterSize: (Double) -> CGSize
-    ) -> CGSize {
+        characterSize: (Double) -> TextSize
+    ) -> TextSize {
         let size = clamped(fontSize)
         let width = availableWidth.isFinite ? max(1, availableWidth) : 1
         let reference = characterSize(size)
@@ -151,11 +162,11 @@ public enum MobileNotePolicy {
             ? reference.height
             : size * 1.25
         guard !text.isEmpty else {
-            return CGSize(width: 0, height: lineHeightValue)
+            return TextSize(width: 0, height: lineHeightValue)
         }
         let charactersPerLine = max(1, Int(width / referenceWidth))
         let lineCount = wrappedLineCount(text: text, charactersPerLine: charactersPerLine)
-        return CGSize(
+        return TextSize(
             width: min(width, Double(charactersPerLine) * referenceWidth),
             height: Double(lineCount) * lineHeightValue
         )

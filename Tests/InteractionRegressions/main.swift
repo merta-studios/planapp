@@ -953,8 +953,8 @@ expect(MobileNotePolicy.shrunk(fontSize: 10) == 10, "Kleiner als das Minimum geh
 expect(MobileNotePolicy.grown(fontSize: 40) == 40, "Größer als das Maximum geht nicht")
 
 // Text bricht um, statt über den Rand zu laufen: Zeichen pro Zeile begrenzt.
-func referenceCharacter(_ size: Double) -> CGSize {
-    CGSize(width: size * 0.55, height: size * 1.25)
+func referenceCharacter(_ size: Double) -> MobileNotePolicy.TextSize {
+    MobileNotePolicy.TextSize(width: size * 0.55, height: size * 1.25)
 }
 let shortLayout = MobileNotePolicy.layout(
     text: "Hallo",

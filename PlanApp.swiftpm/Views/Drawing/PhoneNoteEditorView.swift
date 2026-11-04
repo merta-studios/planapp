@@ -412,13 +412,13 @@ private struct PhoneNoteTextEditor: UIViewRepresentable {
             self.parent = parent
         }
 
-        private func characterSize(for fontSize: Double) -> CGSize {
+        private func characterSize(for fontSize: Double) -> MobileNotePolicy.TextSize {
             let font = parent.fontStyle.uiFont(size: CGFloat(max(1, fontSize)))
             let reference = ("M" as NSString).size(withAttributes: [.font: font])
             let line = ("Ag" as NSString).size(withAttributes: [.font: font])
-            return CGSize(
-                width: max(1, reference.width),
-                height: max(1, line.height * 1.28)
+            return MobileNotePolicy.TextSize(
+                width: Double(max(1, reference.width)),
+                height: Double(max(1, line.height * 1.28))
             )
         }
 
@@ -440,7 +440,8 @@ private struct PhoneNoteTextEditor: UIViewRepresentable {
                 availableWidth: Double(parent.availableWidth),
                 availableHeight: Double(parent.availableHeight),
                 characterSize: { [weak self] size in
-                    self?.characterSize(for: size) ?? CGSize(width: size * 0.55, height: size * 1.25)
+                    self?.characterSize(for: size)
+                        ?? MobileNotePolicy.TextSize(width: size * 0.55, height: size * 1.25)
                 }
             )
 

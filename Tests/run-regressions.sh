@@ -26,6 +26,7 @@ sources=(
     PlanApp.swiftpm/Utils/MobileNotePolicy.swift
     PlanApp.swiftpm/Models/NoteTextBox.swift
     PlanApp.swiftpm/Services/FolderSyncCore.swift
+    Tests/InteractionRegressions/GeometryShim.swift
     Tests/InteractionRegressions/main.swift
 )
 
