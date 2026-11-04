@@ -38,6 +38,9 @@ jobs:
         # sichtbar ist.
         run: |
           set -o pipefail
+          # `bash -e` (Standard in Actions) würde beim fehlgeschlagenen Build
+          # sofort abbrechen – die Fehlerausgabe unten käme dann nie dran.
+          set +e
           LOG="$RUNNER_TEMP/build.log"
           xcodebuild \
             -scheme PlanApp \
