@@ -376,6 +376,7 @@ else
     started=$SECONDS
     dispatched=0
     cancel_retries=0
+    warned_pending=0
     while :; do
         check_state_for "$HEAD_SHA"
         elapsed=$((SECONDS - started))
@@ -396,7 +397,16 @@ Erzwingen (ohne Prüfungen): Kommentar \`/automerge\`."
 
         # Abgebrochen heißt „kein Ergebnis“ – nicht „bestanden“. Also die
         # Prüfung neu starten und erst mergen, wenn sie wirklich grün ist.
-        if [ -n "$CHECKS_CANCELLED" ]; then
+        #
+        # Wichtig: Läuft für diesen Commit schon ein Ersatz, wird NICHT erneut
+        # gestartet. Ein zweiter Start würde den laufenden über die
+        # Concurrency-Gruppe abbrechen – und genau dieser Abbruch wäre dann
+        # der Grund für den nächsten Start (Endlosschleife). Stattdessen wird
+        # gewartet, bis der laufende ein Ergebnis liefert.
+        if [ -n "$CHECKS_CANCELLED" ] && [ "$CHECKS_PENDING" -gt 0 ]; then
+            [ "$warned_pending" = "1" ] || note "Abbruch + laufende Prüfung: warte auf das Ergebnis, starte nicht neu."
+            warned_pending=1
+        elif [ -n "$CHECKS_CANCELLED" ]; then
             if [ "$cancel_retries" -ge "$CANCEL_RETRIES" ]; then
                 err "Prüfung(en) ohne Ergebnis (abgebrochen):$CHECKS_CANCELLED"
                 comment_once "<!-- automerge-abbruch -->" "### 🤖 Auto-Merge: nicht gemergt\n\nDiese Prüfung(en) wurden abgebrochen und liefern kein Ergebnis:$CHECKS_CANCELLED\n\n\`$CHECK_WORKFLOW\` wurde $cancel_retries× neu gestartet – ohne Erfolg. Bitte im Tab **Actions** nachsehen ([Lauf öffnen]($URL/checks)). Ein erneuter Push startet einen neuen Versuch.\n\nOhne Prüfung mergen: Kommentar \\`/automerge\\`."
@@ -407,6 +417,8 @@ Erzwingen (ohne Prüfungen): Kommentar \`/automerge\`."
             warn "Starte „$CHECK_WORKFLOW“ für $HEAD_BRANCH neu (Versuch $cancel_retries/$CANCEL_RETRIES)."
             if gh_quiet workflow run "$CHECK_WORKFLOW" --repo "$REPO" --ref "$HEAD_BRANCH" >/dev/null; then
                 ok "Prüf-Workflow neu angestoßen."
+                # Dem angestoßenen Lauf Zeit geben, bevor erneut gestartet wird.
+                sleep "$POLL"
             else
                 warn "Prüf-Workflow konnte nicht gestartet werden (Rechte? Datei vorhanden?)."
             fi
